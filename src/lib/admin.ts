@@ -5,30 +5,17 @@ function initFirebaseAdmin() {
     return admin.app();
   }
 
-  const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-
-  if (!serviceAccountKey) {
-    console.warn('FIREBASE_SERVICE_ACCOUNT_KEY not set.');
-    return admin.initializeApp({
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    });
-  }
-
   try {
-    // ✅ fix: trim + replace \n ก่อน parse
-    const cleaned = serviceAccountKey
-      .trim()
-      .replace(/\\n/g, '\n');
-
-    const serviceAccount = JSON.parse(cleaned);
-
     return admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
     });
   } catch (error) {
-    console.error('Failed to parse Firebase service account key:', error);
+    console.error('Firebase init error:', error);
     return admin.initializeApp({
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
