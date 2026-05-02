@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminStorage } from '../../../lib/admin'; // เช็กเส้นทางให้ตรงกับที่ใช้ได้ล่าสุดนะครับ
 
 export const maxDuration = 300; 
 export const dynamic = 'force-dynamic';
@@ -12,6 +11,7 @@ async function uploadToFirebaseStorage(
   contentType: string
 ): Promise<string> {
   try {
+    const { adminStorage } = await import('../../../lib/admin'); // ✅ dynamic import
     const bucket = adminStorage.bucket();
     const file = bucket.file(path);
 
@@ -33,13 +33,10 @@ async function uploadToFirebaseStorage(
   }
 }
 
-// 🌟 นำลอจิก Botnoi ของคุณวุฒิมาปรับเป็น Helper Function
 async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   const botnoiToken = process.env.BOTNOI_TOKEN;
   if (!botnoiToken) throw new Error('ไม่พบ BOTNOI_TOKEN ในระบบ');
 
-  // ตัวแปลงชื่อ: หน้าเว็บส่งเป็น ava, kacha แต่ Botnoi ใช้เลข 1, 2, 3
-  // คุณวุฒิต้องแก้ตัวเลขด้านขวาให้ตรงกับเสียง Botnoi ที่ใช้นะครับ
   const voiceMap: Record<string, string> = {
     'ava': '1', 
     'jaidee': '2',
