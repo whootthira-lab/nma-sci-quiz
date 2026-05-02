@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { getUserGenerations, deleteGeneration, type GenerationDoc } from '@/lib/firebase';
+import { getUserGenerations, deleteGeneration } from '@/lib/firebase';
+import type { GenerationDoc } from '@/types';
 
 interface VideoGalleryProps {
   refreshTrigger?: number;
@@ -153,11 +154,10 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
             <div className="p-4 space-y-3">
               {/* Mode Badge + Date */}
               <div className="flex items-center justify-between">
-                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                  gen.mode === 'text-to-video'
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${gen.mode === 'text-to-video'
                     ? 'bg-accent-primary/10 text-accent-primary'
                     : 'bg-accent-warm/10 text-accent-warm'
-                }`}>
+                  }`}>
                   {gen.mode === 'text-to-video' ? 'Text → Video' : 'Face Motion'}
                 </span>
                 <span className="text-[10px] text-text-muted flex items-center gap-1">
