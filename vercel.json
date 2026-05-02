@@ -4,13 +4,5 @@
       "path": "/api/cleanup",
       "schedule": "0 5 * * *"
     }
-  ],
-  "functions": {
-    "src/app/api/generate-video/route.ts": {
-      "maxDuration": 300
-    },
-    "src/app/api/face-motion/route.ts": {
-      "maxDuration": 300
-    }
-  }
+  ]
 }
