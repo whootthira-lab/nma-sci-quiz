@@ -8,7 +8,7 @@ function initFirebaseAdmin() {
   const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
 
   if (!serviceAccountKey) {
-    console.warn('FIREBASE_SERVICE_ACCOUNT_KEY not set. Server-side Firebase operations will fail.');
+    console.warn('FIREBASE_SERVICE_ACCOUNT_KEY not set.');
     return admin.initializeApp({
       projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
@@ -16,8 +16,13 @@ function initFirebaseAdmin() {
   }
 
   try {
-    const serviceAccount = JSON.parse(serviceAccountKey);
-    serviceAccount.private_key = serviceAccount.private_key?.replace(/\\n/g, '\n'); // ✅ fix newline
+    // ✅ fix: trim + replace \n ก่อน parse
+    const cleaned = serviceAccountKey
+      .trim()
+      .replace(/\\n/g, '\n');
+
+    const serviceAccount = JSON.parse(cleaned);
+
     return admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
