@@ -17,6 +17,7 @@ function initFirebaseAdmin() {
 
   try {
     const serviceAccount = JSON.parse(serviceAccountKey);
+    serviceAccount.private_key = serviceAccount.private_key?.replace(/\\n/g, '\n'); // ✅ fix newline
     return admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
@@ -31,9 +32,7 @@ function initFirebaseAdmin() {
 }
 
 const app = initFirebaseAdmin();
-
 export const adminDb = admin.firestore();
 export const adminStorage = admin.storage();
 export const adminAuth = admin.auth();
-
 export default admin;
