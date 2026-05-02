@@ -2,10 +2,9 @@ import admin from 'firebase-admin';
 
 function getPrivateKey(): string {
   const key = process.env.FIREBASE_PRIVATE_KEY || '';
-  // รองรับทุกกรณี: มี \n จริง, มี \\n, หรือมี quotes ครอบ
   return key
-    .replace(/^"|"$/g, '')  // ลบ quotes ครอบนอกสุด
-    .replace(/\\n/g, '\n'); // แปลง \n เป็น newline จริง
+    .replace(/^"|"$/g, '')
+    .replace(/\\n/g, '\n');
 }
 
 function initFirebaseAdmin() {
