@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json();
-
     if (!email) {
       return NextResponse.json(
         { valid: false, error: 'No email provided' },
@@ -11,19 +10,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const admin = await import('firebase-admin');
-    if (!admin.apps.length) {
-      const serviceAccount = JSON.parse(
-        process.env.FIREBASE_SERVICE_ACCOUNT_KEY || '{}'
-      );
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
-    }
+    const { adminDb } = await import('../../../lib/admin');
 
-    const firestore = admin.firestore();
-    const userDoc = await firestore.collection('users').doc(email).get();
-
+    const userDoc = await adminDb.collection('users').doc(email).get();
     if (!userDoc.exists) {
       return NextResponse.json({ valid: false, error: 'User not whitelisted' });
     }
@@ -31,7 +20,6 @@ export async function POST(req: NextRequest) {
     const userData = userDoc.data();
     const now = new Date();
     const expiresAt = userData?.expires_at?.toDate();
-
     if (expiresAt && expiresAt < now) {
       return NextResponse.json({ valid: false, error: 'Session expired' });
     }
