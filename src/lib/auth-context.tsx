@@ -71,6 +71,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      setError('ตัวแปรสภาพแวดล้อม Supabase (NEXT_PUBLIC_SUPABASE_URL และ NEXT_PUBLIC_SUPABASE_ANON_KEY) ขาดหายไป กรุณาเพิ่มค่านี้ในหน้าตั้งค่า Environment Variables ของ Vercel และทำการ Re-deploy');
+      return;
+    }
+
     // 1. Check current session
     supabase.auth.getSession().then(({ data: { session } }) => {
       handleAuthUser(session?.user ?? null);
@@ -85,6 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [handleAuthUser]);
 
   const signIn = useCallback(async () => {
+    if (!supabase) {
+      setError('ไม่สามารถเข้าสู่ระบบได้เนื่องจากขาดการเชื่อมต่อระบบ Supabase (ไม่มี Env)');
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
@@ -103,6 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    if (!supabase) return;
     setLoading(true);
     await supabase.auth.signOut();
     setUser(null);
