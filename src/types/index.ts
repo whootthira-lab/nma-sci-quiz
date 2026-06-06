@@ -27,7 +27,7 @@ export interface GenerationDoc {
   duration_estimate?: number;
 }
 
-// ─── Thai Voice Options (Botnoi Voice Edition) ──────
+// ─── Thai Voice Options (Botnoi & Azure Edition) ────
 
 export interface ThaiVoice {
   id: string;
@@ -35,15 +35,21 @@ export interface ThaiVoice {
   label: string;
   gender: 'male' | 'female';
   sample_url: string;
+  provider: 'botnoi' | 'azure';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
-  { id: '1', name: 'Ava', label: 'เอวา (หญิง, สุภาพ)', gender: 'female', sample_url: '/samples/ava.mp3' },
-  { id: '2', name: 'Kacha', label: 'คชา (ชาย, สุภาพ)', gender: 'male', sample_url: '/samples/kacha.mp3' },
-  { id: '3', name: 'Jaidee', label: 'ใจดี (หญิง, อบอุ่น)', gender: 'female', sample_url: '/samples/jaidee.mp3' },
-  { id: '4', name: 'Te', label: 'เท่ห์ (ชาย, วัยรุ่น)', gender: 'male', sample_url: '/samples/te.mp3' },
-  { id: '15', name: 'Yim', label: 'ยิ้ม (หญิง, ร่าเริง)', gender: 'female', sample_url: '/samples/yim.mp3' },
-  { id: '33', name: 'Lung', label: 'ลุง (ชาย, ใจดี)', gender: 'male', sample_url: '/samples/lung.mp3' },
+  // Botnoi
+  { id: '1', name: 'Ava', label: 'เอวา (หญิง, สุภาพ)', gender: 'female', sample_url: '/samples/ava.mp3', provider: 'botnoi' },
+  { id: '2', name: 'Kacha', label: 'คชา (ชาย, สุภาพ)', gender: 'male', sample_url: '/samples/kacha.mp3', provider: 'botnoi' },
+  { id: '3', name: 'Jaidee', label: 'ใจดี (หญิง, อบอุ่น)', gender: 'female', sample_url: '/samples/jaidee.mp3', provider: 'botnoi' },
+  { id: '4', name: 'Te', label: 'เท่ห์ (ชาย, วัยรุ่น)', gender: 'male', sample_url: '/samples/te.mp3', provider: 'botnoi' },
+  { id: '15', name: 'Yim', label: 'ยิ้ม (หญิง, ร่าเริง)', gender: 'female', sample_url: '/samples/yim.mp3', provider: 'botnoi' },
+  { id: '33', name: 'Lung', label: 'ลุง (ชาย, ใจดี)', gender: 'male', sample_url: '/samples/lung.mp3', provider: 'botnoi' },
+  // Azure
+  { id: 'th-TH-AcharaNeural', name: 'Achara', label: 'อัจฉรา (หญิง, อธิบาย)', gender: 'female', sample_url: 'https://speech.microsoft.com/portal/samples/achara.mp3', provider: 'azure' },
+  { id: 'th-TH-PremwadeeNeural', name: 'Premwadee', label: 'เปรมวดี (หญิง, อบอุ่น)', gender: 'female', sample_url: 'https://speech.microsoft.com/portal/samples/premwadee.mp3', provider: 'azure' },
+  { id: 'th-TH-NiwatNeural', name: 'Niwat', label: 'นิวัฒน์ (ชาย, สุภาพ)', gender: 'male', sample_url: 'https://speech.microsoft.com/portal/samples/niwat.mp3', provider: 'azure' },
 ];
 
 // ─── Aspect Ratio Options ───────────────────────────

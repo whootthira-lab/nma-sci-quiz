@@ -7,9 +7,10 @@ import { THAI_VOICES, type ThaiVoice } from '@/types';
 interface VoicePreviewProps {
   selectedVoice: string;
   onSelect: (voiceId: string) => void;
+  ttsProvider?: 'botnoi' | 'azure';
 }
 
-export default function VoicePreview({ selectedVoice, onSelect }: VoicePreviewProps) {
+export default function VoicePreview({ selectedVoice, onSelect, ttsProvider = 'botnoi' }: VoicePreviewProps) {
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -37,13 +38,15 @@ export default function VoicePreview({ selectedVoice, onSelect }: VoicePreviewPr
     }
   };
 
+  const filteredVoices = THAI_VOICES.filter((voice) => voice.provider === ttsProvider);
+
   return (
     <div className="space-y-3">
-      <label className="block text-sm font-medium text-text-secondary">
+      <label className="block text-sm font-medium text-text-secondary font-thai">
         เลือกเสียงพากย์ภาษาไทย
       </label>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {THAI_VOICES.map((voice) => {
+        {filteredVoices.map((voice) => {
           const isSelected = selectedVoice === voice.id;
           const isPlaying = playingVoice === voice.id;
 

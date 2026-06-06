@@ -29,6 +29,34 @@ async function uploadToSupabaseStorage(
   return publicUrl;
 }
 
+async function uploadToFirebaseStorage(
+  buffer: Buffer,
+  path: string,
+  contentType: string
+): Promise<string> {
+  try {
+    const { adminStorage } = await import('../../../lib/admin');
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(path);
+
+    await file.save(buffer, { 
+      contentType,
+      public: true,
+      metadata: { cacheControl: 'public, max-age=31536000' }
+    });
+
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 24 * 60 * 60 * 1000,
+    });
+
+    return url;
+  } catch (error) {
+    console.error(`[Firebase Storage Error] ไม่สามารถอัปโหลดไฟล์ไปที่: ${path}`, error);
+    throw new Error('อัปโหลดไฟล์ขึ้น Firebase ไม่สำเร็จ');
+  }
+}
+
 async function runFaceMotion(
   imageUrl: string,
   drivingVideoUrl: string,
@@ -128,6 +156,7 @@ export async function POST(req: NextRequest) {
     const modelId = formData.get('model_id') as string || 'liveportrait';
     const userEmail = formData.get('user_email') as string;
     const userId = formData.get('user_id') as string;
+    const storageProvider = formData.get('storage_provider') as string || 'supabase';
 
     if (!imageFile || !drivingVideoFile || !userEmail) {
       return NextResponse.json(
@@ -155,11 +184,17 @@ export async function POST(req: NextRequest) {
       throw new Error('No video URL returned from face motion AI');
     }
 
-    // 4. Proxy: Download and re-upload to Supabase Storage
+    // 4. Proxy: Download and re-upload to selected Storage
     const outputResponse = await fetch(tempVideoUrl);
     const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
     const outputPath = `videos/${userEmail}/${timestamp}_facemotion.mp4`;
-    const persistentUrl = await uploadToSupabaseStorage(outputBuffer, outputPath, 'video/mp4');
+    
+    let persistentUrl = '';
+    if (storageProvider === 'firebase') {
+      persistentUrl = await uploadToFirebaseStorage(outputBuffer, outputPath, 'video/mp4');
+    } else {
+      persistentUrl = await uploadToSupabaseStorage(outputBuffer, outputPath, 'video/mp4');
+    }
 
     const modelNames: Record<string, string> = {
       liveportrait: 'LivePortrait',
@@ -195,7 +230,8 @@ export async function POST(req: NextRequest) {
             model_name: modelNames[modelId] || modelId,
             storage_path: outputPath,
             image_path: imagePath,
-            driving_path: drivingPath
+            driving_path: drivingPath,
+            storage_provider: storageProvider
           }
         });
     }
@@ -215,6 +251,7 @@ export async function POST(req: NextRequest) {
         video_url: persistentUrl,
         storage_path: outputPath,
         status: 'completed',
+        storage_provider: storageProvider
       },
     });
   } catch (error: any) {

@@ -34,6 +34,18 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
   
+  // Storage & TTS Providers
+  const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
+  const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'azure'>('botnoi');
+
+  const handleTtsProviderChange = (provider: 'botnoi' | 'azure') => {
+    setTtsProvider(provider);
+    const defaultVoice = THAI_VOICES.find(v => v.provider === provider);
+    if (defaultVoice) {
+      setSelectedVoice(defaultVoice.id);
+    }
+  };
+  
   // สถานะการทำงาน
   const [processing, setProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
@@ -67,12 +79,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   }, []);
 
   // ฟังก์ชันทวงงาน (Polling)
-  const pollStatus = async (requestId: string, videoPath: string) => {
+  const pollStatus = async (requestId: string, videoPath: string, currentStorageProvider: 'supabase' | 'firebase') => {
     try {
       const statusRes = await fetch('/api/video-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, videoPath, modelType })
+        body: JSON.stringify({ requestId, videoPath, modelType, storageProvider: currentStorageProvider })
       });
       
       const statusData = await statusRes.json();
@@ -96,7 +108,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         } else if (statusData.status === 'IN_PROGRESS') {
           setProcessingStage('🔄 KRUTH Engine กำลังสร้างสรรค์วิดีโอ...');
         }
-        setTimeout(() => pollStatus(requestId, videoPath), 8000);
+        setTimeout(() => pollStatus(requestId, videoPath, currentStorageProvider), 8000);
       }
     } catch (err: any) {
       setError(err.message || 'เกิดข้อผิดพลาดในการตรวจสอบสถานะ');
@@ -128,6 +140,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('user_email', user?.email || 'user@kruth.com');
       formData.append('user_id', user?.id || '');
       formData.append('model_type', modelType);
+      formData.append('storage_provider', storageProvider);
+      formData.append('tts_provider', ttsProvider);
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -141,7 +155,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       }
 
       setProcessingStage('🚀 ส่งงานสำเร็จ! กำลังเชื่อมต่อระบบ AI...');
-      setTimeout(() => pollStatus(result.requestId, result.videoPath), 3000);
+      setTimeout(() => pollStatus(result.requestId, result.videoPath, storageProvider), 3000);
 
     } catch (err: any) {
       setError(err.message || 'เกิดข้อผิดพลาด');
@@ -281,8 +295,73 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           />
         </div>
 
+        {/* Storage & TTS Option Switches */}
+        <div className="space-y-4 grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-150">
+          {/* Storage Option */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+              สถานที่เก็บไฟล์คลิปวิดีโอ (Storage)
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStorageProvider('supabase')}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  storageProvider === 'supabase'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🟢 Supabase
+              </button>
+              <button
+                type="button"
+                onClick={() => setStorageProvider('firebase')}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  storageProvider === 'firebase'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🔥 Firebase
+              </button>
+            </div>
+          </div>
+
+          {/* TTS Option */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+              โมเดลเสียงพากย์ (TTS Engine)
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => handleTtsProviderChange('botnoi')}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  ttsProvider === 'botnoi'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🤖 Botnoi Voice
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTtsProviderChange('azure')}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  ttsProvider === 'azure'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                ☁️ Azure Neural
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Voice Selection */}
-        <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} />
+        <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
 
         {/* Aspect Ratio */}
         <div className="space-y-2">

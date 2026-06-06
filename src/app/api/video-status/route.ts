@@ -3,9 +3,37 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+async function uploadToFirebaseStorage(
+  buffer: Buffer,
+  path: string,
+  contentType: string
+): Promise<string> {
+  try {
+    const { adminStorage } = await import('../../../lib/admin');
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(path);
+
+    await file.save(buffer, { 
+      contentType,
+      public: true,
+      metadata: { cacheControl: 'public, max-age=31536000' }
+    });
+
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 24 * 60 * 60 * 1000,
+    });
+
+    return url;
+  } catch (error) {
+    console.error(`[Firebase Storage Error] ไม่สามารถอัปโหลดไฟล์ไปที่: ${path}`, error);
+    throw new Error('อัปโหลดไฟล์ขึ้น Firebase ไม่สำเร็จ');
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { requestId, videoPath, modelType } = await req.json();
+    const { requestId, videoPath, modelType, storageProvider } = await req.json();
     const falKey = process.env.FAL_KEY;
 
     if (!requestId || !videoPath) {
@@ -39,29 +67,45 @@ export async function POST(req: NextRequest) {
       const tempUrl = statusData.video?.url || statusData.output?.video?.url || statusData.images?.[0]?.url;
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
 
-      console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลดวิดีโอมาเก็บที่ Supabase...`);
+      let finalStorageProvider = storageProvider;
+      if (!finalStorageProvider) {
+        const { data: genRow } = await supabase
+          .from('generations')
+          .select('metadata')
+          .eq('fal_request_id', requestId)
+          .single();
+        finalStorageProvider = genRow?.metadata?.storage_provider || 'supabase';
+      }
+
+      console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลดวิดีโอมาเก็บที่ ${finalStorageProvider}...`);
 
       const videoRes = await fetch(tempUrl);
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
-      // Upload to Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from('kruth-ai-assets')
-        .upload(videoPath, videoBuffer, {
-          contentType: 'video/mp4',
-          upsert: true,
-        });
+      let publicUrl = '';
+      if (finalStorageProvider === 'firebase') {
+        publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, 'video/mp4');
+      } else {
+        // Upload to Supabase Storage
+        const { error: uploadError } = await supabase.storage
+          .from('kruth-ai-assets')
+          .upload(videoPath, videoBuffer, {
+            contentType: 'video/mp4',
+            upsert: true,
+          });
 
-      if (uploadError) {
-        throw new Error(`อัปโหลดวิดีโอขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
+        if (uploadError) {
+          throw new Error(`อัปโหลดวิดีโอขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
+        }
+
+        // Get Public URL
+        const { data: { publicUrl: supabaseUrl } } = supabase.storage
+          .from('kruth-ai-assets')
+          .getPublicUrl(videoPath);
+        publicUrl = supabaseUrl;
       }
 
-      // Get Public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('kruth-ai-assets')
-        .getPublicUrl(videoPath);
-
-      console.log(`✅ [KRUTH Status] บันทึกวิดีโอลง Supabase สำเร็จ! URL: ${publicUrl}`);
+      console.log(`✅ [KRUTH Status] บันทึกวิดีโอลง ${finalStorageProvider} สำเร็จ! URL: ${publicUrl}`);
 
       // Update generation status in Supabase
       const { error: dbError } = await supabase

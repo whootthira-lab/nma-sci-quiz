@@ -115,7 +115,7 @@ export async function getUserGenerations(email: string) {
     return [];
   }
 
-  return data.map((row) => ({
+  return data.map((row: any) => ({
     id: row.id,
     user_email: email,
     mode: row.metadata?.mode || 'text-to-video',
@@ -135,7 +135,14 @@ export async function getUserGenerations(email: string) {
 }
 
 export async function deleteGeneration(id: string, storagePath: string) {
-  // 1. Delete from DB
+  // 1. Fetch generation to check metadata
+  const { data: gen } = await supabase
+    .from('generations')
+    .select('video_url, metadata')
+    .eq('id', id)
+    .single();
+
+  // 2. Delete from DB
   const { error: dbError } = await supabase
     .from('generations')
     .delete()
@@ -143,12 +150,41 @@ export async function deleteGeneration(id: string, storagePath: string) {
 
   if (dbError) throw dbError;
 
-  // 2. Delete files from Storage if storagePath exists
-  if (storagePath) {
-    try {
-      await supabase.storage.from('kruth-ai-assets').remove([storagePath]);
-    } catch (e) {
-      console.warn('Storage file deletion failed:', storagePath, e);
+  // 3. Delete files from Storage if they exist
+  if (gen) {
+    const isFirebase = gen.metadata?.storage_provider === 'firebase' || gen.video_url?.includes('firebasestorage');
+
+    if (storagePath) {
+      if (isFirebase) {
+        try {
+          const { storage: firebaseStorage } = await import('./firebase');
+          const { ref, deleteObject } = await import('firebase/storage');
+          const fileRef = ref(firebaseStorage, storagePath);
+          await deleteObject(fileRef);
+        } catch (e) {
+          console.warn('Firebase Storage file deletion failed:', storagePath, e);
+        }
+      } else {
+        try {
+          await supabase.storage.from('kruth-ai-assets').remove([storagePath]);
+        } catch (e) {
+          console.warn('Supabase Storage file deletion failed:', storagePath, e);
+        }
+      }
+    }
+
+    // Clean up input files from Supabase Storage (always stored in Supabase)
+    const pathsToDelete: string[] = [];
+    if (gen.metadata?.image_path) pathsToDelete.push(gen.metadata.image_path);
+    if (gen.metadata?.audio_path) pathsToDelete.push(gen.metadata.audio_path);
+    if (gen.metadata?.driving_path) pathsToDelete.push(gen.metadata.driving_path);
+
+    if (pathsToDelete.length > 0) {
+      try {
+        await supabase.storage.from('kruth-ai-assets').remove(pathsToDelete);
+      } catch (e) {
+        console.warn('Cleanup of input files from Supabase failed:', pathsToDelete, e);
+      }
     }
   }
 }
@@ -186,40 +222,3 @@ export async function uploadBufferToStorage(
 }
 
 // ─── Cleanup ────────────────────────────────────────
-
-export async function cleanupExpiredGenerations() {
-  const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours ago
-
-  // 1. Get expired generations
-  const { data: expired, error: fetchError } = await supabase
-    .from('generations')
-    .select('id, metadata, source_image_url, video_url, audio_prompt')
-    .lt('created_at', cutoffTime);
-
-  if (fetchError || !expired || expired.length === 0) return 0;
-
-  let deletedCount = 0;
-
-  for (const gen of expired) {
-    // Collect paths to delete
-    const pathsToDelete: string[] = [];
-    if (gen.metadata?.storage_path) pathsToDelete.push(gen.metadata.storage_path);
-    if (gen.metadata?.image_path) pathsToDelete.push(gen.metadata.image_path);
-    if (gen.metadata?.audio_path) pathsToDelete.push(gen.metadata.audio_path);
-
-    // Delete files
-    if (pathsToDelete.length > 0) {
-      try {
-        await supabase.storage.from('kruth-ai-assets').remove(pathsToDelete);
-      } catch (e) {
-        console.warn('Failed to delete files for generation:', gen.id, e);
-      }
-    }
-
-    // Delete DB row
-    await supabase.from('generations').delete().eq('id', gen.id);
-    deletedCount++;
-  }
-
-  return deletedCount;
-}

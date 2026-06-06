@@ -80,6 +80,35 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
+async function generateAzureTTS(text: string, voiceId: string): Promise<Buffer> {
+  const key = process.env.AZURE_SPEECH_KEY;
+  const region = process.env.AZURE_SPEECH_REGION || 'southeastasia';
+  if (!key) throw new Error('ไม่พบ AZURE_SPEECH_KEY ในระบบ');
+
+  console.log(`[Azure TTS] Generating Thai TTS audio for voice ID: ${voiceId}`);
+
+  const ssml = `<speak version='1.0' xml:lang='th-TH'><voice name='${voiceId}'>${text}</voice></speak>`;
+
+  const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+    method: 'POST',
+    headers: {
+      'Ocp-Apim-Subscription-Key': key,
+      'Content-Type': 'application/ssml+xml',
+      'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
+      'User-Agent': 'KruthAIVideoPlatform',
+    },
+    body: ssml,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Azure TTS API failed: ${response.status} - ${errorText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 export async function POST(req: NextRequest) {
   try {
     console.log('\n==================================');
@@ -94,6 +123,8 @@ export async function POST(req: NextRequest) {
     const userEmail = formData.get('user_email') as string;
     const userId = formData.get('user_id') as string;
     const modelType = formData.get('model_type') as string || 'fast';
+    const storageProvider = formData.get('storage_provider') as string || 'supabase';
+    const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
 
     if (!imageFile || !scriptText || !userEmail) {
       return NextResponse.json(
@@ -114,9 +145,15 @@ export async function POST(req: NextRequest) {
     const imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
     console.log('[STEP 1] Image uploaded:', imageUrl);
 
-    // 2. Generate Thai TTS audio via Botnoi
-    console.log('[STEP 2] Generating Botnoi TTS audio...');
-    const audioBuffer = await generateTTS(scriptText, voiceId);
+    // 2. Generate Thai TTS audio
+    let audioBuffer: Buffer;
+    if (ttsProvider === 'azure') {
+      console.log(`[STEP 2] Generating Azure TTS audio using voice ID: ${voiceId}...`);
+      audioBuffer = await generateAzureTTS(scriptText, voiceId);
+    } else {
+      console.log(`[STEP 2] Generating Botnoi TTS audio using voice ID: ${voiceId}...`);
+      audioBuffer = await generateTTS(scriptText, voiceId);
+    }
     const audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
     const audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
     console.log('[STEP 2] TTS audio uploaded:', audioUrl);
@@ -223,6 +260,8 @@ export async function POST(req: NextRequest) {
             situation_prompt: situationPrompt || '',
             model_name: isCinema ? 'wan-2.5-cinema' : 'kling-2.5-turbo',
             voice_id: voiceId,
+            tts_provider: ttsProvider,
+            storage_provider: storageProvider,
             aspect_ratio: aspectRatio,
             duration_estimate: duration,
             storage_path: videoPath,

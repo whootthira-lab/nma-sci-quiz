@@ -29,18 +29,32 @@ export async function POST(req: NextRequest) {
 
     if (expired && expired.length > 0) {
       for (const gen of expired) {
-        // Collect paths to delete
-        const pathsToDelete: string[] = [];
-        if (gen.metadata?.storage_path) pathsToDelete.push(gen.metadata.storage_path);
-        if (gen.metadata?.image_path) pathsToDelete.push(gen.metadata.image_path);
-        if (gen.metadata?.audio_path) pathsToDelete.push(gen.metadata.audio_path);
+        const isFirebase = gen.metadata?.storage_provider === 'firebase' || gen.video_url?.includes('firebasestorage');
 
-        // Delete from Storage
-        if (pathsToDelete.length > 0) {
+        // Collect paths to delete from Supabase
+        const supabasePaths: string[] = [];
+        if (gen.metadata?.image_path) supabasePaths.push(gen.metadata.image_path);
+        if (gen.metadata?.audio_path) supabasePaths.push(gen.metadata.audio_path);
+        if (gen.metadata?.driving_path) supabasePaths.push(gen.metadata.driving_path);
+        if (!isFirebase && gen.metadata?.storage_path) supabasePaths.push(gen.metadata.storage_path);
+
+        // Delete from Supabase Storage
+        if (supabasePaths.length > 0) {
           try {
-            await supabase.storage.from('kruth-ai-assets').remove(pathsToDelete);
+            await supabase.storage.from('kruth-ai-assets').remove(supabasePaths);
           } catch (e) {
-            console.warn('Failed to delete storage files for generation:', gen.id, e);
+            console.warn('Failed to delete Supabase storage files for generation:', gen.id, e);
+          }
+        }
+
+        // Delete from Firebase Storage (using server-side admin SDK)
+        if (isFirebase && gen.metadata?.storage_path) {
+          try {
+            const { adminStorage } = await import('../../../lib/admin');
+            const bucket = adminStorage.bucket();
+            await bucket.file(gen.metadata.storage_path).delete();
+          } catch (e) {
+            console.warn('Failed to delete Firebase Storage file for generation:', gen.id, e);
           }
         }
 

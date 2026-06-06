@@ -18,7 +18,7 @@ import {
   ToggleRight,
   AlertTriangle,
 } from 'lucide-react';
-import { supabase, cleanupExpiredGenerations } from '@/lib/supabase-db';
+import { supabase } from '@/lib/supabase-db';
 
 export default function AdminPage() {
   const { user, isAdmin, loading } = useAuth();
@@ -54,8 +54,8 @@ export default function AdminPage() {
       if (error) throw error;
 
       if (data) {
-        const mode1 = data.find(item => item.key === 'mode1_enabled');
-        const mode2 = data.find(item => item.key === 'mode2_enabled');
+        const mode1 = data.find((item: any) => item.key === 'mode1_enabled');
+        const mode2 = data.find((item: any) => item.key === 'mode2_enabled');
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
         setMode2Enabled(mode2 ? mode2.value === 'true' : true);
       }
@@ -91,7 +91,7 @@ export default function AdminPage() {
       if (gensError) throw gensError;
 
       let mode1 = 0, mode2 = 0;
-      gens?.forEach((d) => {
+      gens?.forEach((d: any) => {
         if (d.metadata?.mode === 'text-to-video') mode1++;
         else mode2++;
       });
@@ -121,8 +121,13 @@ export default function AdminPage() {
   const handleCleanup = async () => {
     setCleaning(true);
     try {
-      const count = await cleanupExpiredGenerations();
-      setCleanedCount(count);
+      const res = await fetch('/api/cleanup', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setCleanedCount(data.deleted_count);
+      } else {
+        throw new Error(data.error || 'Failed to cleanup');
+      }
       await loadStats();
     } catch (err) {
       console.error('Cleanup failed:', err);

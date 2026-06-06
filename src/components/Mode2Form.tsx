@@ -26,6 +26,7 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
   const [drivingVideo, setDrivingVideo] = useState<File | null>(null);
   const [drivingVideoName, setDrivingVideoName] = useState('');
   const [selectedModel, setSelectedModel] = useState(FACE_MOTION_MODELS[0].id);
+  const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [processing, setProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +81,7 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
       formData.append('model_id', selectedModel);
       formData.append('user_email', user?.email || '');
       formData.append('user_id', user?.id || '');
+      formData.append('storage_provider', storageProvider);
 
       const model = FACE_MOTION_MODELS.find(m => m.id === selectedModel);
       setProcessingStage(`กำลังประมวลผลด้วย ${model?.name || 'AI'}...`);
@@ -229,6 +231,37 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
             </div>
           </div>
           <input ref={videoInputRef} type="file" accept="video/*" onChange={handleVideoChange} className="hidden" />
+        </div>
+
+        {/* Storage Option */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            สถานที่เก็บไฟล์คลิปวิดีโอ (Storage)
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setStorageProvider('supabase')}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                storageProvider === 'supabase'
+                  ? 'bg-accent-primary/10 border border-accent-primary/30 text-accent-primary shadow-sm'
+                  : 'bg-surface-2/50 border border-white/5 hover:border-white/10 text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              🟢 Supabase Storage
+            </button>
+            <button
+              type="button"
+              onClick={() => setStorageProvider('firebase')}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                storageProvider === 'firebase'
+                  ? 'bg-accent-primary/10 border border-accent-primary/30 text-accent-primary shadow-sm'
+                  : 'bg-surface-2/50 border border-white/5 hover:border-white/10 text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              🔥 Firebase Storage
+            </button>
+          </div>
         </div>
 
         {/* Submit */}

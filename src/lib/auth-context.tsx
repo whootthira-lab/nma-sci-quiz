@@ -78,12 +78,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 1. Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((res: any) => {
+      const session = res?.data?.session;
       handleAuthUser(session?.user ?? null);
     });
 
     // 2. Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       handleAuthUser(session?.user ?? null);
     });
 
