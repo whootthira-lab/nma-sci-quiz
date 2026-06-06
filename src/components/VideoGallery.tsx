@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { getUserGenerations, deleteGeneration } from '@/lib/firebase';
+import { getUserGenerations, deleteGeneration } from '@/lib/supabase-db';
 import type { GenerationDoc } from '@/types';
 
 interface VideoGalleryProps {

@@ -1,14 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import {
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  onAuthStateChanged,
-  User,
-} from 'firebase/auth';
-import { auth, checkWhitelistUser, updateUserLogin, isSessionValid } from './firebase';
+import { User } from '@supabase/supabase-js';
+import { supabase, checkWhitelistUser, updateUserLogin, isSessionValid } from './supabase-db';
 
 // 👑 กำหนดอีเมล Super Admin (เปลี่ยนเป็นอีเมล Google ของตัวเองได้เลยครับ)
 const SUPER_ADMIN_EMAIL = 'whootthira@gmail.com'; 
@@ -37,77 +31,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser?.email) {
-        const isSuperAdmin = firebaseUser.email === SUPER_ADMIN_EMAIL;
+  const handleAuthUser = useCallback(async (supabaseUser: User | null) => {
+    if (supabaseUser?.email) {
+      const email = supabaseUser.email;
+      const isSuperAdmin = email === SUPER_ADMIN_EMAIL;
+      
+      // 🛡️ Super Admin ผ่านฉลุยเสมอโดยไม่ต้องเช็ก Session
+      const valid = isSuperAdmin ? true : await isSessionValid(email);
+      
+      if (valid) {
+        const userData = await checkWhitelistUser(email);
         
-        // 🛡️ Super Admin ผ่านฉลุยเสมอโดยไม่ต้องเช็ก Session
-        const valid = isSuperAdmin ? true : await isSessionValid(firebaseUser.email);
-        
-        if (valid) {
-          const userData = await checkWhitelistUser(firebaseUser.email);
+        // 🛡️ Super Admin เข้าได้เสมอ แม้จะไม่มีรายชื่อใน Whitelist Database
+        if (userData || isSuperAdmin) {
+          setUser(supabaseUser);
+          setIsAdmin(isSuperAdmin ? true : !!userData?.is_admin);
+          setError(null);
           
-          // 🛡️ Super Admin เข้าได้เสมอ แม้จะไม่มีรายชื่อใน Whitelist Database
-          if (userData || isSuperAdmin) {
-            setUser(firebaseUser);
-            setIsAdmin(isSuperAdmin ? true : !!userData?.is_admin);
-          } else {
-            await firebaseSignOut(auth);
-            setUser(null);
-            setIsAdmin(false);
+          // Update login timestamp
+          if (!isSuperAdmin || userData) {
+            await updateUserLogin(email);
           }
         } else {
-          await firebaseSignOut(auth);
+          await supabase.auth.signOut();
           setUser(null);
           setIsAdmin(false);
+          setError('อีเมลนี้ไม่ได้รับอนุญาตให้เข้าใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
         }
       } else {
+        await supabase.auth.signOut();
         setUser(null);
         setIsAdmin(false);
       }
-      setLoading(false);
-    });
-    return () => unsub();
+    } else {
+      setUser(null);
+      setIsAdmin(false);
+    }
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    // 1. Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleAuthUser(session?.user ?? null);
+    });
+
+    // 2. Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      handleAuthUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [handleAuthUser]);
 
   const signIn = useCallback(async () => {
     setError(null);
     setLoading(true);
     try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const email = result.user.email;
-      if (!email) throw new Error('ไม่พบอีเมลจาก Google Account');
-
-      const isSuperAdmin = email === SUPER_ADMIN_EMAIL;
-
-      // Check whitelist (ข้ามการเช็กถ้าเป็น Super Admin)
-      const userData = await checkWhitelistUser(email);
-      if (!userData && !isSuperAdmin) {
-        await firebaseSignOut(auth);
-        throw new Error('อีเมลนี้ไม่ได้รับอนุญาตให้เข้าใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
-      }
-
-      // Update login timestamp
-      if (!isSuperAdmin || userData) {
-         await updateUserLogin(email);
-      }
-      
-      setUser(result.user);
-      setIsAdmin(isSuperAdmin ? true : !!userData?.is_admin);
+      const { error: signInError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin + '/dashboard',
+        }
+      });
+      if (signInError) throw signInError;
     } catch (err: any) {
       setError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
       setUser(null);
-    } finally {
       setLoading(false);
     }
   }, []);
 
   const signOut = useCallback(async () => {
-    await firebaseSignOut(auth);
+    setLoading(true);
+    await supabase.auth.signOut();
     setUser(null);
     setIsAdmin(false);
+    setLoading(false);
   }, []);
 
   return (

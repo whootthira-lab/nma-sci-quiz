@@ -1,19 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
-async function uploadToFirebaseStorage(
+async function uploadToSupabaseStorage(
   buffer: Buffer,
   path: string,
   contentType: string
 ): Promise<string> {
-  const { getStorage } = await import('firebase-admin/storage');
-  const bucket = getStorage().bucket();
-  const file = bucket.file(path);
-  await file.save(buffer, { contentType, public: true });
-  const [url] = await file.getSignedUrl({
-    action: 'read',
-    expires: Date.now() + 24 * 60 * 60 * 1000,
-  });
-  return url;
+  const supabaseUrl = process.env.SUPABASE_URL || '';
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  const { error } = await supabase.storage
+    .from('kruth-ai-assets')
+    .upload(path, buffer, {
+      contentType,
+      upsert: true,
+    });
+
+  if (error) {
+    console.error(`[Supabase Storage Error] Cannot upload: ${path}`, error);
+    throw new Error('อัปโหลดไฟล์ขึ้น Supabase Storage ไม่สำเร็จ');
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('kruth-ai-assets')
+    .getPublicUrl(path);
+
+  return publicUrl;
 }
 
 async function runFaceMotion(
@@ -114,6 +127,7 @@ export async function POST(req: NextRequest) {
     const drivingVideoFile = formData.get('driving_video') as File;
     const modelId = formData.get('model_id') as string || 'liveportrait';
     const userEmail = formData.get('user_email') as string;
+    const userId = formData.get('user_id') as string;
 
     if (!imageFile || !drivingVideoFile || !userEmail) {
       return NextResponse.json(
@@ -127,12 +141,12 @@ export async function POST(req: NextRequest) {
     // 1. Upload reference image
     const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
     const imagePath = `references/${userEmail}/${timestamp}_face.${imageFile.type.split('/')[1] || 'png'}`;
-    const imageUrl = await uploadToFirebaseStorage(imageBuffer, imagePath, imageFile.type);
+    const imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
 
     // 2. Upload driving video
     const videoBuffer = Buffer.from(await drivingVideoFile.arrayBuffer());
     const drivingPath = `driving/${userEmail}/${timestamp}_driving.mp4`;
-    const drivingVideoUrl = await uploadToFirebaseStorage(videoBuffer, drivingPath, 'video/mp4');
+    const drivingVideoUrl = await uploadToSupabaseStorage(videoBuffer, drivingPath, 'video/mp4');
 
     // 3. Run face motion AI
     const tempVideoUrl = await runFaceMotion(imageUrl, drivingVideoUrl, modelId);
@@ -141,16 +155,50 @@ export async function POST(req: NextRequest) {
       throw new Error('No video URL returned from face motion AI');
     }
 
-    // 4. Proxy: Download and re-upload to Firebase Storage
+    // 4. Proxy: Download and re-upload to Supabase Storage
     const outputResponse = await fetch(tempVideoUrl);
     const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
     const outputPath = `videos/${userEmail}/${timestamp}_facemotion.mp4`;
-    const persistentUrl = await uploadToFirebaseStorage(outputBuffer, outputPath, 'video/mp4');
+    const persistentUrl = await uploadToSupabaseStorage(outputBuffer, outputPath, 'video/mp4');
 
     const modelNames: Record<string, string> = {
       liveportrait: 'LivePortrait',
       hallo: 'Hallo',
     };
+
+    // 5. Save generation history to Supabase generations table
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    let finalUserId = userId;
+    if (!finalUserId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', userEmail)
+        .single();
+      finalUserId = profile?.id || '';
+    }
+
+    if (finalUserId) {
+      await supabase
+        .from('generations')
+        .insert({
+          user_id: finalUserId,
+          prompt: `Face motion using model: ${modelNames[modelId] || modelId}`,
+          source_image_url: imageUrl,
+          status: 'completed',
+          video_url: persistentUrl,
+          metadata: {
+            mode: 'face-motion',
+            model_name: modelNames[modelId] || modelId,
+            storage_path: outputPath,
+            image_path: imagePath,
+            driving_path: drivingPath
+          }
+        });
+    }
 
     return NextResponse.json({
       success: true,

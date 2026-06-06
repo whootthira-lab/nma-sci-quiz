@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,45 +11,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { adminDb, adminStorage } = await import('../../../lib/admin');
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const firestore = adminDb;
-    const storage = adminStorage.bucket();
-    const admin = await import('firebase-admin');
-    const now = admin.firestore.Timestamp.now();
+    const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours ago
 
-    const expiredQuery = await firestore
-      .collection('generations')
-      .where('expires_at', '<=', now)
-      .get();
+    // Get expired generations
+    const { data: expired, error: fetchError } = await supabase
+      .from('generations')
+      .select('id, metadata, source_image_url, video_url, audio_prompt')
+      .lt('created_at', cutoffTime);
+
+    if (fetchError) throw fetchError;
 
     let deletedCount = 0;
-    const batch = firestore.batch();
 
-    for (const doc of expiredQuery.docs) {
-      const data = doc.data();
+    if (expired && expired.length > 0) {
+      for (const gen of expired) {
+        // Collect paths to delete
+        const pathsToDelete: string[] = [];
+        if (gen.metadata?.storage_path) pathsToDelete.push(gen.metadata.storage_path);
+        if (gen.metadata?.image_path) pathsToDelete.push(gen.metadata.image_path);
+        if (gen.metadata?.audio_path) pathsToDelete.push(gen.metadata.audio_path);
 
-      if (data.storage_path) {
-        try {
-          await storage.file(data.storage_path).delete();
-        } catch (e) {}
+        // Delete from Storage
+        if (pathsToDelete.length > 0) {
+          try {
+            await supabase.storage.from('kruth-ai-assets').remove(pathsToDelete);
+          } catch (e) {
+            console.warn('Failed to delete storage files for generation:', gen.id, e);
+          }
+        }
+
+        // Delete DB row
+        const { error: deleteError } = await supabase
+          .from('generations')
+          .delete()
+          .eq('id', gen.id);
+
+        if (deleteError) {
+          console.error('Failed to delete generation row:', gen.id, deleteError);
+        } else {
+          deletedCount++;
+        }
       }
-
-      if (data.image_url && data.image_url.includes('firebase')) {
-        try {
-          const imagePath = decodeURIComponent(
-            data.image_url.split('/o/')[1]?.split('?')[0] || ''
-          );
-          if (imagePath) await storage.file(imagePath).delete();
-        } catch (e) {}
-      }
-
-      batch.delete(doc.ref);
-      deletedCount++;
-    }
-
-    if (deletedCount > 0) {
-      await batch.commit();
     }
 
     return NextResponse.json({

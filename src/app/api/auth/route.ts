@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,23 +11,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { adminDb } = await import('../../../lib/admin');
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const userDoc = await adminDb.collection('users').doc(email).get();
-    if (!userDoc.exists) {
+    const isSuperAdmin = email === 'whootthira@gmail.com';
+
+    // Check whitelist
+    const { data: whitelistData, error: whitelistError } = await supabase
+      .from('whitelist')
+      .select('email')
+      .eq('email', email)
+      .single();
+
+    if (whitelistError && !isSuperAdmin) {
       return NextResponse.json({ valid: false, error: 'User not whitelisted' });
     }
 
-    const userData = userDoc.data();
-    const now = new Date();
-    const expiresAt = userData?.expires_at?.toDate();
-    if (expiresAt && expiresAt < now) {
-      return NextResponse.json({ valid: false, error: 'Session expired' });
-    }
+    // Check profile
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('email', email)
+      .single();
 
     return NextResponse.json({
       valid: true,
-      is_admin: !!userData?.is_admin,
+      is_admin: profileData?.role === 'admin' || isSuperAdmin,
     });
   } catch (error: any) {
     console.error('Auth check error:', error);

@@ -18,8 +18,7 @@ import {
   ToggleRight,
   AlertTriangle,
 } from 'lucide-react';
-import { db, cleanupExpiredGenerations } from '@/lib/firebase';
-import { collection, getDocs, query, where, orderBy, doc, setDoc, getDoc } from 'firebase/firestore';
+import { supabase, cleanupExpiredGenerations } from '@/lib/supabase-db';
 
 export default function AdminPage() {
   const { user, isAdmin, loading } = useAuth();
@@ -49,12 +48,16 @@ export default function AdminPage() {
 
   const loadConfig = async () => {
     try {
-      const configRef = doc(db, 'admin_config', 'settings');
-      const snap = await getDoc(configRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        setMode1Enabled(data.mode1_enabled ?? true);
-        setMode2Enabled(data.mode2_enabled ?? true);
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('key, value');
+      if (error) throw error;
+
+      if (data) {
+        const mode1 = data.find(item => item.key === 'mode1_enabled');
+        const mode2 = data.find(item => item.key === 'mode2_enabled');
+        setMode1Enabled(mode1 ? mode1.value === 'true' : true);
+        setMode2Enabled(mode2 ? mode2.value === 'true' : true);
       }
     } catch (err) {
       console.error('Failed to load config:', err);
@@ -63,8 +66,16 @@ export default function AdminPage() {
 
   const saveConfig = async (field: string, value: boolean) => {
     try {
-      const configRef = doc(db, 'admin_config', 'settings');
-      await setDoc(configRef, { [field]: value }, { merge: true });
+      const key = field === 'mode1_enabled' ? 'mode1_enabled' : 'mode2_enabled';
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key,
+          value: String(value),
+          description: `Master switch for ${field}`,
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
     } catch (err) {
       console.error('Failed to save config:', err);
     }
@@ -73,26 +84,31 @@ export default function AdminPage() {
   const loadStats = async () => {
     setLoadingStats(true);
     try {
-      // Count generations
-      const gensSnap = await getDocs(collection(db, 'generations'));
+      // Get generations
+      const { data: gens, error: gensError } = await supabase
+        .from('generations')
+        .select('metadata');
+      if (gensError) throw gensError;
+
       let mode1 = 0, mode2 = 0;
-      gensSnap.docs.forEach((d) => {
-        const data = d.data();
-        if (data.mode === 'text-to-video') mode1++;
+      gens?.forEach((d) => {
+        if (d.metadata?.mode === 'text-to-video') mode1++;
         else mode2++;
       });
 
-      // Count users
-      const usersSnap = await getDocs(collection(db, 'users'));
+      // Count users from whitelist table
+      const { count: totalUsers, error: usersError } = await supabase
+        .from('whitelist')
+        .select('*', { count: 'exact', head: true });
+      if (usersError) throw usersError;
 
-      // Estimate costs (rough: $0.05/video for TTS, $0.10 for video gen)
       const estimatedCost = mode1 * 0.15 + mode2 * 0.10;
 
       setStats({
-        totalGenerations: gensSnap.size,
+        totalGenerations: gens?.length || 0,
         mode1Count: mode1,
         mode2Count: mode2,
-        totalUsers: usersSnap.size,
+        totalUsers: totalUsers || 0,
         estimatedCost,
       });
     } catch (err) {

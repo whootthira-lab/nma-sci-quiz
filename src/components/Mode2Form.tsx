@@ -79,6 +79,7 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
       formData.append('mode', 'face-motion');
       formData.append('model_id', selectedModel);
       formData.append('user_email', user?.email || '');
+      formData.append('user_id', user?.id || '');
 
       const model = FACE_MOTION_MODELS.find(m => m.id === selectedModel);
       setProcessingStage(`กำลังประมวลผลด้วย ${model?.name || 'AI'}...`);

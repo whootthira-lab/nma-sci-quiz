@@ -126,6 +126,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('voice_id', selectedVoice);
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || 'user@kruth.com');
+      formData.append('user_id', user?.id || '');
       formData.append('model_type', modelType);
 
       const response = await fetch('/api/generate-video', {

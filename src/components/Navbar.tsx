@@ -64,15 +64,15 @@ export default function Navbar() {
           {/* User */}
           <div className="hidden md:flex items-center gap-3">
             <div className="flex items-center gap-2">
-              {user?.photoURL && (
+              {user?.user_metadata?.avatar_url && (
                 <img
-                  src={user.photoURL}
+                  src={user.user_metadata.avatar_url}
                   alt=""
                   className="w-7 h-7 rounded-full border border-white/10"
                 />
               )}
               <span className="text-sm text-text-secondary truncate max-w-[150px]">
-                {user?.displayName || user?.email}
+                {user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email}
               </span>
               {isAdmin && (
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-accent-warm/15 text-accent-warm border border-accent-warm/20">
