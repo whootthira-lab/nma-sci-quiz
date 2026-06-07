@@ -109,6 +109,29 @@ async function generateAzureTTS(text: string, voiceId: string): Promise<Buffer> 
   return Buffer.from(arrayBuffer);
 }
 
+function getWanVideoParams(targetSeconds: number) {
+  // Constraints:
+  // num_frames must be between 81 and 100
+  // frames_per_second must be between 5 and 24
+  let bestFrames = 81;
+  let bestFps = 16;
+  let minDiff = Infinity;
+
+  for (let frames = 81; frames <= 100; frames++) {
+    for (let fps = 5; fps <= 24; fps++) {
+      const duration = frames / fps;
+      const diff = Math.abs(duration - targetSeconds);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestFrames = frames;
+        bestFps = fps;
+      }
+    }
+  }
+
+  return { num_frames: bestFrames, frames_per_second: bestFps };
+}
+
 export async function POST(req: NextRequest) {
   try {
     console.log('\n==================================');
@@ -159,14 +182,7 @@ export async function POST(req: NextRequest) {
     const audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
     console.log('[STEP 2] TTS audio uploaded:', audioUrl);
 
-    // 3. Estimate duration and configure dimensions
-    const dimensions: Record<string, { width: number; height: number }> = {
-      '1:1': { width: 512, height: 512 },
-      '16:9': { width: 832, height: 480 },
-      '9:16': { width: 480, height: 832 },
-    };
-    const dim = dimensions[aspectRatio] || dimensions['16:9'];
-
+    // 3. Configure endpoint
     const isCinema = modelType === 'cinema';
     const modelEndpoint = isCinema
       ? 'fal-ai/wan-i2v'
@@ -179,16 +195,20 @@ export async function POST(req: NextRequest) {
 
     let requestBody: Record<string, any>;
     if (isCinema) {
+      const wanParams = getWanVideoParams(selectedDuration);
+      console.log(`[Wan 2.5 Cinema Params] Selected duration: ${selectedDuration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
+      
       requestBody = {
         image_url: imageUrl,
         prompt: combinedPrompt,
         negative_prompt: 'blurry, distorted, low quality, static, frozen',
-        num_frames: Math.min(selectedDuration * 8, 240),
-        width: dim.width,
-        height: dim.height,
+        num_frames: wanParams.num_frames,
+        frames_per_second: wanParams.frames_per_second,
+        aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+        resolution: '720p',
         num_inference_steps: 30,
-        guidance_scale: 5.0,
-        flow_shift: 3.0,
+        guide_scale: 5.0,
+        shift: 3.0,
       };
     } else {
       requestBody = {
