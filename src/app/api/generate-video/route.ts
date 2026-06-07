@@ -122,6 +122,7 @@ export async function POST(req: NextRequest) {
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
     const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
+    const safetyFilterDisabled = formData.get('safety_filter_disabled') === 'true';
 
     const isMotionControl = modelType === 'motion-control';
 
@@ -185,9 +186,14 @@ export async function POST(req: NextRequest) {
 
     // 3. Configure endpoint
     const isCinema = modelType === 'cinema';
+    const isMotionControlModel = modelType === 'motion-control';
+    const isGrok = modelType === 'grok-video';
     const modelEndpoint = isCinema
       ? 'fal-ai/wan-i2v'
-      : (isMotionControl ? 'fal-ai/kling-video/v2.6/standard/motion-control' : 'fal-ai/kling-video/v2.5/turbo/image-to-video');
+      : (isMotionControlModel 
+          ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
+          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5/turbo/image-to-video')
+        );
 
     // 4. Build Fal.ai request body
     const combinedPrompt = situationPrompt
@@ -212,7 +218,7 @@ export async function POST(req: NextRequest) {
         guide_scale: 5.0,
         shift: 3.0,
       };
-    } else if (isMotionControl) {
+    } else if (isMotionControlModel) {
       requestBody = {
         image_url: imageUrl,
         video_url: videoUrl,
@@ -222,6 +228,15 @@ export async function POST(req: NextRequest) {
       if (situationPrompt) {
         requestBody.prompt = situationPrompt;
       }
+    } else if (isGrok) {
+      requestBody = {
+        image_url: imageUrl,
+        prompt: combinedPrompt,
+        aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+        duration: selectedDuration,
+        enable_safety_checker: !safetyFilterDisabled,
+        enable_safety_checks: !safetyFilterDisabled,
+      };
     } else {
       requestBody = {
         image_url: imageUrl,
@@ -321,7 +336,12 @@ export async function POST(req: NextRequest) {
             mode: isMotionControl ? 'motion-control' : 'text-to-video',
             script_text: isMotionControl && motionAudioSource === 'video' ? '' : scriptText,
             situation_prompt: situationPrompt || '',
-            model_name: isMotionControl ? 'kling-2.6-motion-control' : (isCinema ? 'wan-2.5-cinema' : 'kling-2.5-turbo'),
+            model_name: isMotionControl 
+              ? 'kling-2.6-motion-control' 
+              : (isCinema 
+                  ? 'wan-2.5-cinema' 
+                  : (modelType === 'grok-video' ? 'grok-1.5-imagine-video' : 'kling-2.5-turbo')
+                ),
             voice_id: isMotionControl && motionAudioSource === 'video' ? '' : voiceId,
             tts_provider: ttsProvider,
             storage_provider: storageProvider,

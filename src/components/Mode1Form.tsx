@@ -42,6 +42,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   // KRUTH Engine Model Selection
   const [modelType, setModelType] = useState('fast'); 
   const isMotionControl = modelType === 'motion-control';
+  const isGrok = modelType === 'grok-video';
+
+  // Safety filter and legal liability modal states
+  const [safetyFilterDisabled, setSafetyFilterDisabled] = useState<boolean>(false);
+  const [showLiabilityModal, setShowLiabilityModal] = useState<boolean>(false);
 
   // Kling v2.6 Motion Control states
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -68,13 +73,17 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
   // Adjust selected duration if model changes and previous duration is invalid
   useEffect(() => {
-    const validOptions = modelType === 'cinema' ? [5, 10, 15, 25] : [5, 10];
+    const validOptions = modelType === 'cinema'
+      ? [5, 10, 15, 25]
+      : (modelType === 'grok-video' ? [5, 10, 15] : [5, 10]);
     if (!validOptions.includes(selectedDuration)) {
       setSelectedDuration(5);
     }
   }, [modelType, selectedDuration]);
 
-  const durationOptions = modelType === 'cinema' ? [5, 10, 15, 25] : [5, 10];
+  const durationOptions = modelType === 'cinema'
+    ? [5, 10, 15, 25]
+    : (modelType === 'grok-video' ? [5, 10, 15] : [5, 10]);
   
   // สถานะการทำงาน
   const [processing, setProcessing] = useState(false);
@@ -197,27 +206,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
   };
 
-  const handleSubmit = async () => {
-    if (modelType === 'motion-control') {
-      if (!imageFile || !videoFile) {
-        setError('กรุณาอัพโหลดรูปภาพและวิดีโอต้นแบบ');
-        return;
-      }
-      if (motionAudioSource === 'botnoi' && !scriptText.trim()) {
-        setError('กรุณากรอกบทพากย์สำหรับเสียง Botnoi');
-        return;
-      }
-    } else {
-      if (!imageFile || !scriptText.trim()) {
-        setError('กรุณาอัพโหลดรูปภาพและกรอกบทพากย์');
-        return;
-      }
-    }
-    if (charCount > maxChars) {
-      setError(`บทพากย์ต้องไม่เกิน ${maxChars} ตัวอักษร`);
-      return;
-    }
-
+  const executeSubmit = async () => {
+    setShowLiabilityModal(false);
     setProcessing(true);
     setProcessingProgress(0);
     setError(null);
@@ -226,7 +216,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setProcessingStage('กำลังอัพโหลดข้อมูลเข้าสู่ KRUTH Engine...');
       setProcessingProgress(5);
       const formData = new FormData();
-      formData.append('image', imageFile);
+      formData.append('image', imageFile!);
       if (modelType === 'motion-control') {
         formData.append('video', videoFile!);
         formData.append('motion_audio_source', motionAudioSource);
@@ -243,6 +233,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('storage_provider', storageProvider);
       formData.append('tts_provider', ttsProvider);
       formData.append('duration', String(selectedDuration));
+      formData.append('safety_filter_disabled', String(safetyFilterDisabled));
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -267,6 +258,38 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
   };
 
+  const handleSubmit = async () => {
+    if (modelType === 'motion-control') {
+      if (!imageFile || !videoFile) {
+        setError('กรุณาอัพโหลดรูปภาพและวิดีโอต้นแบบ');
+        return;
+      }
+      if (motionAudioSource === 'botnoi' && !scriptText.trim()) {
+        setError('กรุณากรอกบทพากย์สำหรับเสียง Botnoi');
+        return;
+      }
+    } else {
+      if (!imageFile || !scriptText.trim()) {
+        setError('กรุณาอัพโหลดรูปภาพและกรอกบทพากย์');
+        return;
+      }
+    }
+    if (charCount > maxChars) {
+      setError(`บทพากย์ต้องไม่เกิน ${maxChars} ตัวอักษร`);
+      return;
+    }
+
+    // Check if we need to show the liability consent modal (safety filter disabled, or 18+/person lookalike keywords)
+    const hasAdultKeywords = /18\+|adult|nude|sexy|NSFW|เสียว|โป๊|เปลือย|18 บวก|คนจริง|หน้าเหมือน/i.test(scriptText) || /18\+|adult|nude|sexy|NSFW|เสียว|โป๊|เปลือย|18 บวก|คนจริง|หน้าเหมือน/i.test(situationPrompt);
+    
+    if (safetyFilterDisabled || hasAdultKeywords) {
+      setShowLiabilityModal(true);
+      return;
+    }
+
+    await executeSubmit();
+  };
+
   const aspectIcons: Record<string, React.ReactNode> = {
     '1:1': <Square className="w-4 h-4" />,
     '16:9': <RectangleHorizontal className="w-4 h-4" />,
@@ -281,20 +304,39 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         
         {/* Admin Model Selector */}
         {isAdmin && (
-          <div className="flex items-center justify-between p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4">
-            <div className="flex items-center gap-2 text-[#D4AF37] font-semibold text-sm">
-              <Settings className="w-4 h-4" />
-              <span>Admin Engine Settings</span>
+          <div className="space-y-3 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[#D4AF37] font-semibold text-sm">
+                <Settings className="w-4 h-4" />
+                <span>Admin Engine Settings</span>
+              </div>
+              <select 
+                value={modelType}
+                onChange={(e) => setModelType(e.target.value)}
+                className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer"
+              >
+                <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
+                <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
+                <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
+                <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
+              </select>
             </div>
-            <select 
-              value={modelType}
-              onChange={(e) => setModelType(e.target.value)}
-              className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer"
-            >
-              <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
-              <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
-              <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
-            </select>
+            
+            {/* Content Safety Switch */}
+            <div className="flex items-center justify-between border-t border-[#D4AF37]/20 pt-2 text-xs">
+              <span className="text-gray-700 font-thai font-medium">ปิดระบบกรองเนื้อหาความปลอดภัย (Disable Safety Filter / NSFW)</span>
+              <button
+                type="button"
+                onClick={() => setSafetyFilterDisabled(!safetyFilterDisabled)}
+                className={`px-3 py-1 rounded-lg font-thai font-bold transition-all ${
+                  safetyFilterDisabled
+                    ? 'bg-accent-danger text-white hover:bg-accent-danger-hover shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-300 hover:border-gray-400'
+                }`}
+              >
+                {safetyFilterDisabled ? '🔴 ปิดการกรอง (NSFW On)' : '🟢 เปิดการกรอง (NSFW Off)'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -603,6 +645,51 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             setTempImageSrc(null);
           }}
         />
+      )}
+
+      {showLiabilityModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in font-thai">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-lg w-full overflow-hidden animate-scale-up">
+            {/* Header */}
+            <div className="bg-accent-danger/10 border-b border-accent-danger/20 p-5 flex items-center gap-3">
+              <AlertCircle className="w-7 h-7 text-accent-danger flex-shrink-0" />
+              <div>
+                <h3 className="text-lg font-bold text-accent-danger">คำเตือนและข้อตกลงการรับผิดชอบทางกฎหมาย</h3>
+                <p className="text-xs text-accent-danger/80">กรุณาอ่านเงื่อนไขก่อนดำเนินการต่อ</p>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-800 leading-relaxed font-medium">
+                เนื่องจากคุณเลือกปิดระบบกรองความปลอดภัย (NSFW/Safety Filter) หรือคำสั่งของคุณมีความละเอียดอ่อน เช่น เนื้อหา 18+ หรือมีความเป็นรูปภาพบุคคลใกล้เคียงคนจริง
+              </p>
+              <div className="p-4 bg-accent-danger/5 border border-accent-danger/20 rounded-xl text-xs text-gray-700 leading-relaxed space-y-2">
+                <p className="font-bold text-accent-danger text-sm">ข้อกำหนดความรับผิดชอบ:</p>
+                <p>1. ผู้ใช้บริการตกลงและยอมรับว่าจะเป็นผู้รับผิดชอบต่อความเสียหายและผลกระทบทางกฎหมายใดๆ ที่เกิดขึ้นจากการสร้าง แชร์ หรือนำวิดีโอนี้ไปใช้ แต่เพียงผู้เดียว</p>
+                <p>2. ผู้ให้บริการแพลตฟอร์มนี้ (Platform Provider) ไม่มีส่วนเกี่ยวข้อง ไม่มีส่วนรับรู้ และจะไม่รับผิดชอบใดๆ ทั้งสิ้นในประเด็นทางกฎหมาย คดีความ หรือการละเมิดลิขสิทธิ์และสิทธิ์ส่วนบุคคลที่เกิดขึ้น</p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 p-4 border-t border-gray-150 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowLiabilityModal(false)}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-bold hover:bg-gray-100 transition-colors"
+              >
+                ยกเลิก (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={executeSubmit}
+                className="flex-1 py-2.5 rounded-xl bg-accent-danger text-white font-bold hover:bg-accent-danger-hover transition-colors shadow-md"
+              >
+                ฉันยอมรับและขอรับผิดชอบเอง
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

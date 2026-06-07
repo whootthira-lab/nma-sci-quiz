@@ -42,9 +42,13 @@ export async function POST(req: NextRequest) {
 
     const isCinema = modelType === 'cinema';
     const isMotionControl = modelType === 'motion-control';
+    const isGrok = modelType === 'grok-video';
     const modelEndpoint = isCinema
       ? 'fal-ai/wan-i2v'
-      : (isMotionControl ? 'fal-ai/kling-video/v2.6/standard/motion-control' : 'fal-ai/kling-video/v2.5/turbo/image-to-video');
+      : (isMotionControl 
+          ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
+          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5/turbo/image-to-video')
+        );
 
     // Fal.ai queue parent namespace is always the first two segments of the model path
     const queueNamespace = modelEndpoint.split('/').slice(0, 2).join('/');
@@ -117,10 +121,12 @@ export async function POST(req: NextRequest) {
       const audioUrl = genRow?.audio_prompt;
       
       let finalVideoUrl = tempUrl;
-      const isKling = modelName ? modelName.toLowerCase().includes('kling') : (modelType === 'fast');
+      const isMergeRequired = modelName 
+        ? (modelName.toLowerCase().includes('kling') || modelName.toLowerCase().includes('grok')) 
+        : (modelType === 'fast' || modelType === 'grok-video' || modelType === 'motion-control');
 
-      if (isKling && audioUrl) {
-        console.log(`⏳ [FFmpeg Merge] Kling silent video: ${tempUrl} with audio: ${audioUrl}...`);
+      if (isMergeRequired && audioUrl) {
+        console.log(`⏳ [FFmpeg Merge] Kling/Grok video: ${tempUrl} with audio: ${audioUrl}...`);
         try {
           const mergeResponse = await fetch('https://fal.run/fal-ai/ffmpeg-api/merge-audio-video', {
             method: 'POST',
