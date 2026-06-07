@@ -47,7 +47,7 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
 
   console.log(`[Botnoi] กำลังสร้างเสียงด้วย Speaker ID: ${speakerId}`);
 
-  const botnoiResponse = await fetch('https://api-voice.botnoi.ai/openapi/v1/generate_audio', {
+  const botnoiResponse = await fetch('https://api-voice.botnoi.ai/api/service/generate_audio', {
     method: 'POST',
     headers: {
       'Botnoi-Token': botnoiToken,
@@ -63,7 +63,19 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   });
 
   if (!botnoiResponse.ok) {
-    throw new Error(`Botnoi API failed: ${botnoiResponse.status}`);
+    let errorText = '';
+    try {
+      errorText = await botnoiResponse.text();
+      const errorJson = JSON.parse(errorText);
+      if (errorJson && errorJson.message) {
+        throw new Error(`Botnoi API failed: ${errorJson.message} (กรุณาเติมเครดิต Botnoi หรือติดต่อผู้ดูแลระบบ)`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('Botnoi API failed:')) {
+        throw e;
+      }
+    }
+    throw new Error(`Botnoi API failed: ${botnoiResponse.status}${errorText ? ` - ${errorText}` : ''}`);
   }
 
   const data = await botnoiResponse.json();
