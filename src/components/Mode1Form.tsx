@@ -37,7 +37,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
-  const ttsProvider = 'botnoi';
+  const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'google'>('botnoi');
 
   // KRUTH Engine Model Selection
   const [modelType, setModelType] = useState('fast'); 
@@ -501,7 +501,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                     : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
                 }`}
               >
-                🤖 เสียงจาก Botnoi Voice
+                🤖 เสียงพากย์ AI (TTS Voice)
               </button>
             </div>
           </div>
@@ -552,7 +552,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           />
         </div>
 
-        {/* Storage Option Switches */}
+        {/* Storage & TTS Option Switches */}
         <div className="space-y-4 p-4 rounded-2xl bg-gray-50 border border-gray-150">
           {/* Storage Option */}
           <div className="space-y-2">
@@ -581,6 +581,43 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 }`}
               >
                 🔥 Firebase
+              </button>
+            </div>
+          </div>
+
+          {/* TTS Provider Option */}
+          <div className="space-y-2 border-t border-gray-200 pt-3">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+              ผู้ให้บริการเสียงพากย์ (TTS Provider)
+            </label>
+            <div className="flex gap-2 max-w-md">
+              <button
+                type="button"
+                onClick={() => {
+                  setTtsProvider('botnoi');
+                  setSelectedVoice('1');
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  ttsProvider === 'botnoi'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🤖 Botnoi Voice
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTtsProvider('google');
+                  setSelectedVoice('th-TH-Neural2-C');
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  ttsProvider === 'google'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🌐 Google Neural2
               </button>
             </div>
           </div>

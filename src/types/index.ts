@@ -27,7 +27,7 @@ export interface GenerationDoc {
   duration_estimate?: number;
 }
 
-// ─── Thai Voice Options (Botnoi Edition) ────
+// ─── Thai Voice Options (Botnoi & Google Neural2 Edition) ────
 
 export interface ThaiVoice {
   id: string;
@@ -35,7 +35,7 @@ export interface ThaiVoice {
   label: string;
   gender: 'male' | 'female';
   sample_url: string;
-  provider: 'botnoi';
+  provider: 'botnoi' | 'google';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
@@ -46,6 +46,11 @@ export const THAI_VOICES: ThaiVoice[] = [
   { id: '4', name: 'Te', label: 'เท่ห์ (ชาย, วัยรุ่น)', gender: 'male', sample_url: '/samples/te.mp3', provider: 'botnoi' },
   { id: '15', name: 'Yim', label: 'ยิ้ม (หญิง, ร่าเริง)', gender: 'female', sample_url: '/samples/yim.mp3', provider: 'botnoi' },
   { id: '33', name: 'Lung', label: 'ลุง (ชาย, ใจดี)', gender: 'male', sample_url: '/samples/lung.mp3', provider: 'botnoi' },
+
+  // Google Cloud TTS (Neural2 & Standard)
+  { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: 'จี-เนอรัล C (หญิง, Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google' },
+  { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: 'จี-สแตนดาร์ด A (หญิง, คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google' },
+  { id: 'th-TH-Standard-F', name: 'G-Standard-F', label: 'จี-สแตนดาร์ด F (ชาย, คุ้มค่า)', gender: 'male', sample_url: '/samples/g-standard-f.mp3', provider: 'google' },
 ];
 
 // ─── Aspect Ratio Options ───────────────────────────
