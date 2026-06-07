@@ -34,7 +34,7 @@ async function uploadToFirebaseStorage(
 export async function POST(req: NextRequest) {
   try {
     const { requestId, videoPath, modelType, storageProvider } = await req.json();
-    const falKey = process.env.FAL_KEY;
+    const falKey = process.env.FAL_KEY || process.env.NEXT_PUBLIC_FAL_KEY || '';
 
     if (!requestId || !videoPath) {
       return NextResponse.json({ status: 'ERROR', error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
@@ -45,7 +45,8 @@ export async function POST(req: NextRequest) {
       ? 'fal-ai/wan/image-to-video'
       : 'fal-ai/kling-video/v2.5/turbo/image-to-video';
 
-    const checkResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}`, {
+    // 1. Fetch official queue status endpoint
+    const checkResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}/status`, {
       headers: {
         'Authorization': `Key ${falKey}`,
         'Accept': 'application/json'
@@ -54,17 +55,38 @@ export async function POST(req: NextRequest) {
     });
 
     if (!checkResponse.ok) {
+      console.error(`[KRUTH Status Fail] status: ${checkResponse.status}`);
+      if (checkResponse.status === 401 || checkResponse.status === 403) {
+        return NextResponse.json({ 
+          status: 'ERROR', 
+          error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
+        }, { status: checkResponse.status });
+      }
       return NextResponse.json({ status: 'WAITING' });
     }
 
     const statusData = await checkResponse.json();
+    const currentStatus = statusData.status;
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    if (statusData.status === 'COMPLETED') {
-      const tempUrl = statusData.video?.url || statusData.output?.video?.url || statusData.images?.[0]?.url;
+    if (currentStatus === 'COMPLETED') {
+      const detailResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}`, {
+        headers: {
+          'Authorization': `Key ${falKey}`,
+          'Accept': 'application/json'
+        },
+        cache: 'no-store'
+      });
+      
+      if (!detailResponse.ok) {
+        throw new Error(`ไม่สามารถดึงผลลัพธ์จาก Fal.ai ได้ (status: ${detailResponse.status})`);
+      }
+
+      const detailData = await detailResponse.json();
+      const tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url;
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
 
       let finalStorageProvider = storageProvider;
@@ -128,7 +150,7 @@ export async function POST(req: NextRequest) {
         progressMessage: '✅ เสร็จสมบูรณ์!'
       });
 
-    } else if (statusData.status === 'FAILED') {
+    } else if (currentStatus === 'FAILED') {
       console.error(`❌ [KRUTH Status] AI แจ้งเตือนข้อผิดพลาด:`, statusData.error);
 
       // Update generation status to failed in Supabase
@@ -153,16 +175,40 @@ export async function POST(req: NextRequest) {
     let progressMessage = 'กำลังประมวลผล...';
     let progressPercent = 10;
 
-    if (statusData.status === 'IN_QUEUE') {
+    if (currentStatus === 'IN_QUEUE') {
       const queuePos = statusData.queue_position ?? 1;
       progressMessage = `อยู่ในคิวประมวลผล (คิวที่ ${queuePos})`;
       progressPercent = Math.max(5, Math.min(15, 15 - queuePos));
-    } else if (statusData.status === 'IN_PROGRESS') {
+    } else if (currentStatus === 'IN_PROGRESS') {
       progressMessage = 'กำลังสร้างสรรค์วิดีโอ...';
-      progressPercent = 20;
-      if (statusData.logs && Array.isArray(statusData.logs) && statusData.logs.length > 0) {
-        for (let i = statusData.logs.length - 1; i >= 0; i--) {
-          const logText = statusData.logs[i].message || '';
+      progressPercent = 30;
+
+      let logs = statusData.logs;
+
+      // ถ้าไม่มี logs ใน statusData ให้ลองดึงจาก detail endpoint เป็นทางเลือกสำรอง
+      if (!logs || !Array.isArray(logs) || logs.length === 0) {
+        try {
+          const detailResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}`, {
+            headers: {
+              'Authorization': `Key ${falKey}`,
+              'Accept': 'application/json'
+            },
+            cache: 'no-store'
+          });
+          if (detailResponse.ok) {
+            const detailData = await detailResponse.json();
+            if (detailData.logs && Array.isArray(detailData.logs)) {
+              logs = detailData.logs;
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to fetch details for logs:', e);
+        }
+      }
+
+      if (logs && Array.isArray(logs) && logs.length > 0) {
+        for (let i = logs.length - 1; i >= 0; i--) {
+          const logText = logs[i].message || '';
           const pctMatch = logText.match(/(\d+)%/);
           if (pctMatch) {
             const pct = parseInt(pctMatch[1], 10);
@@ -186,7 +232,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ 
-      status: statusData.status,
+      status: currentStatus,
       progressMessage,
       progressPercent
     });
