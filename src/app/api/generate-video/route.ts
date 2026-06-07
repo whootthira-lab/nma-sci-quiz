@@ -80,35 +80,6 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function generateAzureTTS(text: string, voiceId: string): Promise<Buffer> {
-  const key = process.env.AZURE_SPEECH_KEY;
-  const region = process.env.AZURE_SPEECH_REGION || 'southeastasia';
-  if (!key) throw new Error('ไม่พบ AZURE_SPEECH_KEY ในระบบ');
-
-  console.log(`[Azure TTS] Generating Thai TTS audio for voice ID: ${voiceId}`);
-
-  const ssml = `<speak version='1.0' xml:lang='th-TH'><voice name='${voiceId}'>${text}</voice></speak>`;
-
-  const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
-    method: 'POST',
-    headers: {
-      'Ocp-Apim-Subscription-Key': key,
-      'Content-Type': 'application/ssml+xml',
-      'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
-      'User-Agent': 'KruthAIVideoPlatform',
-    },
-    body: ssml,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Azure TTS API failed: ${response.status} - ${errorText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
-
 function getWanVideoParams(targetSeconds: number) {
   // Constraints:
   // num_frames must be between 81 and 100
@@ -139,6 +110,8 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
     const imageFile = formData.get('image') as File;
+    const videoFile = formData.get('video') as File;
+    const motionAudioSource = formData.get('motion_audio_source') as string || 'video';
     const scriptText = formData.get('script_text') as string;
     const situationPrompt = formData.get('situation_prompt') as string;
     const voiceId = formData.get('voice_id') as string;
@@ -150,11 +123,28 @@ export async function POST(req: NextRequest) {
     const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
 
-    if (!imageFile || !scriptText || !userEmail) {
-      return NextResponse.json(
-        { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
-        { status: 400 }
-      );
+    const isMotionControl = modelType === 'motion-control';
+
+    if (isMotionControl) {
+      if (!imageFile || !videoFile || !userEmail) {
+        return NextResponse.json(
+          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและวิดีโอต้นแบบให้ครบ' },
+          { status: 400 }
+        );
+      }
+      if (motionAudioSource === 'botnoi' && !scriptText) {
+        return NextResponse.json(
+          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์สำหรับ Botnoi' },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!imageFile || !scriptText || !userEmail) {
+        return NextResponse.json(
+          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
+          { status: 400 }
+        );
+      }
     }
 
     const falKey = process.env.FAL_KEY;
@@ -169,24 +159,35 @@ export async function POST(req: NextRequest) {
     const imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
     console.log('[STEP 1] Image uploaded:', imageUrl);
 
-    // 2. Generate Thai TTS audio
-    let audioBuffer: Buffer;
-    if (ttsProvider === 'azure') {
-      console.log(`[STEP 2] Generating Azure TTS audio using voice ID: ${voiceId}...`);
-      audioBuffer = await generateAzureTTS(scriptText, voiceId);
-    } else {
-      console.log(`[STEP 2] Generating Botnoi TTS audio using voice ID: ${voiceId}...`);
-      audioBuffer = await generateTTS(scriptText, voiceId);
+    // 1.5. Upload reference video for Motion Control
+    let videoUrl = '';
+    let refVideoPath = '';
+    if (isMotionControl && videoFile) {
+      console.log('[STEP 1.5] Uploading reference video to Supabase...');
+      const videoBuffer = Buffer.from(await videoFile.arrayBuffer());
+      refVideoPath = `references/${userEmail}/${timestamp}_ref_video.${videoFile.type.split('/')[1] || 'mp4'}`;
+      videoUrl = await uploadToSupabaseStorage(videoBuffer, refVideoPath, videoFile.type);
+      console.log('[STEP 1.5] Reference video uploaded:', videoUrl);
     }
-    const audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
-    const audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
-    console.log('[STEP 2] TTS audio uploaded:', audioUrl);
+
+    // 2. Generate Thai TTS audio (only if needed)
+    let audioUrl = '';
+    let audioPath = '';
+    const needTTS = !isMotionControl || (isMotionControl && motionAudioSource === 'botnoi');
+    
+    if (needTTS && scriptText) {
+      console.log(`[STEP 2] Generating Botnoi TTS audio using voice ID: ${voiceId}...`);
+      const audioBuffer = await generateTTS(scriptText, voiceId);
+      audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
+      audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
+      console.log('[STEP 2] TTS audio uploaded:', audioUrl);
+    }
 
     // 3. Configure endpoint
     const isCinema = modelType === 'cinema';
     const modelEndpoint = isCinema
       ? 'fal-ai/wan-i2v'
-      : 'fal-ai/kling-video/v2.5/turbo/image-to-video';
+      : (isMotionControl ? 'fal-ai/kling-video/v2.6/standard/motion-control' : 'fal-ai/kling-video/v2.5/turbo/image-to-video');
 
     // 4. Build Fal.ai request body
     const combinedPrompt = situationPrompt
@@ -211,6 +212,16 @@ export async function POST(req: NextRequest) {
         guide_scale: 5.0,
         shift: 3.0,
       };
+    } else if (isMotionControl) {
+      requestBody = {
+        image_url: imageUrl,
+        video_url: videoUrl,
+        character_orientation: 'video',
+        keep_original_sound: motionAudioSource === 'video',
+      };
+      if (situationPrompt) {
+        requestBody.prompt = situationPrompt;
+      }
     } else {
       requestBody = {
         image_url: imageUrl,
@@ -301,24 +312,25 @@ export async function POST(req: NextRequest) {
         .from('generations')
         .insert({
           user_id: finalUserId,
-          prompt: combinedPrompt,
-          audio_prompt: audioUrl,
+          prompt: isMotionControl && situationPrompt ? situationPrompt : combinedPrompt,
+          audio_prompt: audioUrl || null,
           source_image_url: imageUrl,
           status: 'processing',
           fal_request_id: requestId,
           metadata: {
-            mode: 'text-to-video',
-            script_text: scriptText,
+            mode: isMotionControl ? 'motion-control' : 'text-to-video',
+            script_text: isMotionControl && motionAudioSource === 'video' ? '' : scriptText,
             situation_prompt: situationPrompt || '',
-            model_name: isCinema ? 'wan-2.5-cinema' : 'kling-2.5-turbo',
-            voice_id: voiceId,
+            model_name: isMotionControl ? 'kling-2.6-motion-control' : (isCinema ? 'wan-2.5-cinema' : 'kling-2.5-turbo'),
+            voice_id: isMotionControl && motionAudioSource === 'video' ? '' : voiceId,
             tts_provider: ttsProvider,
             storage_provider: storageProvider,
-            aspect_ratio: aspectRatio,
+            aspect_ratio: isMotionControl ? 'auto' : aspectRatio,
             duration_estimate: selectedDuration,
             storage_path: videoPath,
             image_path: imagePath,
-            audio_path: audioPath
+            audio_path: audioPath || null,
+            driving_path: refVideoPath || null
           }
         });
 
