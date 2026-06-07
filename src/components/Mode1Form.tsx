@@ -246,7 +246,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer"
             >
               <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
-              <option value="cinema">🎬 KRUTH Master (Wan 2.1 Cinema)</option>
+              <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
             </select>
           </div>
         )}
