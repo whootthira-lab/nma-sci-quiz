@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     const isCinema = modelType === 'cinema';
     const modelEndpoint = isCinema
-      ? 'fal-ai/wan/image-to-video'
+      ? 'fal-ai/wan-i2v'
       : 'fal-ai/kling-video/v2.5/turbo/image-to-video';
 
     // Fal.ai queue parent namespace is always the first two segments of the model path
