@@ -207,13 +207,45 @@ export async function POST(req: NextRequest) {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     let finalUserId = userId;
-    if (!finalUserId) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', userEmail)
-        .single();
-      finalUserId = profile?.id || '';
+    
+    // Fallback search in auth users if userId is not provided
+    if (!finalUserId && userEmail) {
+      try {
+        const { data: authUsers } = await supabase.auth.admin.listUsers();
+        const foundUser = authUsers?.users?.find(u => u.email?.toLowerCase() === userEmail.toLowerCase());
+        if (foundUser) {
+          finalUserId = foundUser.id;
+        }
+      } catch (e) {
+        console.warn('Error querying auth users:', e);
+      }
+    }
+
+    if (finalUserId) {
+      // Ensure the profile row exists in the profiles table to avoid foreign key violations
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', finalUserId)
+          .single();
+        
+        if (!profile) {
+          console.log(`[profiles] Creating missing profile row for user: ${finalUserId} (${userEmail})`);
+          const { error: profileInsertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: finalUserId,
+              email: userEmail,
+              role: userEmail === 'whootthira@gmail.com' ? 'admin' : 'user'
+            });
+          if (profileInsertError) {
+            console.error('[profiles] Failed to insert profile row:', profileInsertError);
+          }
+        }
+      } catch (e) {
+        console.error('[profiles] Error checking/inserting profile row:', e);
+      }
     }
 
     if (finalUserId) {

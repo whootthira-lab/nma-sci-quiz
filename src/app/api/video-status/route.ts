@@ -95,18 +95,66 @@ export async function POST(req: NextRequest) {
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
 
       let finalStorageProvider = storageProvider;
-      if (!finalStorageProvider) {
-        const { data: genRow } = await supabase
+      let genRow: any = null;
+
+      try {
+        const { data: dbGenRow } = await supabase
           .from('generations')
-          .select('metadata')
+          .select('metadata, audio_prompt')
           .eq('fal_request_id', requestId)
           .single();
+        genRow = dbGenRow;
+      } catch (dbErr) {
+        console.warn('[Supabase DB Read] Could not find or read generation metadata:', dbErr);
+      }
+
+      if (!finalStorageProvider) {
         finalStorageProvider = genRow?.metadata?.storage_provider || 'supabase';
+      }
+
+      const modelName = genRow?.metadata?.model_name || '';
+      const audioUrl = genRow?.audio_prompt;
+      
+      let finalVideoUrl = tempUrl;
+      const isKling = modelName ? modelName.toLowerCase().includes('kling') : (modelType === 'fast');
+
+      if (isKling && audioUrl) {
+        console.log(`⏳ [FFmpeg Merge] Kling silent video: ${tempUrl} with audio: ${audioUrl}...`);
+        try {
+          const mergeResponse = await fetch('https://fal.run/fal-ai/ffmpeg-api/merge-audio-video', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              video_url: tempUrl,
+              audio_url: audioUrl
+            })
+          });
+
+          if (mergeResponse.ok) {
+            const mergeResult = await mergeResponse.json();
+            const mergedUrl = mergeResult.video?.url || mergeResult.output?.video?.url;
+            if (mergedUrl) {
+              finalVideoUrl = mergedUrl;
+              console.log(`✅ [FFmpeg Merge] Successful! Combined Video URL: ${finalVideoUrl}`);
+            } else {
+              console.warn('[FFmpeg Merge] Merge response was missing video URL:', mergeResult);
+            }
+          } else {
+            const mergeError = await mergeResponse.text();
+            console.error(`❌ [FFmpeg Merge Error] Status: ${mergeResponse.status}, Error:`, mergeError);
+          }
+        } catch (mergeErr) {
+          console.error('❌ [FFmpeg Merge Exception] Failed to run merge:', mergeErr);
+        }
       }
 
       console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลดวิดีโอมาเก็บที่ ${finalStorageProvider}...`);
 
-      const videoRes = await fetch(tempUrl);
+      const videoRes = await fetch(finalVideoUrl);
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
       let publicUrl = '';
