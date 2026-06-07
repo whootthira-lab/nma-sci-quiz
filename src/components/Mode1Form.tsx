@@ -262,6 +262,30 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
         )}
 
+        {/* Aspect Ratio */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            อัตราส่วนวิดีโอ (Aspect Ratio)
+          </label>
+          <div className="flex gap-2">
+            {ASPECT_RATIOS.map((ratio) => (
+              <button
+                key={ratio.value}
+                type="button"
+                onClick={() => setAspectRatio(ratio.value)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  aspectRatio === ratio.value
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                {aspectIcons[ratio.value]}
+                <span className="font-thai">{ratio.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Image Upload */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -443,28 +467,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
         </div>
 
-        {/* Aspect Ratio */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            อัตราส่วนวิดีโอ (Aspect Ratio)
-          </label>
-          <div className="flex gap-2">
-            {ASPECT_RATIOS.map((ratio) => (
-              <button
-                key={ratio.value}
-                onClick={() => setAspectRatio(ratio.value)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                  aspectRatio === ratio.value
-                    ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
-                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                }`}
-              >
-                {aspectIcons[ratio.value]}
-                <span className="font-thai">{ratio.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+
 
         {/* Submit Button */}
         <button
