@@ -45,8 +45,11 @@ export async function POST(req: NextRequest) {
       ? 'fal-ai/wan/image-to-video'
       : 'fal-ai/kling-video/v2.5/turbo/image-to-video';
 
+    // Fal.ai queue parent namespace is always the first two segments of the model path
+    const queueNamespace = modelEndpoint.split('/').slice(0, 2).join('/');
+
     // 1. Fetch official queue status endpoint
-    const checkResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}/status`, {
+    const checkResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`, {
       headers: {
         'Authorization': `Key ${falKey}`,
         'Accept': 'application/json'
@@ -73,7 +76,7 @@ export async function POST(req: NextRequest) {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     if (currentStatus === 'COMPLETED') {
-      const detailResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}`, {
+      const detailResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}`, {
         headers: {
           'Authorization': `Key ${falKey}`,
           'Accept': 'application/json'
@@ -188,7 +191,7 @@ export async function POST(req: NextRequest) {
       // ถ้าไม่มี logs ใน statusData ให้ลองดึงจาก detail endpoint เป็นทางเลือกสำรอง
       if (!logs || !Array.isArray(logs) || logs.length === 0) {
         try {
-          const detailResponse = await fetch(`https://queue.fal.run/${modelEndpoint}/requests/${requestId}`, {
+          const detailResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}`, {
             headers: {
               'Authorization': `Key ${falKey}`,
               'Accept': 'application/json'
