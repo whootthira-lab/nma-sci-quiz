@@ -47,7 +47,7 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
 
   console.log(`[Botnoi] กำลังสร้างเสียงด้วย Speaker ID: ${speakerId}`);
 
-  const botnoiResponse = await fetch('https://api-voice.botnoi.ai/api/service/generate_audio', {
+  const botnoiResponse = await fetch('https://api-voice.botnoi.ai/openapi/v1/generate_audio', {
     method: 'POST',
     headers: {
       'Botnoi-Token': botnoiToken,
