@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
         image_url: imageUrl,
         prompt: combinedPrompt,
         aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-        duration: selectedDuration === 8 ? 5 : 10,
+        duration: selectedDuration <= 5 ? 5 : 10,
       };
     }
 

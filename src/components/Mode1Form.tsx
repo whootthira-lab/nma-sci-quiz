@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
   ImagePlus,
@@ -39,15 +39,35 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'azure'>('botnoi');
 
+  // KRUTH Engine Model Selection
+  const [modelType, setModelType] = useState('fast'); 
+
   // Cropper states
   const [showCropper, setShowCropper] = useState(false);
   const [tempImageSrc, setTempImageSrc] = useState<string | null>(null);
 
-  // Selected duration (8, 15, 25 seconds)
-  const [selectedDuration, setSelectedDuration] = useState<number>(8);
+  // Selected duration (5, 10, 15, 25 seconds)
+  const [selectedDuration, setSelectedDuration] = useState<number>(5);
 
   // Progress state
   const [processingProgress, setProcessingProgress] = useState<number | undefined>(undefined);
+
+  // Helper for dynamic preview aspect ratio
+  const getPreviewAspectClass = () => {
+    if (aspectRatio === '16:9') return 'aspect-[16/9] max-h-72 w-full object-cover mx-auto';
+    if (aspectRatio === '9:16') return 'aspect-[9/16] max-h-[450px] w-full object-cover mx-auto';
+    return 'aspect-square max-h-80 w-full object-cover mx-auto';
+  };
+
+  // Adjust selected duration if model changes and previous duration is invalid
+  useEffect(() => {
+    const validOptions = modelType === 'cinema' ? [5, 10, 15, 25] : [5, 10];
+    if (!validOptions.includes(selectedDuration)) {
+      setSelectedDuration(5);
+    }
+  }, [modelType, selectedDuration]);
+
+  const durationOptions = modelType === 'cinema' ? [5, 10, 15, 25] : [5, 10];
 
   const handleTtsProviderChange = (provider: 'botnoi' | 'azure') => {
     setTtsProvider(provider);
@@ -63,8 +83,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // KRUTH Engine Model Selection
-  const [modelType, setModelType] = useState('fast'); 
+
 
   // คำนวณความยาว (15 อักษรไทย = 1 วินาที)
   const charCount = scriptText.replace(/\s+/g, '').length;
@@ -226,8 +245,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               onChange={(e) => setModelType(e.target.value)}
               className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer"
             >
-              <option value="fast">⚡ KRUTH Standard (ทำงานไว)</option>
-              <option value="cinema">🎬 KRUTH Master (ความละเอียดสูง)</option>
+              <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
+              <option value="cinema">🎬 KRUTH Master (Wan 2.1 Cinema)</option>
             </select>
           </div>
         )}
@@ -258,7 +277,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           >
             {imagePreview ? (
               <div className="relative">
-                <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover" />
+                <img src={imagePreview} alt="Preview" className={getPreviewAspectClass()} />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <p className="text-white text-sm font-medium font-thai">คลิกเพื่อเปลี่ยนรูป</p>
                 </div>
@@ -407,7 +426,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             ความยาววิดีโอ (Video Duration)
           </label>
           <div className="flex gap-2">
-            {[8, 15, 25].map((d) => (
+            {durationOptions.map((d) => (
               <button
                 key={d}
                 type="button"
