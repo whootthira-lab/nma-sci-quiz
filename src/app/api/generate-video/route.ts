@@ -221,6 +221,7 @@ export async function POST(req: NextRequest) {
 
     // 5. Submit job to Fal.ai queue
     console.log(`[STEP 3] Submitting queue request to Fal.ai (${modelEndpoint})...`);
+    console.log('[Fal.ai Request Payload]:', JSON.stringify(requestBody, null, 2));
     const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
       method: 'POST',
       headers: {

@@ -85,6 +85,8 @@ export async function POST(req: NextRequest) {
       });
       
       if (!detailResponse.ok) {
+        const errorText = await detailResponse.text();
+        console.error(`[Fal.ai Queue Detail Error] Status: ${detailResponse.status}, Response:`, errorText);
         throw new Error(`ไม่สามารถดึงผลลัพธ์จาก Fal.ai ได้ (status: ${detailResponse.status})`);
       }
 
