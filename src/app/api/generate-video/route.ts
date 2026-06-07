@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
     const modelType = formData.get('model_type') as string || 'fast';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
     const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
+    const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
 
     if (!imageFile || !scriptText || !userEmail) {
       return NextResponse.json(
@@ -159,9 +160,6 @@ export async function POST(req: NextRequest) {
     console.log('[STEP 2] TTS audio uploaded:', audioUrl);
 
     // 3. Estimate duration and configure dimensions
-    const cleanText = scriptText.replace(/\s+/g, '').trim();
-    const duration = Math.max(3, Math.min(Math.ceil(cleanText.length / 17), 30));
-
     const dimensions: Record<string, { width: number; height: number }> = {
       '1:1': { width: 512, height: 512 },
       '16:9': { width: 832, height: 480 },
@@ -185,7 +183,7 @@ export async function POST(req: NextRequest) {
         image_url: imageUrl,
         prompt: combinedPrompt,
         negative_prompt: 'blurry, distorted, low quality, static, frozen',
-        num_frames: Math.min(duration * 8, 240),
+        num_frames: Math.min(selectedDuration * 8, 240),
         width: dim.width,
         height: dim.height,
         num_inference_steps: 30,
@@ -197,7 +195,7 @@ export async function POST(req: NextRequest) {
         image_url: imageUrl,
         prompt: combinedPrompt,
         aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-        duration: 5,
+        duration: selectedDuration === 8 ? 5 : 10,
       };
     }
 
@@ -263,7 +261,7 @@ export async function POST(req: NextRequest) {
             tts_provider: ttsProvider,
             storage_provider: storageProvider,
             aspect_ratio: aspectRatio,
-            duration_estimate: duration,
+            duration_estimate: selectedDuration,
             storage_path: videoPath,
             image_path: imagePath,
             audio_path: audioPath

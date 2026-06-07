@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
+import ImageCropperModal from './ImageCropperModal';
 import { ASPECT_RATIOS, THAI_VOICES } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 
@@ -37,6 +38,16 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'azure'>('botnoi');
+
+  // Cropper states
+  const [showCropper, setShowCropper] = useState(false);
+  const [tempImageSrc, setTempImageSrc] = useState<string | null>(null);
+
+  // Selected duration (8, 15, 25 seconds)
+  const [selectedDuration, setSelectedDuration] = useState<number>(8);
+
+  // Progress state
+  const [processingProgress, setProcessingProgress] = useState<number | undefined>(undefined);
 
   const handleTtsProviderChange = (provider: 'botnoi' | 'azure') => {
     setTtsProvider(provider);
@@ -71,11 +82,23 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setError('ขนาดไฟล์ต้องไม่เกิน 10MB');
       return;
     }
-    setImageFile(file);
     setError(null);
     const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.onload = (ev) => {
+      setTempImageSrc(ev.target?.result as string);
+      setShowCropper(true);
+    };
     reader.readAsDataURL(file);
+    if (e.target) {
+      e.target.value = '';
+    }
+  }, []);
+
+  const handleCropComplete = useCallback((croppedFile: File, croppedUrl: string) => {
+    setImageFile(croppedFile);
+    setImagePreview(croppedUrl);
+    setShowCropper(false);
+    setTempImageSrc(null);
   }, []);
 
   // ฟังก์ชันทวงงาน (Polling)
@@ -91,28 +114,38 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
       if (statusData.status === 'COMPLETED') {
         setProcessingStage('✅ เสร็จสมบูรณ์! กำลังพาท่านไปที่แกลลอรี่...');
+        setProcessingProgress(100);
         setTimeout(() => {
           setImageFile(null);
           setImagePreview(null);
           setScriptText('');
           setSituationPrompt('');
           setProcessing(false);
+          setProcessingProgress(undefined);
           onVideoGenerated();
         }, 1500);
         return; 
       } else if (statusData.status === 'FAILED' || statusData.status === 'ERROR') {
-        throw new Error('AI ประมวลผลล้มเหลว กรุณาลองใหม่อีกครั้ง');
+        throw new Error(statusData.error || 'AI ประมวลผลล้มเหลว กรุณาลองใหม่อีกครั้ง');
       } else {
-        if (statusData.status === 'IN_QUEUE') {
-          setProcessingStage('⏳ KRUTH Engine กำลังจัดคิวประมวลผล...');
-        } else if (statusData.status === 'IN_PROGRESS') {
-          setProcessingStage('🔄 KRUTH Engine กำลังสร้างสรรค์วิดีโอ...');
+        if (statusData.progressMessage) {
+          setProcessingStage(statusData.progressMessage);
+        } else {
+          if (statusData.status === 'IN_QUEUE') {
+            setProcessingStage('⏳ KRUTH Engine กำลังจัดคิวประมวลผล...');
+          } else if (statusData.status === 'IN_PROGRESS') {
+            setProcessingStage('🔄 KRUTH Engine กำลังสร้างสรรค์วิดีโอ...');
+          }
+        }
+        if (statusData.progressPercent !== undefined) {
+          setProcessingProgress(statusData.progressPercent);
         }
         setTimeout(() => pollStatus(requestId, videoPath, currentStorageProvider), 8000);
       }
     } catch (err: any) {
       setError(err.message || 'เกิดข้อผิดพลาดในการตรวจสอบสถานะ');
       setProcessing(false);
+      setProcessingProgress(undefined);
     }
   };
 
@@ -127,10 +160,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
 
     setProcessing(true);
+    setProcessingProgress(0);
     setError(null);
 
     try {
       setProcessingStage('กำลังอัพโหลดข้อมูลเข้าสู่ KRUTH Engine...');
+      setProcessingProgress(5);
       const formData = new FormData();
       formData.append('image', imageFile);
       formData.append('script_text', scriptText);
@@ -142,6 +177,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('model_type', modelType);
       formData.append('storage_provider', storageProvider);
       formData.append('tts_provider', ttsProvider);
+      formData.append('duration', String(selectedDuration));
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -155,12 +191,14 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       }
 
       setProcessingStage('🚀 ส่งงานสำเร็จ! กำลังเชื่อมต่อระบบ AI...');
+      setProcessingProgress(15);
       setTimeout(() => pollStatus(result.requestId, result.videoPath, storageProvider), 3000);
 
     } catch (err: any) {
       setError(err.message || 'เกิดข้อผิดพลาด');
       setProcessing(false);
       setProcessingStage('');
+      setProcessingProgress(undefined);
     }
   };
 
@@ -172,7 +210,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
   return (
     <>
-      <ProcessingOverlay isVisible={processing} stage={processingStage} />
+      <ProcessingOverlay isVisible={processing} stage={processingStage} progress={processingProgress} />
 
       <div className="space-y-6">
         
@@ -363,6 +401,29 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         {/* Voice Selection */}
         <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
 
+        {/* Video Duration */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            ความยาววิดีโอ (Video Duration)
+          </label>
+          <div className="flex gap-2">
+            {[8, 15, 25].map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setSelectedDuration(d)}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  selectedDuration === d
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                ⏱️ {d} วินาที
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Aspect Ratio */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -396,6 +457,18 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           <span className="font-thai">สร้างวิดีโอด้วย KRUTH Engine</span>
         </button>
       </div>
+
+      {showCropper && tempImageSrc && (
+        <ImageCropperModal
+          imageSrc={tempImageSrc}
+          aspectRatio={aspectRatio}
+          onCrop={handleCropComplete}
+          onClose={() => {
+            setShowCropper(false);
+            setTempImageSrc(null);
+          }}
+        />
+      )}
     </>
   );
 }

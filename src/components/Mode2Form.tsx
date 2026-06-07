@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
   ImagePlus,
@@ -10,8 +10,12 @@ import {
   X,
   ChevronDown,
   Scan,
+  Square,
+  RectangleHorizontal,
+  Smartphone
 } from 'lucide-react';
 import ProcessingOverlay from './ProcessingOverlay';
+import ImageCropperModal from './ImageCropperModal';
 import { FACE_MOTION_MODELS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 
@@ -27,11 +31,37 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
   const [drivingVideoName, setDrivingVideoName] = useState('');
   const [selectedModel, setSelectedModel] = useState(FACE_MOTION_MODELS[0].id);
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
+  const [aspectRatio, setAspectRatio] = useState('1:1');
+
+  // Cropper states
+  const [showCropper, setShowCropper] = useState(false);
+  const [tempImageSrc, setTempImageSrc] = useState<string | null>(null);
+
+  // Simulated progress
   const [processing, setProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
+  const [processingProgress, setProcessingProgress] = useState<number | undefined>(undefined);
+
   const [error, setError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  // Stage changes based on progress
+  useEffect(() => {
+    if (processingProgress === undefined) return;
+    
+    if (processingProgress < 10) {
+      setProcessingStage('กำลังอัปโหลดรูปภาพและวิดีโอต้นแบบ...');
+    } else if (processingProgress < 30) {
+      setProcessingStage('🚀 อัปโหลดข้อมูลสำเร็จ กำลังเชื่อมต่อ AI...');
+    } else if (processingProgress < 65) {
+      setProcessingStage(`🔄 กำลังประมวลผล Face Motion ด้วย ${selectedModel === 'liveportrait' ? 'LivePortrait' : 'Hallo'}... (ใช้เวลาประมาณ 30-40 วินาที)`);
+    } else if (processingProgress < 85) {
+      setProcessingStage('✨ กำลังประมวลผลการจัดตำแหน่งใบหน้าและรูปปาก...');
+    } else if (processingProgress >= 85) {
+      setProcessingStage('💾 กำลังบันทึกวิดีโอลงระบบจัดเก็บข้อมูล (Storage)...');
+    }
+  }, [processingProgress, selectedModel]);
 
   const handleImageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -40,11 +70,23 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
       setError('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
       return;
     }
-    setImageFile(file);
     setError(null);
     const reader = new FileReader();
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.onload = (ev) => {
+      setTempImageSrc(ev.target?.result as string);
+      setShowCropper(true);
+    };
     reader.readAsDataURL(file);
+    if (e.target) {
+      e.target.value = '';
+    }
+  }, []);
+
+  const handleCropComplete = useCallback((croppedFile: File, croppedUrl: string) => {
+    setImageFile(croppedFile);
+    setImagePreview(croppedUrl);
+    setShowCropper(false);
+    setTempImageSrc(null);
   }, []);
 
   const handleVideoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,10 +112,19 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
     }
 
     setProcessing(true);
+    setProcessingProgress(0);
     setError(null);
 
+    // Start simulated progress
+    const startTime = Date.now();
+    const duration = 35000; // Estimate 35 seconds
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(92, Math.floor((elapsed / duration) * 92)); // Max 92% until done
+      setProcessingProgress(progress);
+    }, 1000);
+
     try {
-      setProcessingStage('กำลังอัพโหลดไฟล์...');
       const formData = new FormData();
       formData.append('image', imageFile);
       formData.append('driving_video', drivingVideo);
@@ -82,9 +133,6 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
       formData.append('user_email', user?.email || '');
       formData.append('user_id', user?.id || '');
       formData.append('storage_provider', storageProvider);
-
-      const model = FACE_MOTION_MODELS.find(m => m.id === selectedModel);
-      setProcessingStage(`กำลังประมวลผลด้วย ${model?.name || 'AI'}...`);
 
       const response = await fetch('/api/face-motion', {
         method: 'POST',
@@ -97,6 +145,9 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
         throw new Error(result.error || 'เกิดข้อผิดพลาดในการสร้างวิดีโอ');
       }
 
+      // Stop simulated interval and show 100%
+      clearInterval(interval);
+      setProcessingProgress(100);
       setProcessingStage('สร้างวิดีโอเสร็จสมบูรณ์!');
       await new Promise(r => setTimeout(r, 1000));
 
@@ -107,16 +158,18 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
       setDrivingVideoName('');
       onVideoGenerated();
     } catch (err: any) {
+      clearInterval(interval);
       setError(err.message || 'เกิดข้อผิดพลาด');
     } finally {
       setProcessing(false);
       setProcessingStage('');
+      setProcessingProgress(undefined);
     }
   };
 
   return (
     <>
-      <ProcessingOverlay isVisible={processing} stage={processingStage} />
+      <ProcessingOverlay isVisible={processing} stage={processingStage} progress={processingProgress} />
 
       <div className="space-y-6">
         {/* Error */}
@@ -150,6 +203,34 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
                 <p className="text-sm font-semibold text-text-primary">{model.name}</p>
                 <p className="text-xs text-text-muted mt-1 font-thai">{model.description}</p>
               </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Aspect Ratio */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            อัตราส่วนรูปภาพ (Aspect Ratio สำหรับครอปภาพ)
+          </label>
+          <div className="flex gap-2">
+            {[
+              { label: '1:1 (แนะนำ)', value: '1:1', icon: <Square className="w-4 h-4" /> },
+              { label: '16:9', value: '16:9', icon: <RectangleHorizontal className="w-4 h-4" /> },
+              { label: '9:16', value: '9:16', icon: <Smartphone className="w-4 h-4" /> }
+            ].map((ratio) => (
+              <button
+                key={ratio.value}
+                type="button"
+                onClick={() => setAspectRatio(ratio.value)}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                  aspectRatio === ratio.value
+                    ? 'bg-accent-primary/10 border border-accent-primary/30 text-accent-primary shadow-sm'
+                    : 'bg-surface-2/50 border border-white/5 hover:border-white/10 text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {ratio.icon}
+                <span className="font-thai">{ratio.label}</span>
+              </button>
             ))}
           </div>
         </div>
@@ -274,6 +355,18 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
           <span className="font-thai">สร้าง Face Motion Video</span>
         </button>
       </div>
+
+      {showCropper && tempImageSrc && (
+        <ImageCropperModal
+          imageSrc={tempImageSrc}
+          aspectRatio={aspectRatio}
+          onCrop={handleCropComplete}
+          onClose={() => {
+            setShowCropper(false);
+            setTempImageSrc(null);
+          }}
+        />
+      )}
     </>
   );
 }

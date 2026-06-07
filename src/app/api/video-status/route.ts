@@ -121,7 +121,12 @@ export async function POST(req: NextRequest) {
         console.error('Failed to update generation row in Supabase:', dbError);
       }
 
-      return NextResponse.json({ status: 'COMPLETED', videoUrl: publicUrl });
+      return NextResponse.json({ 
+        status: 'COMPLETED', 
+        videoUrl: publicUrl,
+        progressPercent: 100,
+        progressMessage: '✅ เสร็จสมบูรณ์!'
+      });
 
     } else if (statusData.status === 'FAILED') {
       console.error(`❌ [KRUTH Status] AI แจ้งเตือนข้อผิดพลาด:`, statusData.error);
@@ -136,10 +141,55 @@ export async function POST(req: NextRequest) {
         })
         .eq('fal_request_id', requestId);
 
-      return NextResponse.json({ status: 'FAILED', error: statusData.error });
+      return NextResponse.json({ 
+        status: 'FAILED', 
+        error: statusData.error || 'AI generation failed',
+        progressPercent: undefined,
+        progressMessage: '❌ ล้มเหลว'
+      });
     }
 
-    return NextResponse.json({ status: statusData.status });
+    // In progress or queue: parse progress
+    let progressMessage = 'กำลังประมวลผล...';
+    let progressPercent = 10;
+
+    if (statusData.status === 'IN_QUEUE') {
+      const queuePos = statusData.queue_position ?? 1;
+      progressMessage = `อยู่ในคิวประมวลผล (คิวที่ ${queuePos})`;
+      progressPercent = Math.max(5, Math.min(15, 15 - queuePos));
+    } else if (statusData.status === 'IN_PROGRESS') {
+      progressMessage = 'กำลังสร้างสรรค์วิดีโอ...';
+      progressPercent = 20;
+      if (statusData.logs && Array.isArray(statusData.logs) && statusData.logs.length > 0) {
+        for (let i = statusData.logs.length - 1; i >= 0; i--) {
+          const logText = statusData.logs[i].message || '';
+          const pctMatch = logText.match(/(\d+)%/);
+          if (pctMatch) {
+            const pct = parseInt(pctMatch[1], 10);
+            progressPercent = Math.min(95, 20 + Math.floor(pct * 0.75));
+            progressMessage = `กำลังประมวลผล: ${pct}%`;
+            break;
+          }
+          const stepMatch = logText.match(/(\d+)\s*\/\s*(\d+)/);
+          if (stepMatch) {
+            const currentStep = parseInt(stepMatch[1], 10);
+            const totalSteps = parseInt(stepMatch[2], 10);
+            if (totalSteps > 0) {
+              const pct = Math.floor((currentStep / totalSteps) * 100);
+              progressPercent = Math.min(95, 20 + Math.floor(pct * 0.75));
+              progressMessage = `กำลังประมวลผลขั้นตอน: ${currentStep}/${totalSteps} (${pct}%)`;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({ 
+      status: statusData.status,
+      progressMessage,
+      progressPercent
+    });
 
   } catch (error: any) {
     console.error('\n❌ [KRUTH Status Error]:', error.message);
