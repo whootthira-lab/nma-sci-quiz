@@ -30,8 +30,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [endImageFile, setEndImageFile] = useState<File | null>(null);
+  const [endImagePreview, setEndImagePreview] = useState<string | null>(null);
   const [scriptText, setScriptText] = useState('');
   const [situationPrompt, setSituationPrompt] = useState('');
+  const [endSituationPrompt, setEndSituationPrompt] = useState('');
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
   
@@ -53,10 +56,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [motionAudioSource, setMotionAudioSource] = useState<'video' | 'botnoi'>('video');
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const endFileInputRef = useRef<HTMLInputElement>(null);
 
   // Cropper states
   const [showCropper, setShowCropper] = useState(false);
   const [tempImageSrc, setTempImageSrc] = useState<string | null>(null);
+  const [croppingTarget, setCroppingTarget] = useState<'start' | 'end'>('start');
 
   // Selected duration (5, 10, 15, 25 seconds)
   const [selectedDuration, setSelectedDuration] = useState<number>(5);
@@ -121,6 +126,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       return;
     }
 
+    setCroppingTarget('start');
     const reader = new FileReader();
     reader.onload = (ev) => {
       setTempImageSrc(ev.target?.result as string);
@@ -131,6 +137,31 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       e.target.value = '';
     }
   }, [modelType]);
+
+  const handleEndImageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('ขนาดไฟล์ต้องไม่เกิน 10MB');
+      return;
+    }
+    setError(null);
+
+    setCroppingTarget('end');
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setTempImageSrc(ev.target?.result as string);
+      setShowCropper(true);
+    };
+    reader.readAsDataURL(file);
+    if (e.target) {
+      e.target.value = '';
+    }
+  }, []);
 
   const handleVideoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,11 +183,16 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   }, []);
 
   const handleCropComplete = useCallback((croppedFile: File, croppedUrl: string) => {
-    setImageFile(croppedFile);
-    setImagePreview(croppedUrl);
+    if (croppingTarget === 'end') {
+      setEndImageFile(croppedFile);
+      setEndImagePreview(croppedUrl);
+    } else {
+      setImageFile(croppedFile);
+      setImagePreview(croppedUrl);
+    }
     setShowCropper(false);
     setTempImageSrc(null);
-  }, []);
+  }, [croppingTarget]);
 
   // ฟังก์ชันทวงงาน (Polling)
   const pollStatus = async (requestId: string, videoPath: string, currentStorageProvider: 'supabase' | 'firebase') => {
@@ -175,8 +211,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         setTimeout(() => {
           setImageFile(null);
           setImagePreview(null);
+          setEndImageFile(null);
+          setEndImagePreview(null);
           setScriptText('');
           setSituationPrompt('');
+          setEndSituationPrompt('');
           setProcessing(false);
           setProcessingProgress(undefined);
           onVideoGenerated();
@@ -225,6 +264,14 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         formData.append('script_text', scriptText);
       }
       formData.append('situation_prompt', situationPrompt);
+      if (modelType === 'fast') {
+        if (endImageFile) {
+          formData.append('end_image', endImageFile);
+        }
+        if (endSituationPrompt.trim()) {
+          formData.append('end_situation_prompt', endSituationPrompt);
+        }
+      }
       formData.append('voice_id', selectedVoice);
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || 'user@kruth.com');
@@ -427,6 +474,76 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
         </div>
+
+        {/* End Frame Settings (Kling 2.5 only) */}
+        {modelType === 'fast' && (
+          <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
+            <h3 className="text-sm font-semibold text-gray-800 font-thai border-b border-gray-200 pb-2 flex items-center gap-2">
+              🎬 ตั้งค่าเฟรมท้าย (End Frame Morphing Settings)
+            </h3>
+            
+            {/* End Image Upload */}
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-text-secondary font-thai">
+                รูปภาพเฟรมท้าย (End Frame Image)
+              </label>
+              <div
+                onClick={() => endFileInputRef.current?.click()}
+                className={`relative group cursor-pointer rounded-xl border-2 border-dashed transition-all duration-200 overflow-hidden ${
+                  endImagePreview
+                    ? 'border-accent-primary/30 bg-white'
+                    : 'border-gray-300 hover:border-[#D4AF37] bg-white'
+                }`}
+              >
+                {endImagePreview ? (
+                  <div className="relative">
+                    <img src={endImagePreview} alt="End Frame Preview" className={getPreviewAspectClass()} />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <p className="text-white text-sm font-medium font-thai">คลิกเพื่อเปลี่ยนรูปเฟรมท้าย</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEndImageFile(null);
+                        setEndImagePreview(null);
+                      }}
+                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-black/70 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-6 px-4">
+                    <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center mb-2 group-hover:bg-[#D4AF37]/10 transition-colors">
+                      <ImagePlus className="w-5 h-5 text-gray-500 group-hover:text-[#D4AF37]" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-700 mb-0.5 font-thai">
+                      คลิกเพื่ออัปโหลดรูปภาพเฟรมท้าย
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-thai">
+                      รองรับ JPG, PNG, WebP (สูงสุด 10MB)
+                    </p>
+                  </div>
+                )}
+              </div>
+              <input ref={endFileInputRef} type="file" accept="image/*" onChange={handleEndImageChange} className="hidden" />
+            </div>
+
+            {/* End Situation Prompt */}
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-text-secondary font-thai">
+                สภาวะภาพตอนท้าย (End Situation Prompt)
+              </label>
+              <input
+                type="text"
+                value={endSituationPrompt}
+                onChange={(e) => setEndSituationPrompt(e.target.value)}
+                placeholder="เช่น looking straight, warm smile, neutral pose"
+                className="w-full bg-white border border-gray-200 p-2.5 rounded-xl text-xs text-gray-800 placeholder-gray-400 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai transition-all"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Video Upload for Motion Control */}
         {isMotionControl && (
