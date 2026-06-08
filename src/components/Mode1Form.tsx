@@ -37,7 +37,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
-  const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'google'>('botnoi');
+  const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'google' | 'openai'>('botnoi');
 
   // KRUTH Engine Model Selection
   const [modelType, setModelType] = useState('fast'); 
@@ -603,7 +603,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                     : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
                 }`}
               >
-                🤖 Botnoi Voice
+                🤖 Botnoi
               </button>
               <button
                 type="button"
@@ -617,7 +617,21 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                     : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
                 }`}
               >
-                🌐 Google Neural2
+                🌐 Google
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTtsProvider('openai');
+                  setSelectedVoice('nova');
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  ttsProvider === 'openai'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🧠 OpenAI
               </button>
             </div>
           </div>

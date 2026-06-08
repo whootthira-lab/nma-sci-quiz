@@ -35,7 +35,7 @@ export interface ThaiVoice {
   label: string;
   gender: 'male' | 'female';
   sample_url: string;
-  provider: 'botnoi' | 'google';
+  provider: 'botnoi' | 'google' | 'openai';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
@@ -51,6 +51,14 @@ export const THAI_VOICES: ThaiVoice[] = [
   { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: 'จี-เนอรัล C (หญิง, Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google' },
   { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: 'จี-สแตนดาร์ด A (หญิง, คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google' },
   { id: 'th-TH-Standard-F', name: 'G-Standard-F', label: 'จี-สแตนดาร์ด F (ชาย, คุ้มค่า)', gender: 'male', sample_url: '/samples/g-standard-f.mp3', provider: 'google' },
+
+  // OpenAI TTS
+  { id: 'alloy', name: 'Alloy', label: 'อัลลอย (กลาง, สากล)', gender: 'female', sample_url: '/samples/alloy.mp3', provider: 'openai' },
+  { id: 'nova', name: 'Nova', label: 'โนวา (หญิง, สดใส)', gender: 'female', sample_url: '/samples/nova.mp3', provider: 'openai' },
+  { id: 'shimmer', name: 'Shimmer', label: 'ชิมเมอร์ (หญิง, นุ่มนวล)', gender: 'female', sample_url: '/samples/shimmer.mp3', provider: 'openai' },
+  { id: 'echo', name: 'Echo', label: 'เอคโค่ (ชาย, อบอุ่น)', gender: 'male', sample_url: '/samples/echo.mp3', provider: 'openai' },
+  { id: 'onyx', name: 'Onyx', label: 'โอนิกส์ (ชาย, เข้ม)', gender: 'male', sample_url: '/samples/onyx.mp3', provider: 'openai' },
+  { id: 'fable', name: 'Fable', label: 'เฟเบิล (ชาย, บรรยาย)', gender: 'male', sample_url: '/samples/fable.mp3', provider: 'openai' },
 ];
 
 // ─── Aspect Ratio Options ───────────────────────────

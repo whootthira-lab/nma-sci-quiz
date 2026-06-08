@@ -130,6 +130,36 @@ async function generateGoogleTTS(text: string, voiceId: string): Promise<Buffer>
   return Buffer.from(data.audioContent, 'base64');
 }
 
+async function generateOpenAITTS(text: string, voiceId: string): Promise<Buffer> {
+  const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+  if (!apiKey) throw new Error('ไม่พบ OPENAI_API_KEY ในระบบ สำหรับการใช้งาน OpenAI TTS');
+
+  console.log(`[OpenAI TTS] Generating Thai TTS audio for voice ID: ${voiceId}`);
+
+  const openAIResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'tts-1',
+      input: text,
+      voice: voiceId,
+      response_format: 'mp3',
+    }),
+  });
+
+  if (!openAIResponse.ok) {
+    const errText = await openAIResponse.text();
+    console.error('[OpenAI TTS API Error]', errText);
+    throw new Error(`OpenAI TTS API failed with status ${openAIResponse.status}: ${errText}`);
+  }
+
+  const arrayBuffer = await openAIResponse.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 function getWanVideoParams(targetSeconds: number) {
   // Constraints:
   // num_frames must be between 81 and 100
@@ -228,9 +258,14 @@ export async function POST(req: NextRequest) {
     
     if (needTTS && scriptText) {
       console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId}...`);
-      const audioBuffer = ttsProvider === 'google'
-        ? await generateGoogleTTS(scriptText, voiceId)
-        : await generateTTS(scriptText, voiceId);
+      let audioBuffer: Buffer;
+      if (ttsProvider === 'google') {
+        audioBuffer = await generateGoogleTTS(scriptText, voiceId);
+      } else if (ttsProvider === 'openai') {
+        audioBuffer = await generateOpenAITTS(scriptText, voiceId);
+      } else {
+        audioBuffer = await generateTTS(scriptText, voiceId);
+      }
       audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
       audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
       console.log('[STEP 2] TTS audio uploaded:', audioUrl);

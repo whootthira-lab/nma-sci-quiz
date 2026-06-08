@@ -53,8 +53,32 @@ export async function POST(req: NextRequest) {
     // Fal.ai queue parent namespace is always the first two segments of the model path
     const queueNamespace = modelEndpoint.split('/').slice(0, 2).join('/');
 
+    // Supabase client initialization to check if lipsync is active
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    let genRow: any = null;
+    try {
+      const { data: dbGenRow } = await supabase
+        .from('generations')
+        .select('*')
+        .eq('fal_request_id', requestId)
+        .single();
+      genRow = dbGenRow;
+    } catch (dbErr) {
+      console.warn('[Supabase DB Read] Could not find or read generation metadata:', dbErr);
+    }
+
+    const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
+    const isLipsyncPhase = !!lipsyncRequestId;
+
+    const checkUrl = isLipsyncPhase
+      ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}/status`
+      : `https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`;
+
     // 1. Fetch official queue status endpoint
-    const checkResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`, {
+    const checkResponse = await fetch(checkUrl, {
       headers: {
         'Authorization': `Key ${falKey}`,
         'Accept': 'application/json'
@@ -76,12 +100,11 @@ export async function POST(req: NextRequest) {
     const statusData = await checkResponse.json();
     const currentStatus = statusData.status;
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     if (currentStatus === 'COMPLETED') {
-      const detailUrl = statusData.response_url || `https://queue.fal.run/${queueNamespace}/requests/${requestId}`;
+      const detailUrl = statusData.response_url || (isLipsyncPhase
+        ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}`
+        : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
+
       const detailResponse = await fetch(detailUrl, {
         headers: {
           'Authorization': `Key ${falKey}`,
@@ -101,31 +124,17 @@ export async function POST(req: NextRequest) {
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
 
       let finalStorageProvider = storageProvider;
-      let genRow: any = null;
-
-      try {
-        const { data: dbGenRow } = await supabase
-          .from('generations')
-          .select('metadata, audio_prompt')
-          .eq('fal_request_id', requestId)
-          .single();
-        genRow = dbGenRow;
-      } catch (dbErr) {
-        console.warn('[Supabase DB Read] Could not find or read generation metadata:', dbErr);
-      }
-
       if (!finalStorageProvider) {
         finalStorageProvider = genRow?.metadata?.storage_provider || 'supabase';
       }
 
-      const modelName = genRow?.metadata?.model_name || '';
       const audioUrl = genRow?.audio_prompt;
-      
-      let finalVideoUrl = tempUrl;
-      if (audioUrl) {
-        console.log(`⏳ [FFmpeg Merge] Video: ${tempUrl} with audio: ${audioUrl}...`);
+
+      // Check if we need to run Lip-Sync Post-Processing
+      if (!isLipsyncPhase && audioUrl) {
+        console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
-          const mergeResponse = await fetch('https://fal.run/fal-ai/ffmpeg-api/merge-audio-video', {
+          const syncResponse = await fetch('https://queue.fal.run/fal-ai/sync-lipsync/v3', {
             method: 'POST',
             headers: {
               'Authorization': `Key ${falKey}`,
@@ -134,28 +143,52 @@ export async function POST(req: NextRequest) {
             },
             body: JSON.stringify({
               video_url: tempUrl,
-              audio_url: audioUrl
+              audio_url: audioUrl,
+              sync_mode: 'cut_off'
             })
           });
 
-          if (mergeResponse.ok) {
-            const mergeResult = await mergeResponse.json();
-            const mergedUrl = mergeResult.video?.url || mergeResult.output?.video?.url;
-            if (mergedUrl) {
-              finalVideoUrl = mergedUrl;
-              console.log(`✅ [FFmpeg Merge] Successful! Combined Video URL: ${finalVideoUrl}`);
-            } else {
-              console.warn('[FFmpeg Merge] Merge response was missing video URL:', mergeResult);
-            }
-          } else {
-            const mergeError = await mergeResponse.text();
-            console.error(`❌ [FFmpeg Merge Error] Status: ${mergeResponse.status}, Error:`, mergeError);
+          if (!syncResponse.ok) {
+            const syncError = await syncResponse.text();
+            console.error(`❌ [Lip-Sync Submit Error] Status: ${syncResponse.status}, Error:`, syncError);
+            throw new Error('ส่งคำสั่ง Lip-Sync ไปยัง Fal.ai ไม่สำเร็จ');
           }
-        } catch (mergeErr) {
-          console.error('❌ [FFmpeg Merge Exception] Failed to run merge:', mergeErr);
+
+          const syncResult = await syncResponse.json();
+          const nextRequestId = syncResult.request_id;
+          console.log(`✅ [Lip-Sync Submit] Success! Request ID: ${nextRequestId}`);
+
+          if (!nextRequestId) {
+            throw new Error('ระบบ Lip-Sync ไม่ได้ส่งคืน Request ID');
+          }
+
+          // Update DB metadata with lipsync_request_id and base_video_url
+          const updatedMetadata = {
+            ...(genRow?.metadata || {}),
+            lipsync_request_id: nextRequestId,
+            base_video_url: tempUrl
+          };
+
+          await supabase
+            .from('generations')
+            .update({
+              metadata: updatedMetadata,
+              updated_at: new Date().toISOString()
+            })
+            .eq('fal_request_id', requestId);
+
+          return NextResponse.json({
+            status: 'IN_QUEUE',
+            progressMessage: 'กำลังเริ่มซิงก์ปากกับเสียงพากย์...',
+            progressPercent: 90
+          });
+        } catch (syncErr: any) {
+          console.error('❌ [Lip-Sync Submit Exception] Failed to run lipsync:', syncErr);
+          // Fallback to the original video without lipsync if it fails
         }
       }
 
+      const finalVideoUrl = tempUrl;
       console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลดวิดีโอมาเก็บที่ ${finalStorageProvider}...`);
 
       const videoRes = await fetch(finalVideoUrl);
@@ -234,16 +267,22 @@ export async function POST(req: NextRequest) {
 
     if (currentStatus === 'IN_QUEUE') {
       const queuePos = statusData.queue_position ?? 1;
-      progressMessage = `อยู่ในคิวประมวลผล (คิวที่ ${queuePos})`;
-      progressPercent = Math.max(5, Math.min(15, 15 - queuePos));
+      progressMessage = isLipsyncPhase
+        ? `กำลังซิงก์ปากกับเสียงพากย์ (คิวที่ ${queuePos})`
+        : `อยู่ในคิวประมวลผล (คิวที่ ${queuePos})`;
+      progressPercent = isLipsyncPhase
+        ? 90
+        : Math.max(5, Math.min(15, 15 - queuePos));
     } else if (currentStatus === 'IN_PROGRESS') {
-      progressMessage = 'กำลังสร้างสรรค์วิดีโอ...';
-      progressPercent = 30;
+      progressMessage = isLipsyncPhase
+        ? 'กำลังประมวลผลซิงก์ปากกับเสียงพากย์...'
+        : 'กำลังสร้างสรรค์วิดีโอ...';
+      progressPercent = isLipsyncPhase ? 95 : 30;
 
       let logs = statusData.logs;
 
-      // ถ้าไม่มี logs ใน statusData ให้ลองดึงจาก detail endpoint เป็นทางเลือกสำรอง
-      if (!logs || !Array.isArray(logs) || logs.length === 0) {
+      // If no logs, fetch from detail endpoint as fallback
+      if (!isLipsyncPhase && (!logs || !Array.isArray(logs) || logs.length === 0)) {
         try {
           const detailUrl = statusData.response_url || `https://queue.fal.run/${queueNamespace}/requests/${requestId}`;
           const detailResponse = await fetch(detailUrl, {
@@ -264,13 +303,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (logs && Array.isArray(logs) && logs.length > 0) {
+      if (!isLipsyncPhase && logs && Array.isArray(logs) && logs.length > 0) {
         for (let i = logs.length - 1; i >= 0; i--) {
           const logText = logs[i].message || '';
           const pctMatch = logText.match(/(\d+)%/);
           if (pctMatch) {
             const pct = parseInt(pctMatch[1], 10);
-            progressPercent = Math.min(95, 20 + Math.floor(pct * 0.75));
+            progressPercent = Math.min(85, 20 + Math.floor(pct * 0.70));
             progressMessage = `กำลังประมวลผล: ${pct}%`;
             break;
           }
@@ -280,7 +319,7 @@ export async function POST(req: NextRequest) {
             const totalSteps = parseInt(stepMatch[2], 10);
             if (totalSteps > 0) {
               const pct = Math.floor((currentStep / totalSteps) * 100);
-              progressPercent = Math.min(95, 20 + Math.floor(pct * 0.75));
+              progressPercent = Math.min(85, 20 + Math.floor(pct * 0.70));
               progressMessage = `กำลังประมวลผลขั้นตอน: ${currentStep}/${totalSteps} (${pct}%)`;
               break;
             }
