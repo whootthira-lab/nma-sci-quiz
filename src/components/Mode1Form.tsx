@@ -37,6 +37,15 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [endSituationPrompt, setEndSituationPrompt] = useState('');
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
+
+  // New premium states
+  const [isNoSpeech, setIsNoSpeech] = useState(false);
+  const [audioSourceType, setAudioSourceType] = useState<'tts' | 'upload'>('tts');
+  const [customAudioFile, setCustomAudioFile] = useState<File | null>(null);
+  const [customAudioPreview, setCustomAudioPreview] = useState<string | null>(null);
+  const [customAudioDuration, setCustomAudioDuration] = useState(0);
+  const [isAutoDuration, setIsAutoDuration] = useState(true);
+  const [visualStyle, setVisualStyle] = useState('cinematic');
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
@@ -57,6 +66,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [motionAudioSource, setMotionAudioSource] = useState<'video' | 'botnoi'>('video');
   const videoInputRef = useRef<HTMLInputElement>(null);
   const endFileInputRef = useRef<HTMLInputElement>(null);
+  const customAudioInputRef = useRef<HTMLInputElement>(null);
 
   // Cropper states
   const [showCropper, setShowCropper] = useState(false);
@@ -85,6 +95,41 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setSelectedDuration(5);
     }
   }, [modelType, selectedDuration]);
+
+  // Hook for Auto Duration calculation
+  useEffect(() => {
+    if (!isAutoDuration || isNoSpeech) return;
+
+    // Calculate base speech duration in seconds
+    let speechSecs = 0;
+    if (audioSourceType === 'tts') {
+      const chars = scriptText.replace(/\s+/g, '').length;
+      speechSecs = Math.max(1, Math.ceil(chars / 15));
+    } else {
+      speechSecs = customAudioDuration || 0;
+    }
+
+    // Add 2 seconds padding (+1s at start, +1s at end)
+    const targetSecs = speechSecs > 0 ? speechSecs + 2 : 5;
+
+    // Map to valid tiers based on model type
+    let finalDuration = 5;
+    if (modelType === 'cinema') {
+      if (targetSecs <= 5) finalDuration = 5;
+      else if (targetSecs <= 10) finalDuration = 10;
+      else if (targetSecs <= 15) finalDuration = 15;
+      else finalDuration = 25;
+    } else if (modelType === 'grok-video') {
+      if (targetSecs <= 5) finalDuration = 5;
+      else if (targetSecs <= 10) finalDuration = 10;
+      else finalDuration = 15;
+    } else {
+      if (targetSecs <= 5) finalDuration = 5;
+      else finalDuration = 10;
+    }
+
+    setSelectedDuration(finalDuration);
+  }, [isAutoDuration, isNoSpeech, scriptText, audioSourceType, customAudioDuration, modelType]);
 
   const durationOptions = modelType === 'cinema'
     ? [5, 10, 15, 25]
@@ -163,6 +208,31 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
   }, []);
 
+  const handleCustomAudioChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('audio/')) {
+      setError('กรุณาเลือกไฟล์เสียงเท่านั้น');
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setError('ขนาดไฟล์เสียงต้องไม่เกิน 15MB');
+      return;
+    }
+    setError(null);
+    setCustomAudioFile(file);
+    const url = URL.createObjectURL(file);
+    setCustomAudioPreview(url);
+
+    // Read audio metadata to get duration
+    const audio = new Audio(url);
+    audio.addEventListener('loadedmetadata', () => {
+      const duration = Math.ceil(audio.duration);
+      setCustomAudioDuration(duration);
+      console.log(`[Custom Audio] Loaded audio metadata: ${duration}s`);
+    });
+  }, []);
+
   const handleVideoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -213,6 +283,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           setImagePreview(null);
           setEndImageFile(null);
           setEndImagePreview(null);
+          setCustomAudioFile(null);
+          setCustomAudioPreview(null);
+          setCustomAudioDuration(0);
           setScriptText('');
           setSituationPrompt('');
           setEndSituationPrompt('');
@@ -261,7 +334,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         formData.append('motion_audio_source', motionAudioSource);
         formData.append('script_text', motionAudioSource === 'botnoi' ? scriptText : '');
       } else {
-        formData.append('script_text', scriptText);
+        formData.append('script_text', isNoSpeech ? '' : scriptText);
       }
       formData.append('situation_prompt', situationPrompt);
       if (modelType === 'fast') {
@@ -272,13 +345,24 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           formData.append('end_situation_prompt', endSituationPrompt);
         }
       }
-      formData.append('voice_id', selectedVoice);
+      formData.append('visual_style', visualStyle);
+      formData.append('is_no_speech', String(isNoSpeech));
+
+      if (!isNoSpeech) {
+        if (audioSourceType === 'upload' && customAudioFile) {
+          formData.append('custom_audio', customAudioFile);
+        }
+        formData.append('tts_provider', ttsProvider);
+        formData.append('voice_id', selectedVoice);
+      } else {
+        formData.append('tts_provider', 'none');
+      }
+
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || 'user@kruth.com');
       formData.append('user_id', user?.id || '');
       formData.append('model_type', modelType);
       formData.append('storage_provider', storageProvider);
-      formData.append('tts_provider', ttsProvider);
       formData.append('duration', String(selectedDuration));
       formData.append('safety_filter_disabled', String(safetyFilterDisabled));
 
@@ -316,12 +400,22 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         return;
       }
     } else {
-      if (!imageFile || !scriptText.trim()) {
-        setError('กรุณาอัพโหลดรูปภาพและกรอกบทพากย์');
+      if (!imageFile) {
+        setError('กรุณาอัปโหลดรูปภาพอ้างอิงเริ่มต้น');
         return;
       }
+      if (!isNoSpeech) {
+        if (audioSourceType === 'tts' && !scriptText.trim()) {
+          setError('กรุณากรอกบทพากย์');
+          return;
+        }
+        if (audioSourceType === 'upload' && !customAudioFile) {
+          setError('กรุณาอัปโหลดไฟล์เสียงพากย์ของคุณ');
+          return;
+        }
+      }
     }
-    if (charCount > maxChars) {
+    if (!isNoSpeech && charCount > maxChars) {
       setError(`บทพากย์ต้องไม่เกิน ${maxChars} ตัวอักษร`);
       return;
     }
@@ -397,6 +491,25 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             </button>
           </div>
         )}
+
+        {/* Visual Style Preset */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            สไตล์ศิลปะวิดีโอ (Visual Style Preset)
+          </label>
+          <select
+            value={visualStyle}
+            onChange={(e) => setVisualStyle(e.target.value)}
+            className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
+          >
+            <option value="cinematic">🎬 Cinematic (สไตล์ภาพยนตร์ แสงเงาสวยงาม)</option>
+            <option value="studio">📸 Studio Portrait (ถ่ายในสตูดิโอ หน้าชัดหลังเบลอพรีเมียม)</option>
+            <option value="pixar">🧸 3D Pixar Animation (อนิมิชัน 3 มิติสีสันสดใส)</option>
+            <option value="retro">📼 Retro 90s (ภาพกล้องฟิล์มสีย้อนยุค 90)</option>
+            <option value="anime">🌸 Japanese Anime (ลายเส้นอนิเมะการ์ตูนญี่ปุ่น)</option>
+            <option value="none">⚪ ดั้งเดิม (Original / No Preset)</option>
+          </select>
+        </div>
 
         {/* Aspect Ratio */}
         <div className="space-y-2">
@@ -579,10 +692,10 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                     <Upload className="w-7 h-7 text-gray-500 group-hover:text-[#D4AF37]" />
                   </div>
                   <p className="text-sm font-medium text-gray-700 mb-1 font-thai">
-                    คลิกเพื่ออัปโหลดวิดีโอต้นแบบ
+                    คลิกเพื่ออัปโหลดวิดีโออ้างอิงเริ่มต้น
                   </p>
                   <p className="text-xs text-gray-400 font-thai">
-                    รองรับ MP4, WebM (สูงสุด 20MB)
+                    รองรับ MP4 (สูงสุด 20MB)
                   </p>
                 </div>
               )}
@@ -624,8 +737,124 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
         )}
 
+        {/* No-Speech Mode Checkbox */}
+        {(!isMotionControl) && (
+          <div className="flex items-center justify-between p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+            <span className="text-sm font-medium text-gray-700 font-thai">🎬 โหมดไม่มีเสียงพากย์ (No-Speech / B-Roll Mode)</span>
+            <button
+              type="button"
+              onClick={() => {
+                const nextNoSpeech = !isNoSpeech;
+                setIsNoSpeech(nextNoSpeech);
+                if (nextNoSpeech) {
+                  setIsAutoDuration(false);
+                } else {
+                  setIsAutoDuration(true);
+                }
+              }}
+              className={`px-3 py-1 rounded-lg font-thai font-bold text-xs transition-all ${
+                isNoSpeech
+                  ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-sm'
+                  : 'bg-white text-gray-600 border border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              {isNoSpeech ? '🔴 ปิดเสียงพากย์ (No-Speech On)' : '⚪ ใช้เสียงพากย์ (No-Speech Off)'}
+            </button>
+          </div>
+        )}
+
+        {/* Audio Source Type Toggle */}
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
+          <div className="space-y-2 p-3 bg-gray-50 border border-gray-200 rounded-xl">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+              การจัดเตรียมเสียงพากย์ (Voice Source Type)
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAudioSourceType('tts')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
+                  audioSourceType === 'tts'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🤖 เสียงสังเคราะห์ AI (TTS)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAudioSourceType('upload')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
+                  audioSourceType === 'upload'
+                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                }`}
+              >
+                🎙️ อัปโหลดไฟล์เสียงเอง (Custom)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Custom Audio Upload Field */}
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && audioSourceType === 'upload' && (
+          <div className="space-y-2 animate-fade-in">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              🎙️ ไฟล์เสียงพากย์ของคุณ (Custom Audio File)
+            </label>
+            <div
+              onClick={() => customAudioInputRef.current?.click()}
+              className={`relative group cursor-pointer p-6 rounded-xl border-2 border-dashed transition-all duration-200 text-center ${
+                customAudioPreview
+                  ? 'border-accent-primary/30 bg-white'
+                  : 'border-gray-300 hover:border-[#D4AF37] bg-white'
+              }`}
+            >
+              {customAudioFile ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-gray-700 font-thai">
+                    🎵 {customAudioFile.name}
+                  </p>
+                  <p className="text-xs text-gray-400 font-thai">
+                    ความยาวเสียง: {customAudioDuration} วินาที (ขนาด {(customAudioFile.size / (1024 * 1024)).toFixed(2)}MB)
+                  </p>
+                  <audio src={customAudioPreview || undefined} controls className="mx-auto max-w-full" onClick={(e) => e.stopPropagation()} />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCustomAudioFile(null);
+                      setCustomAudioPreview(null);
+                      setCustomAudioDuration(0);
+                    }}
+                    className="mt-2 text-xs text-accent-danger font-bold hover:underline"
+                  >
+                    ลบไฟล์เสียง
+                  </button>
+                </div>
+              ) : (
+                <div className="py-4">
+                  <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2 group-hover:text-[#D4AF37]" />
+                  <p className="text-xs font-medium text-gray-700 font-thai">
+                    คลิกเพื่ออัปโหลดไฟล์เสียงพากย์ของคุณ
+                  </p>
+                  <p className="text-[10px] text-gray-400 font-thai mt-0.5">
+                    รองรับ MP3, WAV, M4A (สูงสุด 15MB)
+                  </p>
+                </div>
+              )}
+            </div>
+            <input
+              ref={customAudioInputRef}
+              type="file"
+              accept="audio/*"
+              onChange={handleCustomAudioChange}
+              className="hidden"
+            />
+          </div>
+        )}
+
         {/* Script Text */}
-        {(!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && audioSourceType === 'tts' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -703,88 +932,113 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
 
           {/* TTS Provider Option */}
-          <div className="space-y-2 border-t border-gray-200 pt-3">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
-              ผู้ให้บริการเสียงพากย์ (TTS Provider)
-            </label>
-            <div className="flex gap-2 max-w-md">
-              <button
-                type="button"
-                onClick={() => {
-                  setTtsProvider('botnoi');
-                  setSelectedVoice('1');
-                }}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                  ttsProvider === 'botnoi'
-                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
-                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                }`}
-              >
-                🤖 Botnoi
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTtsProvider('google');
-                  setSelectedVoice('th-TH-Neural2-C');
-                }}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                  ttsProvider === 'google'
-                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
-                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                }`}
-              >
-                🌐 Google
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTtsProvider('openai');
-                  setSelectedVoice('nova');
-                }}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                  ttsProvider === 'openai'
-                    ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
-                    : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                }`}
-              >
-                🧠 OpenAI
-              </button>
+          {!isNoSpeech && audioSourceType === 'tts' && (
+            <div className="space-y-2 border-t border-gray-200 pt-3">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+                ผู้ให้บริการเสียงพากย์ (TTS Provider)
+              </label>
+              <div className="flex gap-2 max-w-md">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsProvider('botnoi');
+                    setSelectedVoice('1');
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    ttsProvider === 'botnoi'
+                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                  }`}
+                >
+                  🤖 Botnoi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsProvider('google');
+                    setSelectedVoice('th-TH-Neural2-C');
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    ttsProvider === 'google'
+                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                  }`}
+                >
+                  🌐 Google
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsProvider('openai');
+                    setSelectedVoice('nova');
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    ttsProvider === 'openai'
+                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                  }`}
+                >
+                  🧠 OpenAI
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Voice Selection */}
-        {(!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
+        {!isNoSpeech && audioSourceType === 'tts' && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
           <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
         )}
 
         {/* Video Duration */}
         {!isMotionControl && (
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-text-secondary font-thai">
-              ความยาววิดีโอ (Video Duration)
-            </label>
-            <div className="flex gap-2">
-              {durationOptions.map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setSelectedDuration(d)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    selectedDuration === d
-                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
-                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                  }`}
-                >
-                  ⏱️ {d} วินาที
-                </button>
-              ))}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium text-text-secondary font-thai">
+                ความยาววิดีโอ (Video Duration)
+              </label>
+              
+              {!isNoSpeech && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isAutoDuration}
+                    onChange={(e) => setIsAutoDuration(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#D4AF37]"></div>
+                  <span className="text-xs font-semibold text-gray-600 font-thai">อัตโนมัติ (Auto)</span>
+                </label>
+              )}
             </div>
+
+            {isAutoDuration && !isNoSpeech ? (
+              <div className="p-3.5 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-xl flex items-center justify-between text-[#D4AF37] font-thai text-sm animate-fade-in">
+                <span>⏱️ คำนวณความยาวอัตโนมัติสำเร็จ</span>
+                <span className="font-bold text-base bg-[#1A1A1A] px-3 py-1 rounded-lg border border-[#D4AF37] shadow-sm">
+                  {selectedDuration} วินาที
+                </span>
+              </div>
+            ) : (
+              <div className="flex gap-2 animate-fade-in">
+                {durationOptions.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setSelectedDuration(d)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      selectedDuration === d
+                        ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                        : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                    }`}
+                  >
+                    ⏱️ {d} วินาที
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
-
-
 
         {/* Submit Button */}
         <button
@@ -793,7 +1047,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             processing ||
             !imageFile ||
             (modelType === 'motion-control' && !videoFile) ||
-            (modelType !== 'motion-control' && !scriptText.trim()) ||
+            (modelType !== 'motion-control' && !isNoSpeech && audioSourceType === 'tts' && !scriptText.trim()) ||
+            (modelType !== 'motion-control' && !isNoSpeech && audioSourceType === 'upload' && !customAudioFile) ||
             (modelType === 'motion-control' && motionAudioSource === 'botnoi' && !scriptText.trim())
           }
           className="w-full bg-[#1A1A1A] text-[#D4AF37] hover:bg-black disabled:bg-gray-300 disabled:text-gray-500 py-4 rounded-xl font-bold text-lg shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2"

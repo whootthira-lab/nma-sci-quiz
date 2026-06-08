@@ -129,9 +129,10 @@ export async function POST(req: NextRequest) {
       }
 
       const audioUrl = genRow?.audio_prompt;
+      const isNoSpeech = genRow?.metadata?.is_no_speech === true;
 
       // Check if we need to run Lip-Sync Post-Processing
-      if (!isLipsyncPhase && audioUrl) {
+      if (!isLipsyncPhase && !isNoSpeech && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
           const syncResponse = await fetch('https://queue.fal.run/fal-ai/sync-lipsync/v3', {
