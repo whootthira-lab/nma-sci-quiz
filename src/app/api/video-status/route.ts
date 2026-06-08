@@ -121,12 +121,8 @@ export async function POST(req: NextRequest) {
       const audioUrl = genRow?.audio_prompt;
       
       let finalVideoUrl = tempUrl;
-      const isMergeRequired = modelName 
-        ? (modelName.toLowerCase().includes('kling') || modelName.toLowerCase().includes('grok')) 
-        : (modelType === 'fast' || modelType === 'grok-video' || modelType === 'motion-control');
-
-      if (isMergeRequired && audioUrl) {
-        console.log(`⏳ [FFmpeg Merge] Kling/Grok video: ${tempUrl} with audio: ${audioUrl}...`);
+      if (audioUrl) {
+        console.log(`⏳ [FFmpeg Merge] Video: ${tempUrl} with audio: ${audioUrl}...`);
         try {
           const mergeResponse = await fetch('https://fal.run/fal-ai/ffmpeg-api/merge-audio-video', {
             method: 'POST',
