@@ -13,6 +13,19 @@ function initFirebaseAdmin() {
   }
 
   try {
+    const serviceAccountKey = process.env.NEXT_PUBLIC_FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (serviceAccountKey) {
+      console.log('[Firebase] Initializing with service account key...');
+      const cleanKey = serviceAccountKey.startsWith("'") && serviceAccountKey.endsWith("'")
+        ? serviceAccountKey.slice(1, -1)
+        : serviceAccountKey;
+      const serviceAccount = JSON.parse(cleanKey);
+      return admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+      });
+    }
+
     const privateKey = getPrivateKey();
     console.log('[Firebase] privateKey starts with:', privateKey.substring(0, 30));
 
