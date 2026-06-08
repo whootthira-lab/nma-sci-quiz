@@ -160,6 +160,66 @@ async function generateOpenAITTS(text: string, voiceId: string): Promise<Buffer>
   return Buffer.from(arrayBuffer);
 }
 
+async function enhancePromptWithGPT(situationPrompt: string, scriptText: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+  if (!apiKey) {
+    console.warn('[GPT Enhance] Missing OPENAI_API_KEY. Using original prompt.');
+    return situationPrompt || '';
+  }
+
+  const systemMessage = `You are an expert AI Prompt Engineer specialized in video generation models (Wan 2.5 and Kling 2.5).
+Your task is to take a simple Thai or English visual description (situation) and a speech script, and enhance it into a highly detailed English visual prompt for a talking head/avatar video.
+
+Guidelines:
+1. Translate the situation description to English if it is in Thai.
+2. Expand it to describe cinematic details: camera angle (medium close-up, close-up, talking portrait), lighting (soft studio light, cinematic lighting), details of the person (natural facial features, clear lip movements, natural blinking, high detail skin texture), and background matching the situation.
+3. Incorporate the context/tone of the speech script to match the facial expressions (e.g., warm smile if it's friendly, serious expression if it's formal).
+4. Do NOT include the actual spoken words inside the prompt itself, only describe the visual scene and speech actions.
+5. Keep the prompt under 150 words.
+6. Return ONLY the enhanced English visual prompt. Do NOT add any greeting, explanation, markdown formatting, or quotes.`;
+
+  const userMessage = `Situation description: "${situationPrompt || 'A person talking naturally'}"
+Speech script: "${scriptText || ''}"`;
+
+  try {
+    console.log('[GPT Enhance] Enhancing prompt with gpt-4o-mini...');
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemMessage },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.7,
+        max_tokens: 250,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`[GPT Enhance API Error] Status: ${response.status}, Error:`, errText);
+      return situationPrompt || '';
+    }
+
+    const resJson = await response.json();
+    const enhancedPrompt = resJson.choices?.[0]?.message?.content?.trim();
+    if (enhancedPrompt) {
+      console.log('[GPT Enhance] Original situation prompt:', situationPrompt);
+      console.log('[GPT Enhance] Enhanced prompt:', enhancedPrompt);
+      return enhancedPrompt;
+    }
+  } catch (error) {
+    console.warn('[GPT Enhance Exception] Failed to run enhancement:', error);
+  }
+
+  return situationPrompt || '';
+}
+
 function getWanVideoParams(targetSeconds: number) {
   // Constraints:
   // num_frames must be between 81 and 100
@@ -283,9 +343,8 @@ export async function POST(req: NextRequest) {
         );
 
     // 4. Build Fal.ai request body
-    const combinedPrompt = situationPrompt
-      ? `${situationPrompt}, talking, lip sync`
-      : 'A person talking naturally, gentle expressions, professional setting';
+    console.log('[STEP 2.5] Enhancing prompt with gpt-4o-mini...');
+    const combinedPrompt = await enhancePromptWithGPT(situationPrompt, scriptText);
 
     let requestBody: Record<string, any>;
     if (isCinema) {
