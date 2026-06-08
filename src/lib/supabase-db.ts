@@ -221,4 +221,95 @@ export async function uploadBufferToStorage(
   return uploadToStorage(blob, path);
 }
 
+// ─── Character Helpers ──────────────────────────────
+
+export async function getCharacters(email: string) {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .single();
+
+  if (profileError || !profile) {
+    console.warn('Profile not found for email when fetching characters:', email);
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('characters')
+    .select('*')
+    .eq('user_id', profile.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching characters:', error);
+    return [];
+  }
+
+  return data;
+}
+
+export async function createCharacter(characterData: Record<string, any>) {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('email', characterData.user_email)
+    .single();
+
+  if (profileError || !profile) {
+    throw new Error(`Profile not found for email: ${characterData.user_email}`);
+  }
+
+  const { data, error } = await supabase
+    .from('characters')
+    .insert({
+      user_id: profile.id,
+      name: characterData.name,
+      code: characterData.code,
+      visual_description: characterData.visual_description,
+      negative_prompt: characterData.negative_prompt || null,
+      avatar_front_url: characterData.avatar_front_url || null,
+      avatar_front_path: characterData.avatar_front_path || null,
+      avatar_45_url: characterData.avatar_45_url || null,
+      avatar_45_path: characterData.avatar_45_path || null,
+      avatar_side_url: characterData.avatar_side_url || null,
+      avatar_side_path: characterData.avatar_side_path || null
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCharacter(id: string) {
+  const { data: character } = await supabase
+    .from('characters')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (!character) return;
+
+  const { error: dbError } = await supabase
+    .from('characters')
+    .delete()
+    .eq('id', id);
+
+  if (dbError) throw dbError;
+
+  const pathsToDelete: string[] = [];
+  if (character.avatar_front_path) pathsToDelete.push(character.avatar_front_path);
+  if (character.avatar_45_path) pathsToDelete.push(character.avatar_45_path);
+  if (character.avatar_side_path) pathsToDelete.push(character.avatar_side_path);
+
+  if (pathsToDelete.length > 0) {
+    try {
+      await supabase.storage.from('kruth-ai-assets').remove(pathsToDelete);
+    } catch (e) {
+      console.warn('Cleanup of character avatar files from storage failed:', pathsToDelete, e);
+    }
+  }
+}
+
 // ─── Cleanup ────────────────────────────────────────

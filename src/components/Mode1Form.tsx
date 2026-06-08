@@ -19,6 +19,18 @@ import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
 import { ASPECT_RATIOS, THAI_VOICES } from '@/types';
 import { useAuth } from '@/lib/auth-context';
+import { getCharacters } from '@/lib/supabase-db';
+
+interface Character {
+  id: string;
+  name: string;
+  code: string;
+  visual_description: string;
+  negative_prompt?: string;
+  avatar_front_url?: string;
+  avatar_45_url?: string;
+  avatar_side_url?: string;
+}
 
 interface Mode1FormProps {
   onVideoGenerated: () => void;
@@ -46,6 +58,18 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [customAudioDuration, setCustomAudioDuration] = useState(0);
   const [isAutoDuration, setIsAutoDuration] = useState(true);
   const [visualStyle, setVisualStyle] = useState('cinematic');
+
+  // Character Library states
+  const [characterList, setCharacterList] = useState<Character[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState('');
+  const [selectedCharacterAngle, setSelectedCharacterAngle] = useState<'front' | '45' | 'side'>('front');
+
+  // Speech Speed state
+  const [speedFactor, setSpeedFactor] = useState(1.0);
+
+  // Character Emotion state
+  const [characterEmotion, setCharacterEmotion] = useState('');
+  const [customEmotionText, setCustomEmotionText] = useState('');
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
@@ -96,6 +120,37 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
   }, [modelType, selectedDuration]);
 
+  // Load characters list on mount
+  useEffect(() => {
+    if (user?.email) {
+      getCharacters(user.email).then(data => {
+        setCharacterList(data);
+      }).catch(err => {
+        console.error('Failed to load characters in form:', err);
+      });
+    }
+  }, [user?.email]);
+
+  // Sync starting image preview from selected character avatar & angle
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+    const char = characterList.find(c => c.id === selectedCharacterId);
+    if (!char) return;
+
+    let url = '';
+    if (selectedCharacterAngle === 'front') url = char.avatar_front_url || '';
+    else if (selectedCharacterAngle === '45') url = char.avatar_45_url || '';
+    else if (selectedCharacterAngle === 'side') url = char.avatar_side_url || '';
+
+    if (url) {
+      setImagePreview(url);
+      setImageFile(null); // Clear manual file since we are using character template
+    } else {
+      setImagePreview(null);
+      setImageFile(null);
+    }
+  }, [selectedCharacterId, selectedCharacterAngle, characterList]);
+
   // Hook for Auto Duration calculation
   useEffect(() => {
     if (!isAutoDuration || isNoSpeech) return;
@@ -104,7 +159,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     let speechSecs = 0;
     if (audioSourceType === 'tts') {
       const chars = scriptText.replace(/\s+/g, '').length;
-      speechSecs = Math.max(1, Math.ceil(chars / 15));
+      speechSecs = Math.max(1, Math.ceil((chars / 15) / speedFactor));
     } else {
       speechSecs = customAudioDuration || 0;
     }
@@ -129,7 +184,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     }
 
     setSelectedDuration(finalDuration);
-  }, [isAutoDuration, isNoSpeech, scriptText, audioSourceType, customAudioDuration, modelType]);
+  }, [isAutoDuration, isNoSpeech, scriptText, audioSourceType, customAudioDuration, modelType, speedFactor]);
 
   const durationOptions = modelType === 'cinema'
     ? [5, 10, 15, 25]
@@ -289,6 +344,10 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           setScriptText('');
           setSituationPrompt('');
           setEndSituationPrompt('');
+          setSelectedCharacterId('');
+          setSpeedFactor(1.0);
+          setCharacterEmotion('');
+          setCustomEmotionText('');
           setProcessing(false);
           setProcessingProgress(undefined);
           onVideoGenerated();
@@ -328,13 +387,40 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setProcessingStage('กำลังอัพโหลดข้อมูลเข้าสู่ KRUTH Engine...');
       setProcessingProgress(5);
       const formData = new FormData();
-      formData.append('image', imageFile!);
+      if (imageFile) {
+        formData.append('image', imageFile);
+      } else if (selectedCharacterId && imagePreview) {
+        formData.append('character_image_url', imagePreview);
+      }
+
       if (modelType === 'motion-control') {
         formData.append('video', videoFile!);
         formData.append('motion_audio_source', motionAudioSource);
         formData.append('script_text', motionAudioSource === 'botnoi' ? scriptText : '');
       } else {
         formData.append('script_text', isNoSpeech ? '' : scriptText);
+      }
+
+      // Character Library Details
+      if (selectedCharacterId) {
+        const char = characterList.find(c => c.id === selectedCharacterId);
+        if (char) {
+          formData.append('character_id', char.id);
+          formData.append('character_name', char.name);
+          formData.append('character_description', char.visual_description);
+          if (char.negative_prompt) {
+            formData.append('character_negative_prompt', char.negative_prompt);
+          }
+        }
+      }
+
+      // Speech Speed
+      formData.append('speed_factor', String(speedFactor));
+
+      // Emotion
+      const finalEmotion = characterEmotion === 'custom' ? customEmotionText : characterEmotion;
+      if (finalEmotion) {
+        formData.append('character_emotion', finalEmotion);
       }
       formData.append('situation_prompt', situationPrompt);
       if (modelType === 'fast') {
@@ -400,8 +486,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         return;
       }
     } else {
-      if (!imageFile) {
-        setError('กรุณาอัปโหลดรูปภาพอ้างอิงเริ่มต้น');
+      if (!imageFile && (!selectedCharacterId || !imagePreview)) {
+        setError('กรุณาอัปโหลดรูปภาพอ้างอิงเริ่มต้น หรือเลือกตัวละครจากคลัง');
         return;
       }
       if (!isNoSpeech) {
@@ -511,6 +597,45 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </select>
         </div>
 
+        {/* Character/Scene Emotion Selector */}
+        <div className="space-y-2 animate-fade-in">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            🎭 อารมณ์ของตัวละครหรือฉาก (Character/Scene Emotion)
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <select
+              value={characterEmotion}
+              onChange={(e) => {
+                setCharacterEmotion(e.target.value);
+                if (e.target.value !== 'custom') {
+                  setCustomEmotionText('');
+                }
+              }}
+              className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
+            >
+              <option value="">⚪ ไม่ระบุอารมณ์ (ตามปกติ)</option>
+              <option value="Friendly & Smiling">😊 Friendly & Smiling (ยิ้มแย้ม เป็นกันเอง)</option>
+              <option value="Professional & Serious">💼 Professional & Serious (สุขุม จริงจัง มืออาชีพ)</option>
+              <option value="Energetic & Excited">⚡ Energetic & Excited (กระตือรือร้น ตื่นเต้น มีพลัง)</option>
+              <option value="Empathetic & Gentle">🤝 Empathetic & Gentle (อ่อนโยน เห็นอกเห็นใจ)</option>
+              <option value="Fearful & Worried">😨 Fearful & Worried (กังวล กลัว)</option>
+              <option value="Sad & Gloomy">😢 Sad & Gloomy (เศร้า หมองหม่น)</option>
+              <option value="custom">✍️ กำหนดเอง (พิมพ์อารมณ์เอง)</option>
+            </select>
+
+            {characterEmotion === 'custom' && (
+              <input
+                type="text"
+                required
+                value={customEmotionText}
+                onChange={(e) => setCustomEmotionText(e.target.value)}
+                placeholder="เช่น warm smile, looking serious, intense look"
+                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai animate-fade-in"
+              />
+            )}
+          </div>
+        </div>
+
         {/* Aspect Ratio */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -537,6 +662,56 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                   <span className="font-thai">{ratio.label}</span>
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Character Library Selector */}
+        <div className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            👤 เลือกตัวละครจากคลัง (Character Library)
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <select
+              value={selectedCharacterId}
+              onChange={(e) => {
+                setSelectedCharacterId(e.target.value);
+                if (!e.target.value) {
+                  setImagePreview(null);
+                  setImageFile(null);
+                }
+              }}
+              className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
+            >
+              <option value="">⚪ ไม่ใช้ตัวละคร (อัปโหลดรูปภาพอิสระเอง)</option>
+              {characterList.map((char) => (
+                <option key={char.id} value={char.id}>
+                  👤 {char.name} ({char.code})
+                </option>
+              ))}
+            </select>
+
+            {selectedCharacterId && (
+              <select
+                value={selectedCharacterAngle}
+                onChange={(e) => setSelectedCharacterAngle(e.target.value as any)}
+                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-[#D4AF37] font-bold outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all animate-fade-in"
+              >
+                <option value="front">👤 ภาพหน้าตรง (Front View)</option>
+                <option value="45">📐 ภาพมุม 45 องศา (45° View)</option>
+                <option value="side">👥 ภาพมุมข้าง (Side View)</option>
+              </select>
+            )}
+          </div>
+          {selectedCharacterId && (
+            <div className="text-xs text-text-secondary font-thai bg-white p-3 rounded-xl border border-gray-200 animate-fade-in space-y-1">
+              <span className="font-bold text-gray-700">รายละเอียดตัวละคร:</span>
+              <p className="italic">"{characterList.find(c => c.id === selectedCharacterId)?.visual_description}"</p>
+              {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt && (
+                <p className="text-[#D4AF37] mt-1">
+                  <span className="font-bold">สิ่งที่เลี่ยง:</span> {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -980,6 +1155,36 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 >
                   🧠 OpenAI
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Speech Speed Option */}
+          {!isNoSpeech && audioSourceType === 'tts' && (
+            <div className="space-y-2 border-t border-gray-200 pt-3 animate-fade-in">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+                📈 ความเร็วในการพูด (Speech Speed)
+              </label>
+              <div className="flex gap-2 max-w-md">
+                {[
+                  { value: 0.8, label: 'ช้า (0.8x)' },
+                  { value: 1.0, label: 'ปกติ (1.0x)' },
+                  { value: 1.2, label: 'เร็วขึ้น (1.2x)' },
+                  { value: 1.5, label: 'เร็ว (1.5x)' }
+                ].map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setSpeedFactor(item.value)}
+                    className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
+                      speedFactor === item.value
+                        ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                        : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
             </div>
           )}

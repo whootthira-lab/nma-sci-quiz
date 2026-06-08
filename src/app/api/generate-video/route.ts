@@ -32,7 +32,7 @@ async function uploadToSupabaseStorage(
   return publicUrl;
 }
 
-async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
+async function generateTTS(text: string, voiceId: string, speedFactor: number = 1.0): Promise<Buffer> {
   const botnoiToken = process.env.BOTNOI_TOKEN;
   if (!botnoiToken) throw new Error('ไม่พบ BOTNOI_TOKEN ในระบบ');
 
@@ -44,7 +44,7 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   };
   const speakerId = voiceMap[voiceId] || voiceId;
 
-  console.log(`[Botnoi] Generating Thai TTS audio for speaker ID: ${speakerId}`);
+  console.log(`[Botnoi] Generating Thai TTS audio for speaker ID: ${speakerId} with speed factor: ${speedFactor}`);
 
   const botnoiResponse = await fetch('https://api-voice.botnoi.ai/api/service/generate_audio', {
     method: 'POST',
@@ -56,7 +56,7 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
       text: text,
       speaker: speakerId,
       volume: 1,
-      speed: 1,
+      speed: speedFactor,
       type_media: 'mp3'
     }),
   });
@@ -92,11 +92,11 @@ async function generateTTS(text: string, voiceId: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-async function generateGoogleTTS(text: string, voiceId: string): Promise<Buffer> {
+async function generateGoogleTTS(text: string, voiceId: string, speedFactor: number = 1.0): Promise<Buffer> {
   const apiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   if (!apiKey) throw new Error('ไม่พบ GOOGLE_API_KEY ในระบบ สำหรับการใช้งาน Google TTS');
 
-  console.log(`[Google TTS] Generating Thai TTS audio for voice ID: ${voiceId}`);
+  console.log(`[Google TTS] Generating Thai TTS audio for voice ID: ${voiceId} with speed factor: ${speedFactor}`);
 
   const googleResponse = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
     method: 'POST',
@@ -111,6 +111,7 @@ async function generateGoogleTTS(text: string, voiceId: string): Promise<Buffer>
       },
       audioConfig: {
         audioEncoding: 'MP3',
+        speakingRate: speedFactor,
       },
     }),
   });
@@ -130,11 +131,11 @@ async function generateGoogleTTS(text: string, voiceId: string): Promise<Buffer>
   return Buffer.from(data.audioContent, 'base64');
 }
 
-async function generateOpenAITTS(text: string, voiceId: string): Promise<Buffer> {
+async function generateOpenAITTS(text: string, voiceId: string, speedFactor: number = 1.0): Promise<Buffer> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
   if (!apiKey) throw new Error('ไม่พบ OPENAI_API_KEY ในระบบ สำหรับการใช้งาน OpenAI TTS');
 
-  console.log(`[OpenAI TTS] Generating Thai TTS audio for voice ID: ${voiceId}`);
+  console.log(`[OpenAI TTS] Generating Thai TTS audio for voice ID: ${voiceId} with speed factor: ${speedFactor}`);
 
   const openAIResponse = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',
@@ -147,6 +148,7 @@ async function generateOpenAITTS(text: string, voiceId: string): Promise<Buffer>
       input: text,
       voice: voiceId,
       response_format: 'mp3',
+      speed: speedFactor,
     }),
   });
 
@@ -165,7 +167,9 @@ async function enhancePromptWithGPT(
   scriptText: string,
   endSituationPrompt?: string,
   isNoSpeech?: boolean,
-  visualStyle?: string
+  visualStyle?: string,
+  characterDescription?: string,
+  characterEmotion?: string
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
   if (!apiKey) {
@@ -201,6 +205,14 @@ Guidelines:
   let userMessage = `Situation description: "${situationPrompt || 'A person talking naturally'}"`;
   if (!isNoSpeech) {
     userMessage += `\nSpeech script: "${scriptText || ''}"`;
+  }
+
+  if (characterDescription) {
+    userMessage += `\nCharacter Visual Signature (Describe this person exactly): "${characterDescription}"`;
+  }
+
+  if (characterEmotion) {
+    userMessage += `\nSubject's Emotion/Mood (Apply this expression and body language): "${characterEmotion}"`;
   }
 
   if (endSituationPrompt) {
@@ -290,7 +302,7 @@ export async function POST(req: NextRequest) {
     console.log('[STEP 0] Triggering Asynchronous Video Generation');
 
     const formData = await req.formData();
-    const imageFile = formData.get('image') as File;
+    const imageFile = formData.get('image') as File | null;
     const endImageFile = formData.get('end_image') as File | null;
     const customAudioFile = formData.get('custom_audio') as File | null;
     const isNoSpeech = formData.get('is_no_speech') === 'true';
@@ -310,10 +322,19 @@ export async function POST(req: NextRequest) {
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
     const safetyFilterDisabled = formData.get('safety_filter_disabled') === 'true';
 
+    // Character library, speech speed and emotion extraction
+    const characterId = formData.get('character_id') as string || '';
+    const characterName = formData.get('character_name') as string || '';
+    const characterDescription = formData.get('character_description') as string || '';
+    const characterNegativePrompt = formData.get('character_negative_prompt') as string || '';
+    const characterImageUrl = formData.get('character_image_url') as string || '';
+    const speedFactor = parseFloat(formData.get('speed_factor') as string || '1.0');
+    const characterEmotion = formData.get('character_emotion') as string || '';
+
     const isMotionControl = modelType === 'motion-control';
 
     if (isMotionControl) {
-      if (!imageFile || !videoFile || !userEmail) {
+      if ((!imageFile && !characterImageUrl) || !videoFile || !userEmail) {
         return NextResponse.json(
           { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและวิดีโอต้นแบบให้ครบ' },
           { status: 400 }
@@ -326,7 +347,7 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
-      if (!imageFile || !scriptText || !userEmail) {
+      if ((!imageFile && !characterImageUrl) || (!isNoSpeech && !scriptText) || !userEmail) {
         return NextResponse.json(
           { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
           { status: 400 }
@@ -340,11 +361,19 @@ export async function POST(req: NextRequest) {
     const timestamp = Date.now();
 
     // 1. Upload reference image
-    console.log('[STEP 1] Uploading reference image to Supabase...');
-    const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
-    const imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
-    const imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
-    console.log('[STEP 1] Image uploaded:', imageUrl);
+    let imageUrl = '';
+    let imagePath = '';
+
+    if (imageFile) {
+      console.log('[STEP 1] Uploading reference image to Supabase...');
+      const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
+      imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
+      imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
+      console.log('[STEP 1] Image uploaded:', imageUrl);
+    } else if (characterImageUrl) {
+      console.log('[STEP 1] Using character library image URL:', characterImageUrl);
+      imageUrl = characterImageUrl;
+    }
 
     // 1.5. Upload reference video for Motion Control
     let videoUrl = '';
@@ -381,14 +410,14 @@ export async function POST(req: NextRequest) {
         audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, customAudioFile.type);
         console.log('[STEP 2] Custom audio uploaded:', audioUrl);
       } else if (scriptText) {
-        console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId}...`);
+        console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId} with speed: ${speedFactor}...`);
         let audioBuffer: Buffer;
         if (ttsProvider === 'google') {
-          audioBuffer = await generateGoogleTTS(scriptText, voiceId);
+          audioBuffer = await generateGoogleTTS(scriptText, voiceId, speedFactor);
         } else if (ttsProvider === 'openai') {
-          audioBuffer = await generateOpenAITTS(scriptText, voiceId);
+          audioBuffer = await generateOpenAITTS(scriptText, voiceId, speedFactor);
         } else {
-          audioBuffer = await generateTTS(scriptText, voiceId);
+          audioBuffer = await generateTTS(scriptText, voiceId, speedFactor);
         }
         audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
         audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
@@ -414,7 +443,9 @@ export async function POST(req: NextRequest) {
       scriptText,
       modelType === 'fast' ? endSituationPrompt : undefined,
       isNoSpeech,
-      visualStyle
+      visualStyle,
+      characterDescription,
+      characterEmotion
     );
 
     let requestBody: Record<string, any>;
@@ -422,11 +453,16 @@ export async function POST(req: NextRequest) {
       const wanParams = getWanVideoParams(selectedDuration);
       console.log(`[Wan 2.5 Cinema Params] Selected duration: ${selectedDuration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
       
+      let negativePrompt = 'blurry, distorted, low quality, static, frozen';
+      if (characterNegativePrompt) {
+        negativePrompt += `, ${characterNegativePrompt}`;
+      }
+
       requestBody = {
         image_url: imageUrl,
         audio_url: audioUrl,
         prompt: combinedPrompt,
-        negative_prompt: 'blurry, distorted, low quality, static, frozen',
+        negative_prompt: negativePrompt,
         num_frames: wanParams.num_frames,
         frames_per_second: wanParams.frames_per_second,
         aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
@@ -454,6 +490,9 @@ export async function POST(req: NextRequest) {
         enable_safety_checker: !safetyFilterDisabled,
         enable_safety_checks: !safetyFilterDisabled,
       };
+      if (characterNegativePrompt) {
+        requestBody.negative_prompt = characterNegativePrompt;
+      }
     } else {
       requestBody = {
         image_url: imageUrl,
@@ -461,6 +500,9 @@ export async function POST(req: NextRequest) {
         aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
         duration: selectedDuration <= 5 ? 5 : 10,
       };
+      if (characterNegativePrompt) {
+        requestBody.negative_prompt = characterNegativePrompt;
+      }
       if (modelType === 'fast' && endImageUrl) {
         requestBody.tail_image_url = endImageUrl;
       }
@@ -575,7 +617,14 @@ export async function POST(req: NextRequest) {
             end_image_path: endImagePath || null,
             end_image_url: endImageUrl || null,
             audio_path: audioPath || null,
-            driving_path: refVideoPath || null
+            driving_path: refVideoPath || null,
+            // Character Library, Speech Speed, and Emotion details
+            character_id: characterId || null,
+            character_name: characterName || null,
+            character_description: characterDescription || null,
+            character_negative_prompt: characterNegativePrompt || null,
+            speed_factor: speedFactor,
+            character_emotion: characterEmotion || null
           }
         });
 

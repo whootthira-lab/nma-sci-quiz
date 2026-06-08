@@ -11,6 +11,7 @@ import {
   Sparkles,
   Menu,
   X,
+  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -22,6 +23,7 @@ export default function Navbar() {
   const navItems = [
     { href: '/dashboard', label: 'สร้างวิดีโอ', icon: Film },
     { href: '/gallery', label: 'คลังวิดีโอ', icon: LayoutGrid },
+    { href: '/characters', label: 'คลังตัวละคร', icon: Users },
     ...(isAdmin ? [{ href: '/admin', label: 'ผู้ดูแลระบบ', icon: ShieldCheck }] : []),
   ];
 
