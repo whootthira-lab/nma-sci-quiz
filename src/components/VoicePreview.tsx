@@ -7,10 +7,10 @@ import { THAI_VOICES, type ThaiVoice } from '@/types';
 interface VoicePreviewProps {
   selectedVoice: string;
   onSelect: (voiceId: string) => void;
-  ttsProvider?: 'botnoi' | 'google' | 'openai';
+  ttsProvider?: 'google' | 'openai';
 }
 
-export default function VoicePreview({ selectedVoice, onSelect, ttsProvider = 'botnoi' }: VoicePreviewProps) {
+export default function VoicePreview({ selectedVoice, onSelect, ttsProvider = 'google' }: VoicePreviewProps) {
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 

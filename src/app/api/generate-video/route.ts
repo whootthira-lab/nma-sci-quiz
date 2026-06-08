@@ -318,7 +318,7 @@ export async function POST(req: NextRequest) {
     const userId = formData.get('user_id') as string;
     const modelType = formData.get('model_type') as string || 'fast';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
-    const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
+    const ttsProvider = formData.get('tts_provider') as string || 'google';
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
     const safetyFilterDisabled = formData.get('safety_filter_disabled') === 'true';
 
@@ -344,9 +344,9 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      if (motionAudioSource === 'botnoi' && !scriptText) {
+      if ((motionAudioSource === 'botnoi' || motionAudioSource === 'tts') && !scriptText) {
         return NextResponse.json(
-          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์สำหรับ Botnoi' },
+          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์สำหรับเสียง AI' },
           { status: 400 }
         );
       }
@@ -461,7 +461,7 @@ export async function POST(req: NextRequest) {
     // 2. Generate Thai TTS audio (only if needed)
     let audioUrl = '';
     let audioPath = '';
-    const needTTS = !isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi'));
+    const needTTS = !isNoSpeech && (!isMotionControl || (isMotionControl && (motionAudioSource === 'botnoi' || motionAudioSource === 'tts')));
     
     if (needTTS) {
       if (customAudioFile) {

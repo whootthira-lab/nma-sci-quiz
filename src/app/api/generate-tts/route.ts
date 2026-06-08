@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
     const userEmail = formData.get('user_email') as string;
-    const ttsProvider = formData.get('tts_provider') as string || 'botnoi';
+    const ttsProvider = formData.get('tts_provider') as string || 'google';
 
     if (!imageFile || !scriptText || !userEmail) {
       return NextResponse.json(

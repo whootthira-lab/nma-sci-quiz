@@ -83,7 +83,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
-  const [ttsProvider, setTtsProvider] = useState<'botnoi' | 'google' | 'openai'>('botnoi');
+  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai'>('google');
 
   // KRUTH Engine Model Selection
   const [modelType, setModelType] = useState('fast'); 
@@ -97,7 +97,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   // Kling v2.6 Motion Control states
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
-  const [motionAudioSource, setMotionAudioSource] = useState<'video' | 'botnoi'>('video');
+  const [motionAudioSource, setMotionAudioSource] = useState<'video' | 'tts'>('video');
   const videoInputRef = useRef<HTMLInputElement>(null);
   const endFileInputRef = useRef<HTMLInputElement>(null);
   const customAudioInputRef = useRef<HTMLInputElement>(null);
@@ -415,7 +415,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       if (modelType === 'motion-control') {
         formData.append('video', videoFile!);
         formData.append('motion_audio_source', motionAudioSource);
-        formData.append('script_text', motionAudioSource === 'botnoi' ? scriptText : '');
+        formData.append('script_text', motionAudioSource === 'tts' ? scriptText : '');
       } else {
         formData.append('script_text', isNoSpeech ? '' : scriptText);
       }
@@ -506,8 +506,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         setError('กรุณาอัพโหลดรูปภาพและวิดีโอต้นแบบ');
         return;
       }
-      if (motionAudioSource === 'botnoi' && !scriptText.trim()) {
-        setError('กรุณากรอกบทพากย์สำหรับเสียง Botnoi');
+      if (motionAudioSource === 'tts' && !scriptText.trim()) {
+        setError('กรุณากรอกบทพากย์สำหรับเสียง AI');
         return;
       }
     } else {
@@ -946,9 +946,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setMotionAudioSource('botnoi')}
+                onClick={() => setMotionAudioSource('tts')}
                 className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
-                  motionAudioSource === 'botnoi'
+                  motionAudioSource === 'tts'
                     ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
                     : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
                 }`}
@@ -986,7 +986,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Audio Source Type Toggle */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && (
           <div className="space-y-2 p-3 bg-gray-50 border border-gray-200 rounded-xl">
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
               การจัดเตรียมเสียงพากย์ (Voice Source Type)
@@ -1019,7 +1019,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Custom Audio Upload Field */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && audioSourceType === 'upload' && (
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && audioSourceType === 'upload' && (
           <div className="space-y-2 animate-fade-in">
             <label className="block text-sm font-medium text-text-secondary font-thai">
               🎙️ ไฟล์เสียงพากย์ของคุณ (Custom Audio File)
@@ -1076,7 +1076,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Script Text */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && audioSourceType === 'tts' && (
+        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -1163,20 +1163,6 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setTtsProvider('botnoi');
-                    setSelectedVoice('1');
-                  }}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    ttsProvider === 'botnoi'
-                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
-                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
-                  }`}
-                >
-                  🤖 Botnoi
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
                     setTtsProvider('google');
                     setSelectedVoice('th-TH-Neural2-C');
                   }}
@@ -1238,7 +1224,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         </div>
 
         {/* Voice Selection */}
-        {!isNoSpeech && audioSourceType === 'tts' && (!isMotionControl || (isMotionControl && motionAudioSource === 'botnoi')) && (
+        {!isNoSpeech && audioSourceType === 'tts' && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && (
           <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
         )}
 
@@ -1297,11 +1283,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           onClick={handleSubmit}
           disabled={
             processing ||
-            !imageFile ||
+            (!imageFile && !selectedCharacterId) ||
             (modelType === 'motion-control' && !videoFile) ||
             (modelType !== 'motion-control' && !isNoSpeech && audioSourceType === 'tts' && !scriptText.trim()) ||
             (modelType !== 'motion-control' && !isNoSpeech && audioSourceType === 'upload' && !customAudioFile) ||
-            (modelType === 'motion-control' && motionAudioSource === 'botnoi' && !scriptText.trim())
+            (modelType === 'motion-control' && motionAudioSource === 'tts' && !scriptText.trim())
           }
           className="w-full bg-[#1A1A1A] text-[#D4AF37] hover:bg-black disabled:bg-gray-300 disabled:text-gray-500 py-4 rounded-xl font-bold text-lg shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2"
         >

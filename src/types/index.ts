@@ -39,18 +39,10 @@ export interface ThaiVoice {
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
-  // Botnoi
-  { id: '1', name: 'Ava', label: 'เอวา (หญิง, สุภาพ)', gender: 'female', sample_url: '/samples/ava.mp3', provider: 'botnoi' },
-  { id: '2', name: 'Kacha', label: 'คชา (ชาย, สุภาพ)', gender: 'male', sample_url: '/samples/kacha.mp3', provider: 'botnoi' },
-  { id: '3', name: 'Jaidee', label: 'ใจดี (หญิง, อบอุ่น)', gender: 'female', sample_url: '/samples/jaidee.mp3', provider: 'botnoi' },
-  { id: '4', name: 'Te', label: 'เท่ห์ (ชาย, วัยรุ่น)', gender: 'male', sample_url: '/samples/te.mp3', provider: 'botnoi' },
-  { id: '15', name: 'Yim', label: 'ยิ้ม (หญิง, ร่าเริง)', gender: 'female', sample_url: '/samples/yim.mp3', provider: 'botnoi' },
-  { id: '33', name: 'Lung', label: 'ลุง (ชาย, ใจดี)', gender: 'male', sample_url: '/samples/lung.mp3', provider: 'botnoi' },
-
-  // Google Cloud TTS (Neural2 & Standard)
+  // Google Cloud TTS (Neural2, Standard, Chirp3)
   { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: 'จี-เนอรัล C (หญิง, Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google' },
   { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: 'จี-สแตนดาร์ด A (หญิง, คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google' },
-  { id: 'th-TH-Standard-F', name: 'G-Standard-F', label: 'จี-สแตนดาร์ด F (ชาย, คุ้มค่า)', gender: 'male', sample_url: '/samples/g-standard-f.mp3', provider: 'google' },
+  { id: 'th-TH-Chirp3-HD-Algenib', name: 'G-Chirp-Algenib', label: 'จี-เชิร์ป Algenib (ชาย, HD)', gender: 'male', sample_url: '/samples/g-chirp-algenib.mp3', provider: 'google' },
 
   // OpenAI TTS
   { id: 'alloy', name: 'Alloy', label: 'อัลลอย (กลาง, สากล)', gender: 'female', sample_url: '/samples/alloy.mp3', provider: 'openai' },
