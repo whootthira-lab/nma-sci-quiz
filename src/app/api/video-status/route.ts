@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       ? 'fal-ai/wan-i2v'
       : (isMotionControl 
           ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5/turbo/image-to-video')
+          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
         );
 
     // Fal.ai queue parent namespace is always the first two segments of the model path
@@ -81,7 +81,8 @@ export async function POST(req: NextRequest) {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     if (currentStatus === 'COMPLETED') {
-      const detailResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}`, {
+      const detailUrl = statusData.response_url || `https://queue.fal.run/${queueNamespace}/requests/${requestId}`;
+      const detailResponse = await fetch(detailUrl, {
         headers: {
           'Authorization': `Key ${falKey}`,
           'Accept': 'application/json'
@@ -244,7 +245,8 @@ export async function POST(req: NextRequest) {
       // ถ้าไม่มี logs ใน statusData ให้ลองดึงจาก detail endpoint เป็นทางเลือกสำรอง
       if (!logs || !Array.isArray(logs) || logs.length === 0) {
         try {
-          const detailResponse = await fetch(`https://queue.fal.run/${queueNamespace}/requests/${requestId}`, {
+          const detailUrl = statusData.response_url || `https://queue.fal.run/${queueNamespace}/requests/${requestId}`;
+          const detailResponse = await fetch(detailUrl, {
             headers: {
               'Authorization': `Key ${falKey}`,
               'Accept': 'application/json'

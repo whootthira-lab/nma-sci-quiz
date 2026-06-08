@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
       ? 'fal-ai/wan-i2v'
       : (isMotionControlModel 
           ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5/turbo/image-to-video')
+          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
         );
 
     // 4. Build Fal.ai request body
