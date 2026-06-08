@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import Navbar from '@/components/Navbar';
-import { Loader2, Plus, Users, Trash2, ShieldAlert, Sparkles, Upload, X } from 'lucide-react';
+import { Loader2, Plus, Users, Trash2, ShieldAlert, Sparkles, Upload, X, Brain } from 'lucide-react';
 import { getCharacters, createCharacter, deleteCharacter, uploadToStorage } from '@/lib/supabase-db';
 
 interface Character {
@@ -14,8 +14,18 @@ interface Character {
   visual_description: string;
   negative_prompt?: string;
   avatar_front_url?: string;
+  avatar_front_path?: string;
   avatar_45_url?: string;
+  avatar_45_path?: string;
   avatar_side_url?: string;
+  avatar_side_path?: string;
+  lora_status?: string;
+  lora_job_id?: string;
+  lora_model_url?: string;
+  lora_trigger_word?: string;
+  lora_dataset_url?: string;
+  lora_dataset_path?: string;
+  lora_steps?: number;
 }
 
 export default function CharactersPage() {
@@ -46,6 +56,14 @@ export default function CharactersPage() {
   const angle45InputRef = useRef<HTMLInputElement>(null);
   const sideInputRef = useRef<HTMLInputElement>(null);
 
+  // LoRA Training States
+  const [activeLoraCharId, setActiveLoraCharId] = useState<string | null>(null);
+  const [loraTriggerWord, setLoraTriggerWord] = useState('');
+  const [loraSteps, setLoraSteps] = useState(1000);
+  const [loraFiles, setLoraFiles] = useState<File[]>([]);
+  const [submittingLora, setSubmittingLora] = useState<string | null>(null);
+  const loraInputRef = useRef<HTMLInputElement>(null);
+
   const fetchCharactersList = async () => {
     if (!user?.email) return;
     setFetching(true);
@@ -68,6 +86,38 @@ export default function CharactersPage() {
       fetchCharactersList();
     }
   }, [user?.email]);
+
+  // Real-time status polling for characters currently training
+  useEffect(() => {
+    const trainingChars = characters.filter(c => c.lora_status === 'training');
+    if (trainingChars.length === 0) return;
+
+    console.log(`[LoRA Poll] Active training jobs found: ${trainingChars.length}. Starting polling interval.`);
+
+    const interval = setInterval(() => {
+      trainingChars.forEach(async (char) => {
+        try {
+          const res = await fetch(`/api/characters/train-status?character_id=${char.id}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.success && (data.status === 'completed' || data.status === 'failed')) {
+            console.log(`[LoRA Poll] Character ${char.name} status updated to: ${data.status}`);
+            setCharacters(prev => prev.map(c => c.id === char.id ? { 
+              ...c, 
+              lora_status: data.status, 
+              lora_model_url: data.character.lora_model_url,
+              lora_trigger_word: data.character.lora_trigger_word,
+              lora_steps: data.character.lora_steps
+            } : c));
+          }
+        } catch (err) {
+          console.warn('Error checking LoRA status in interval:', err);
+        }
+      });
+    }, 12000); // check status every 12 seconds
+
+    return () => clearInterval(interval);
+  }, [characters]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'front' | '45' | 'side') => {
     const file = e.target.files?.[0];
@@ -93,6 +143,23 @@ export default function CharactersPage() {
       setSidePreview(previewUrl);
     }
     setError(null);
+  };
+
+  const handleLoraFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/')) {
+        newFiles.push(file);
+      }
+    }
+    setLoraFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const removeLoraFile = (idx: number) => {
+    setLoraFiles(prev => prev.filter((_, i) => i !== idx));
   };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
@@ -168,8 +235,58 @@ export default function CharactersPage() {
     }
   };
 
+  const handleTrainLoraSubmit = async (charId: string, triggerWord: string, steps: number, files: File[]) => {
+    if (!triggerWord.trim()) {
+      alert('กรุณากรอก Trigger Word สำหรับโมเดลตัวละคร');
+      return;
+    }
+    if (files.length < 4) {
+      alert('กรุณาอัปโหลดรูปภาพชุดตัวอย่างเพื่อฝึกสอนอย่างน้อย 4 รูป (แนะนำ 10-15 รูป)');
+      return;
+    }
+
+    setSubmittingLora(charId);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('character_id', charId);
+    formData.append('user_email', user?.email || '');
+    formData.append('trigger_word', triggerWord.trim());
+    formData.append('steps', String(steps));
+    files.forEach(f => formData.append('images', f));
+
+    try {
+      const res = await fetch('/api/characters/train-lora', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'ส่งคำขอเริ่มการฝึกสอนไม่สำเร็จ');
+      }
+
+      // Update character status in UI list
+      setCharacters(prev => prev.map(c => c.id === charId ? { 
+        ...c, 
+        lora_status: 'training', 
+        lora_job_id: data.jobId,
+        lora_trigger_word: triggerWord.trim(),
+        lora_steps: steps
+      } : c));
+
+      alert('เริ่มส่งข้อมูลเทรนโมเดลตัวละครเรียบร้อยแล้ว! ระบบกำลังคำนวณเบื้องหลัง ใช้เวลาประมาณ 5-10 นาที โดยสถานะจะอัปเดตอัตโนมัติบนหน้านี้ครับ');
+      setActiveLoraCharId(null);
+    } catch (err: any) {
+      console.error('Submit LoRA Training failed:', err);
+      alert(err.message || 'เกิดข้อผิดพลาดในการเริ่มต้นเทรนโมเดลตัวละคร');
+    } finally {
+      setSubmittingLora(null);
+    }
+  };
+
   const handleDeleteClick = async (id: string) => {
-    if (!confirm('ยืนยันลบตัวละครนี้พร้อมไฟล์รูปภาพอ้างอิงทั้งหมดหรือไม่? (การกระทำนี้ไม่สามารถกู้คืนได้)')) return;
+    if (!confirm('ยืนยันลบตัวละครนี้พร้อมไฟล์รูปภาพอ้างอิงและชุดข้อมูล LoRA ทั้งหมดหรือไม่? (การกระทำนี้ไม่สามารถกู้คืนได้)')) return;
     setDeletingId(id);
     try {
       await deleteCharacter(id);
@@ -204,7 +321,7 @@ export default function CharactersPage() {
               คลังตัวละคร (Character Library)
             </h1>
             <p className="text-sm text-text-secondary mt-1 font-thai">
-              บันทึกและจัดการคาแร็กเตอร์เพื่อนำไปใช้ในการเจนวิดีโอแบบคุมหน้าตาตัวละครให้ต่อเนื่อง
+              บันทึกและจัดการคาแร็กเตอร์ รวมถึงฝึกสอนปัญญาประดิษฐ์ (LoRA) เพื่อล็อกใบหน้าตัวละครสำหรับการตัดต่อสร้างซีรีส์ยาว
             </p>
           </div>
           <button
@@ -539,6 +656,232 @@ export default function CharactersPage() {
                       <span className="text-[9px] text-text-muted mt-1 font-thai block">มุมข้าง</span>
                     </div>
                   </div>
+                </div>
+
+                {/* AI Face Lock (LoRA Model) Section */}
+                <div className="pt-4 border-t border-white/5 space-y-3">
+                  <span className="text-[11px] font-bold text-[#D4AF37] uppercase tracking-wider font-thai block flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    โมเดล AI ล็อคใบหน้าตัวละคร (Character LoRA Model)
+                  </span>
+
+                  {char.lora_status === 'completed' && (
+                    <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4.5 h-4.5 text-[#D4AF37] animate-pulse" />
+                        <div>
+                          <div className="text-xs font-bold text-emerald-400 font-thai">โมเดล AI พร้อมใช้งานแล้ว</div>
+                          <div className="text-[10px] text-text-secondary font-mono mt-0.5">
+                            Trigger: <span className="text-[#D4AF37] font-bold">{char.lora_trigger_word}</span> | Steps: {char.lora_steps}
+                          </div>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setActiveLoraCharId(activeLoraCharId === char.id ? null : char.id);
+                          setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+                          setLoraSteps(char.lora_steps || 1000);
+                          setLoraFiles([]);
+                        }}
+                        className="text-[10px] bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-text-primary transition-all font-thai"
+                      >
+                        {activeLoraCharId === char.id ? 'ยกเลิก' : 'เทรนใหม่'}
+                      </button>
+                    </div>
+                  )}
+
+                  {char.lora_status === 'training' && (
+                    <div className="bg-[#D4AF37]/5 border border-[#D4AF37]/20 p-3.5 rounded-xl space-y-2">
+                      <div className="flex items-center gap-2.5">
+                        <Loader2 className="w-4.5 h-4.5 text-[#D4AF37] animate-spin" />
+                        <div>
+                          <div className="text-xs font-bold text-[#D4AF37] font-thai">กำลังสร้างแบบจำลอง AI (Training...)</div>
+                          <div className="text-[10px] text-text-muted font-thai mt-0.5">กำลังวิเคราะห์โครงหน้าของ {char.name} เข้าสู่ระบบหลัก</div>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-text-muted leading-relaxed font-thai">
+                        * ขั้นตอนนี้ใช้เวลาประมวลผลประมาณ 5-10 นาที คุณสามารถสลับหน้าจอไปเขียนสคริปต์ได้ โดยไม่ต้องรอให้เสร็จสิ้น ระบบจะทำงานอัตโนมัติเบื้องหลัง
+                      </p>
+                    </div>
+                  )}
+
+                  {char.lora_status === 'failed' && (
+                    <div className="bg-accent-danger/5 border border-accent-danger/20 p-3.5 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ShieldAlert className="w-4.5 h-4.5 text-accent-danger" />
+                          <div className="text-xs font-bold text-accent-danger font-thai">การฝึกสอนล้มเหลว (Training Failed)</div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setActiveLoraCharId(activeLoraCharId === char.id ? null : char.id);
+                            setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+                            setLoraSteps(char.lora_steps || 1000);
+                            setLoraFiles([]);
+                          }}
+                          className="text-[10px] bg-accent-danger/10 hover:bg-accent-danger/20 px-2.5 py-1 rounded-lg text-accent-danger transition-all font-thai"
+                        >
+                          {activeLoraCharId === char.id ? 'ยกเลิก' : 'ลองอีกครั้ง'}
+                        </button>
+                      </div>
+                      <p className="text-[9.5px] text-accent-danger/70 leading-relaxed font-thai">
+                        การวิเคราะห์ใบหน้าเกิดข้อผิดพลาด อาจเกิดจากความคมชัดของภาพที่อัปโหลดไม่เพียงพอ หรือสัดส่วนรูปภาพแตกต่างกันมากเกินไป
+                      </p>
+                    </div>
+                  )}
+
+                  {(char.lora_status === 'not_started' || !char.lora_status) && (
+                    <div className="flex items-center justify-between bg-surface-3 border border-white/5 p-3.5 rounded-xl">
+                      <div className="flex items-center gap-2 text-text-muted">
+                        <Users className="w-4 h-4 text-text-muted" />
+                        <span className="text-xs text-text-secondary font-thai">ยังไม่มีโมเดล AI ล็อคใบหน้า</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setActiveLoraCharId(activeLoraCharId === char.id ? null : char.id);
+                          setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+                          setLoraSteps(1000);
+                          setLoraFiles([]);
+                        }}
+                        className="text-xs bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/30 text-[#D4AF37] px-3.5 py-2 rounded-xl transition-all font-thai"
+                      >
+                        {activeLoraCharId === char.id ? 'ปิดแผงควบคุม' : 'ฝึกสอนโมเดล (Train LoRA)'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* LoRA Training Form Panel Inside Card */}
+                  {activeLoraCharId === char.id && (
+                    <div className="mt-4 p-4 bg-surface-3 border border-[#D4AF37]/20 rounded-2xl space-y-4 animate-scale-up text-left">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span className="text-xs font-bold text-[#D4AF37] font-thai flex items-center gap-1.5">
+                          <Brain className="w-4 h-4 text-[#D4AF37]" />
+                          ตั้งค่าการฝึกสอนปัญญาประดิษฐ์ (LoRA Training)
+                        </span>
+                        <button 
+                          onClick={() => setActiveLoraCharId(null)} 
+                          className="text-text-muted hover:text-text-primary p-0.5 rounded-full hover:bg-white/5"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Dataset images selection */}
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-medium text-text-secondary font-thai">
+                          1. เลือกรูปภาพตัวละครเดียวกันในหลากมุมกล้อง (Training Set) <span className="text-accent-danger">*</span> (แนะนำ 10-15 รูป)
+                        </label>
+                        <div 
+                          onClick={() => loraInputRef.current?.click()}
+                          className="border-2 border-dashed border-white/10 hover:border-[#D4AF37] bg-surface-2 p-5 rounded-xl text-center cursor-pointer transition-all"
+                        >
+                          <Upload className="w-6 h-6 text-text-muted mx-auto mb-1.5" />
+                          <span className="text-xs text-text-secondary font-thai block">คลิกเพื่ออัปโหลดภาพชุดฝึกสอน (เลือกหลายไฟล์ได้)</span>
+                          <span className="text-[10px] text-text-muted font-thai block mt-1">* ภาพถ่ายควรโฟกัสใบหน้าชัดเจน มีเสื้อผ้า หน้าตา และฉากหลังที่หลากหลายกันออกไป</span>
+                        </div>
+                        <input 
+                          ref={loraInputRef} 
+                          type="file" 
+                          multiple 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={handleLoraFilesChange} 
+                        />
+                        
+                        {/* Dataset thumbnails preview */}
+                        {loraFiles.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-text-secondary font-thai block">รูปภาพที่พร้อมอัปโหลด ({loraFiles.length} รูป):</span>
+                            <div className="grid grid-cols-5 gap-2 p-2 bg-surface-2 rounded-xl border border-white/5 max-h-24 overflow-y-auto">
+                              {loraFiles.map((file, idx) => (
+                                <div key={idx} className="relative group h-12 bg-surface-3 rounded-lg overflow-hidden border border-white/5">
+                                  <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                                  <button 
+                                    type="button" 
+                                    onClick={() => removeLoraFile(idx)} 
+                                    className="absolute top-0.5 right-0.5 p-0.5 bg-black/70 hover:bg-black/90 rounded text-white transition-all"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Trigger Word Setting */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-medium text-text-secondary font-thai">
+                          2. ชื่อเรียกตัวละครเพื่อนำไปพิมพ์สั่ง (Trigger Word) <span className="text-accent-danger">*</span>
+                        </label>
+                        <input 
+                          type="text" 
+                          value={loraTriggerWord} 
+                          onChange={e => setLoraTriggerWord(e.target.value)} 
+                          placeholder="เช่น mycharacter, somatic, lookman" 
+                          className="w-full bg-surface-2 border border-white/5 p-2.5 rounded-xl text-xs text-text-primary placeholder-text-muted outline-none focus:border-[#D4AF37]" 
+                        />
+                        <span className="text-[9.5px] text-text-muted font-thai block leading-normal">
+                          * กรอกเป็นภาษาอังกฤษและตัวเลขเท่านั้น (ห้ามเว้นวรรค) ตัวอย่างการพิมพ์สั่งตอนเจเนอเรต: <span className="text-[#D4AF37] font-mono">"photo of {loraTriggerWord || 'name'} sitting in a cafe..."</span>
+                        </span>
+                      </div>
+
+                      {/* Steps Setting with Explanations */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="block text-[11px] font-medium text-text-secondary font-thai">
+                            3. กำหนดความละเอียดและเวลาประมวลผล (Training Steps)
+                          </label>
+                          <span className="text-xs font-mono text-[#D4AF37] font-bold">{loraSteps} Steps</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-4 gap-2">
+                          {[500, 1000, 1500, 2000].map(s => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => setLoraSteps(s)}
+                              className={`p-2 rounded-xl border text-center text-xs font-mono transition-all ${
+                                loraSteps === s 
+                                  ? 'border-[#D4AF37] bg-[#D4AF37]/15 text-white font-bold' 
+                                  : 'border-white/5 bg-surface-2 text-text-muted hover:border-white/10'
+                              }`}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Explanation box */}
+                        <div className="bg-surface-2 p-3 rounded-xl border border-white/5 text-[10px] text-text-muted leading-relaxed font-thai">
+                          {loraSteps === 500 && (
+                            <p className="text-[#D4AF37]/80">⚡ **500 Steps**: เทรนเร็วและประหยัด เหมาะสำหรับการทดสอบเบื้องต้น แต่อาจจดจำหน้าตัวละครได้ไม่คมชัด 100%</p>
+                          )}
+                          {loraSteps === 1000 && (
+                            <p className="text-emerald-400/80">👍 **1000 Steps (แนะนำ)**: ทำงานได้มีประสิทธิภาพและคุ้มค่าที่สุด รายละเอียดตัวละครมีความสม่ำเสมอเป็นธรรมชาติ</p>
+                          )}
+                          {loraSteps === 1500 && (
+                            <p className="text-accent-primary/80">🎨 **1500 Steps**: เหมาะกับตัวละครที่มีเครื่องแต่งกาย ทรงผม หรือจุดเด่นเฉพาะตัวค่อนข้างสูง ใช้เวลาเทรนปานกลาง</p>
+                          )}
+                          {loraSteps === 2000 && (
+                            <p className="text-accent-danger/80">🔥 **2000 Steps**: ความละเอียดสูงที่สุด แต่อาจทำให้โมเดลตึงจนไม่สามารถขยับเปลี่ยนฉากได้ตามต้องการ (Overfitting)</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <button 
+                        type="button" 
+                        disabled={submittingLora === char.id || loraFiles.length < 4}
+                        onClick={() => handleTrainLoraSubmit(char.id, loraTriggerWord, loraSteps, loraFiles)}
+                        className="w-full btn-primary py-3 rounded-xl text-xs font-thai flex items-center justify-center gap-2 disabled:opacity-40"
+                      >
+                        {submittingLora === char.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                        {submittingLora === char.id ? 'กำลังนำภาพขึ้นคลาวด์...' : `ส่งคำสั่งเทรนโมเดล AI (${loraFiles.length} รูป)`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

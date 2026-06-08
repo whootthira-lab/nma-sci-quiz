@@ -12,7 +12,8 @@ import {
   Smartphone,
   AlertCircle,
   X,
-  Settings
+  Settings,
+  Sparkles
 } from 'lucide-react';
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
@@ -28,8 +29,16 @@ interface Character {
   visual_description: string;
   negative_prompt?: string;
   avatar_front_url?: string;
+  avatar_front_path?: string;
   avatar_45_url?: string;
+  avatar_45_path?: string;
   avatar_side_url?: string;
+  avatar_side_path?: string;
+  lora_status?: string;
+  lora_job_id?: string;
+  lora_model_url?: string;
+  lora_trigger_word?: string;
+  lora_steps?: number;
 }
 
 interface Mode1FormProps {
@@ -63,6 +72,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [characterList, setCharacterList] = useState<Character[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
   const [selectedCharacterAngle, setSelectedCharacterAngle] = useState<'front' | '45' | 'side'>('front');
+  const [useLoraModel, setUseLoraModel] = useState(false);
 
   // Speech Speed state
   const [speedFactor, setSpeedFactor] = useState(1.0);
@@ -133,9 +143,18 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
   // Sync starting image preview from selected character avatar & angle
   useEffect(() => {
-    if (!selectedCharacterId) return;
+    if (!selectedCharacterId) {
+      setUseLoraModel(false);
+      return;
+    }
     const char = characterList.find(c => c.id === selectedCharacterId);
     if (!char) return;
+
+    if (char.lora_status === 'completed') {
+      setUseLoraModel(true);
+    } else {
+      setUseLoraModel(false);
+    }
 
     let url = '';
     if (selectedCharacterAngle === 'front') url = char.avatar_front_url || '';
@@ -410,6 +429,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           formData.append('character_description', char.visual_description);
           if (char.negative_prompt) {
             formData.append('character_negative_prompt', char.negative_prompt);
+          }
+          if (useLoraModel && char.lora_status === 'completed') {
+            formData.append('use_lora_model', 'true');
+            formData.append('lora_model_url', char.lora_model_url || '');
+            formData.append('lora_trigger_word', char.lora_trigger_word || '');
+            formData.append('lora_steps', String(char.lora_steps || 1000));
           }
         }
       }
@@ -702,6 +727,22 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 <option value="side">👥 ภาพมุมข้าง (Side View)</option>
               </select>
             )}
+
+            {selectedCharacterId && characterList.find(c => c.id === selectedCharacterId)?.lora_status === 'completed' && (
+              <div className="flex items-center gap-2.5 p-3.5 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-xl animate-fade-in">
+                <input
+                  type="checkbox"
+                  id="useLoraModel"
+                  checked={useLoraModel}
+                  onChange={(e) => setUseLoraModel(e.target.checked)}
+                  className="rounded border-gray-300 text-[#D4AF37] focus:ring-[#D4AF37] h-4.5 w-4.5 cursor-pointer"
+                />
+                <label htmlFor="useLoraModel" className="text-xs text-text-secondary font-thai font-medium cursor-pointer select-none flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+                  เปิดใช้งานโมเดล AI ล็อคใบหน้าตัวละคร (Use LoRA Model)
+                </label>
+              </div>
+            )}
           </div>
           {selectedCharacterId && (
             <div className="text-xs text-text-secondary font-thai bg-white p-3 rounded-xl border border-gray-200 animate-fade-in space-y-1">
@@ -732,6 +773,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             {imagePreview ? (
               <div className="relative">
                 <img src={imagePreview} alt="Preview" className={getPreviewAspectClass()} />
+                {useLoraModel && (
+                  <div className="absolute top-2 left-2 px-2.5 py-1 bg-[#D4AF37] text-white text-[10px] font-bold rounded-lg flex items-center gap-1 shadow font-thai animate-pulse">
+                    <Sparkles className="w-3 h-3" />
+                    ใช้โมเดล AI ล็อคใบหน้า (LoRA)
+                  </div>
+                )}
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <p className="text-white text-sm font-medium font-thai">คลิกเพื่อเปลี่ยนรูป</p>
                 </div>

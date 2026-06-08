@@ -273,7 +273,14 @@ export async function createCharacter(characterData: Record<string, any>) {
       avatar_45_url: characterData.avatar_45_url || null,
       avatar_45_path: characterData.avatar_45_path || null,
       avatar_side_url: characterData.avatar_side_url || null,
-      avatar_side_path: characterData.avatar_side_path || null
+      avatar_side_path: characterData.avatar_side_path || null,
+      lora_status: characterData.lora_status || 'not_started',
+      lora_job_id: characterData.lora_job_id || null,
+      lora_model_url: characterData.lora_model_url || null,
+      lora_trigger_word: characterData.lora_trigger_word || null,
+      lora_dataset_url: characterData.lora_dataset_url || null,
+      lora_dataset_path: characterData.lora_dataset_path || null,
+      lora_steps: characterData.lora_steps || 1000
     })
     .select('*')
     .single();
@@ -302,6 +309,7 @@ export async function deleteCharacter(id: string) {
   if (character.avatar_front_path) pathsToDelete.push(character.avatar_front_path);
   if (character.avatar_45_path) pathsToDelete.push(character.avatar_45_path);
   if (character.avatar_side_path) pathsToDelete.push(character.avatar_side_path);
+  if (character.lora_dataset_path) pathsToDelete.push(character.lora_dataset_path);
 
   if (pathsToDelete.length > 0) {
     try {

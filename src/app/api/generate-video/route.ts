@@ -333,6 +333,10 @@ export async function POST(req: NextRequest) {
 
     const isMotionControl = modelType === 'motion-control';
 
+    const useLoraModel = formData.get('use_lora_model') === 'true';
+    const loraModelUrl = formData.get('lora_model_url') as string || '';
+    const loraTriggerWord = formData.get('lora_trigger_word') as string || '';
+
     if (isMotionControl) {
       if ((!imageFile && !characterImageUrl) || !videoFile || !userEmail) {
         return NextResponse.json(
@@ -347,7 +351,7 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
-      if ((!imageFile && !characterImageUrl) || (!isNoSpeech && !scriptText) || !userEmail) {
+      if ((!imageFile && !characterImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
         return NextResponse.json(
           { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
           { status: 400 }
@@ -360,11 +364,68 @@ export async function POST(req: NextRequest) {
 
     const timestamp = Date.now();
 
-    // 1. Upload reference image
+    // 0. Enhance prompt with GPT-4o-mini
+    console.log('[STEP 0.5] Enhancing prompt with gpt-4o-mini...');
+    const combinedPrompt = await enhancePromptWithGPT(
+      situationPrompt,
+      scriptText,
+      modelType === 'fast' ? endSituationPrompt : undefined,
+      isNoSpeech,
+      visualStyle,
+      characterDescription,
+      characterEmotion
+    );
+
+    // 1. Upload/Generate reference image
     let imageUrl = '';
     let imagePath = '';
 
-    if (imageFile) {
+    if (useLoraModel && loraModelUrl && loraTriggerWord) {
+      console.log('[STEP 1] Generating reference image using Character LoRA model...');
+      const fluxPrompt = `photo of ${loraTriggerWord}, ${combinedPrompt}`;
+      console.log(`[LoRA Flux Prompt]: ${fluxPrompt}`);
+
+      let imageSize = 'landscape_16_9';
+      if (aspectRatio === '9:16') {
+        imageSize = 'portrait_16_9';
+      } else if (aspectRatio === '1:1') {
+        imageSize = 'square_hd';
+      }
+
+      const fluxResponse = await fetch('https://fal.run/fal-ai/flux-lora', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Key ${falKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: fluxPrompt,
+          loras: [
+            {
+              path: loraModelUrl,
+              scale: 1.0,
+            }
+          ],
+          image_size: imageSize,
+          num_inference_steps: 28,
+          enable_safety_checker: true,
+        }),
+      });
+
+      if (!fluxResponse.ok) {
+        const errText = await fluxResponse.text();
+        console.error('[LoRA Flux Generation Error]', errText);
+        throw new Error('เจเนอเรตภาพเริ่มต้นด้วยโมเดลตัวละคร (LoRA) ไม่สำเร็จ');
+      }
+
+      const fluxResult = await fluxResponse.json();
+      imageUrl = fluxResult.images?.[0]?.url;
+      console.log('[STEP 1] Generated image from LoRA model:', imageUrl);
+
+      if (!imageUrl) {
+        throw new Error('ไม่พบ URL ภาพผลลัพธ์ที่เทรนด้วย LoRA');
+      }
+    } else if (imageFile) {
       console.log('[STEP 1] Uploading reference image to Supabase...');
       const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
       imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
@@ -437,17 +498,6 @@ export async function POST(req: NextRequest) {
         );
 
     // 4. Build Fal.ai request body
-    console.log('[STEP 2.5] Enhancing prompt with gpt-4o-mini...');
-    const combinedPrompt = await enhancePromptWithGPT(
-      situationPrompt,
-      scriptText,
-      modelType === 'fast' ? endSituationPrompt : undefined,
-      isNoSpeech,
-      visualStyle,
-      characterDescription,
-      characterEmotion
-    );
-
     let requestBody: Record<string, any>;
     if (isCinema) {
       const wanParams = getWanVideoParams(selectedDuration);
