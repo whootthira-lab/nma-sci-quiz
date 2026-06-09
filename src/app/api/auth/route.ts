@@ -20,12 +20,19 @@ export async function POST(req: NextRequest) {
     // Check whitelist
     const { data: whitelistData, error: whitelistError } = await supabase
       .from('whitelist')
-      .select('email')
+      .select('email, expires_at')
       .eq('email', email)
       .single();
 
     if (whitelistError && !isSuperAdmin) {
       return NextResponse.json({ valid: false, error: 'User not whitelisted' });
+    }
+
+    if (whitelistData?.expires_at && !isSuperAdmin) {
+      const isExpired = new Date(whitelistData.expires_at).getTime() < Date.now();
+      if (isExpired) {
+        return NextResponse.json({ valid: false, error: 'User access has expired' });
+      }
     }
 
     // Check profile

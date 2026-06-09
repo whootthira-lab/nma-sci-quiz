@@ -73,54 +73,118 @@ export async function POST(req: NextRequest) {
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
     const isLipsyncPhase = !!lipsyncRequestId;
 
-    const checkUrl = isLipsyncPhase
-      ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}/status`
-      : `https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`;
+    const apiProvider = genRow?.metadata?.api_provider || 'fal';
 
-    // 1. Fetch official queue status endpoint
-    const checkResponse = await fetch(checkUrl, {
-      headers: {
-        'Authorization': `Key ${falKey}`,
-        'Accept': 'application/json'
-      },
-      cache: 'no-store'
-    });
+    let statusData: any = null;
+    let currentStatus = '';
 
-    if (!checkResponse.ok) {
-      console.error(`[KRUTH Status Fail] status: ${checkResponse.status}`);
-      if (checkResponse.status === 401 || checkResponse.status === 403) {
-        return NextResponse.json({ 
-          status: 'ERROR', 
-          error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
-        }, { status: checkResponse.status });
-      }
-      return NextResponse.json({ status: 'WAITING' });
-    }
-
-    const statusData = await checkResponse.json();
-    const currentStatus = statusData.status;
-
-    if (currentStatus === 'COMPLETED') {
-      const detailUrl = statusData.response_url || (isLipsyncPhase
-        ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}`
-        : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
-
-      const detailResponse = await fetch(detailUrl, {
+    if (isLipsyncPhase) {
+      // 1. Fetch official queue status endpoint for Lipsync (always on Fal.ai)
+      const checkResponse = await fetch(`https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}/status`, {
         headers: {
           'Authorization': `Key ${falKey}`,
           'Accept': 'application/json'
         },
         cache: 'no-store'
       });
-      
-      if (!detailResponse.ok) {
-        const errorText = await detailResponse.text();
-        console.error(`[Fal.ai Queue Detail Error] Status: ${detailResponse.status}, Response:`, errorText);
-        throw new Error(`ไม่สามารถดึงผลลัพธ์จาก Fal.ai ได้ (status: ${detailResponse.status})`);
+
+      if (!checkResponse.ok) {
+        console.error(`[Lipsync Status Fail] status: ${checkResponse.status}`);
+        if (checkResponse.status === 401 || checkResponse.status === 403) {
+          return NextResponse.json({ 
+            status: 'ERROR', 
+            error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
+          }, { status: checkResponse.status });
+        }
+        return NextResponse.json({ status: 'WAITING' });
       }
 
-      const detailData = await detailResponse.json();
-      const tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url;
+      statusData = await checkResponse.json();
+      currentStatus = statusData.status;
+    } else if (apiProvider === 'siliconflow') {
+      // 2. Fetch SiliconFlow status
+      const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
+      const checkResponse = await fetch('https://api.siliconflow.cn/v1/video/status', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sfKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ requestId }),
+        cache: 'no-store'
+      });
+
+      if (!checkResponse.ok) {
+        console.error(`[SiliconFlow Status Fail] status: ${checkResponse.status}`);
+        return NextResponse.json({ status: 'WAITING' });
+      }
+
+      statusData = await checkResponse.json();
+      // SiliconFlow status values: Succeed, Failed, InQueue, InProgress
+      const sfStatus = statusData.status;
+      if (sfStatus === 'Succeed') {
+        currentStatus = 'COMPLETED';
+      } else if (sfStatus === 'Failed') {
+        currentStatus = 'FAILED';
+      } else if (sfStatus === 'InQueue') {
+        currentStatus = 'IN_QUEUE';
+      } else {
+        currentStatus = 'IN_PROGRESS';
+      }
+    } else {
+      // 3. Fetch Fal.ai status
+      const checkUrl = `https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`;
+      const checkResponse = await fetch(checkUrl, {
+        headers: {
+          'Authorization': `Key ${falKey}`,
+          'Accept': 'application/json'
+        },
+        cache: 'no-store'
+      });
+
+      if (!checkResponse.ok) {
+        console.error(`[KRUTH Status Fail] status: ${checkResponse.status}`);
+        if (checkResponse.status === 401 || checkResponse.status === 403) {
+          return NextResponse.json({ 
+            status: 'ERROR', 
+            error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
+          }, { status: checkResponse.status });
+        }
+        return NextResponse.json({ status: 'WAITING' });
+      }
+
+      statusData = await checkResponse.json();
+      currentStatus = statusData.status;
+    }
+
+    if (currentStatus === 'COMPLETED') {
+      let tempUrl = '';
+
+      if (apiProvider === 'siliconflow' && !isLipsyncPhase) {
+        tempUrl = statusData.results?.videos?.[0]?.url;
+      } else {
+        const detailUrl = statusData.response_url || (isLipsyncPhase
+          ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}`
+          : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
+
+        const detailResponse = await fetch(detailUrl, {
+          headers: {
+            'Authorization': `Key ${falKey}`,
+            'Accept': 'application/json'
+          },
+          cache: 'no-store'
+        });
+        
+        if (!detailResponse.ok) {
+          const errorText = await detailResponse.text();
+          console.error(`[Fal.ai Queue Detail Error] Status: ${detailResponse.status}, Response:`, errorText);
+          throw new Error(`ไม่สามารถดึงผลลัพธ์จาก Fal.ai ได้ (status: ${detailResponse.status})`);
+        }
+
+        const detailData = await detailResponse.json();
+        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url;
+      }
+
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
 
       let finalStorageProvider = storageProvider;

@@ -14,6 +14,13 @@ interface AuthState {
   error: string | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  whitelistData: {
+    email: string;
+    display_name?: string;
+    expires_at?: string;
+    generation_limit?: number;
+    is_admin?: boolean;
+  } | null;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -23,11 +30,13 @@ const AuthContext = createContext<AuthState>({
   error: null,
   signIn: async () => {},
   signOut: async () => {},
+  whitelistData: null,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [whitelistData, setWhitelistData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 🛡️ Super Admin เข้าได้เสมอ แม้จะไม่มีรายชื่อใน Whitelist Database
         if (userData || isSuperAdmin) {
           setUser(supabaseUser);
+          setWhitelistData(userData);
           setIsAdmin(isSuperAdmin ? true : !!userData?.is_admin);
           setError(null);
           
@@ -55,16 +65,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           await supabase.auth.signOut();
           setUser(null);
+          setWhitelistData(null);
           setIsAdmin(false);
           setError('อีเมลนี้ไม่ได้รับอนุญาตให้เข้าใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
         }
       } else {
         await supabase.auth.signOut();
         setUser(null);
+        setWhitelistData(null);
         setIsAdmin(false);
       }
     } else {
       setUser(null);
+      setWhitelistData(null);
       setIsAdmin(false);
     }
     setLoading(false);
@@ -123,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loading, error, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, isAdmin, loading, error, signIn, signOut, whitelistData }}>
       {children}
     </AuthContext.Provider>
   );

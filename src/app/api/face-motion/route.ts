@@ -60,9 +60,75 @@ async function uploadToFirebaseStorage(
 async function runFaceMotion(
   imageUrl: string,
   drivingVideoUrl: string,
-  modelId: string
+  modelId: string,
+  activeProvider: string
 ): Promise<string> {
   const falKey = process.env.FAL_KEY;
+  const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
+
+  if (activeProvider === 'siliconflow' && modelId === 'liveportrait') {
+    if (!sfKey) throw new Error('ไม่พบ SILICONFLOW_API_KEY ในระบบ สำหรับการใช้งาน SiliconFlow LivePortrait');
+    
+    console.log(`[SiliconFlow LivePortrait] Submitting job...`);
+    const submitResponse = await fetch('https://api.siliconflow.cn/v1/video/submit', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${sfKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'KlingAI/LivePortrait',
+        image: imageUrl,
+        driving_video: drivingVideoUrl
+      }),
+    });
+
+    if (!submitResponse.ok) {
+      const errText = await submitResponse.text();
+      throw new Error(`SiliconFlow LivePortrait submission failed: ${errText}`);
+    }
+
+    const submitResult = await submitResponse.json();
+    const requestId = submitResult.requestId;
+    console.log(`[SiliconFlow LivePortrait] Job submitted. Request ID: ${requestId}`);
+
+    if (!requestId) {
+      throw new Error('SiliconFlow LivePortrait did not return a request ID');
+    }
+
+    // Poll SiliconFlow status
+    let attempts = 0;
+    const maxAttempts = 120;
+    while (attempts < maxAttempts) {
+      await new Promise(r => setTimeout(r, 5000));
+      attempts++;
+
+      console.log(`[SiliconFlow LivePortrait] Polling attempt ${attempts}...`);
+      const statusResponse = await fetch('https://api.siliconflow.cn/v1/video/status', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sfKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ requestId }),
+      });
+
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        const sfStatus = statusData.status;
+        console.log(`[SiliconFlow LivePortrait] Current status: ${sfStatus}`);
+
+        if (sfStatus === 'Succeed') {
+          return statusData.results?.videos?.[0]?.url || '';
+        } else if (sfStatus === 'Failed') {
+          throw new Error('SiliconFlow LivePortrait generation failed');
+        }
+      }
+    }
+    throw new Error('SiliconFlow LivePortrait generation timed out');
+  }
+
+  // Fal.ai logic
   if (!falKey) throw new Error('FAL_KEY not configured');
 
   const endpoints: Record<string, string> = {
@@ -165,6 +231,93 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Initialize Supabase client
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const isSuperAdmin = userEmail === 'whootthira@gmail.com';
+    let whitelistUser: any = null;
+
+    try {
+      const { data } = await supabase
+        .from('whitelist')
+        .select('generation_limit, expires_at')
+        .eq('email', userEmail)
+        .single();
+      whitelistUser = data;
+    } catch (e) {
+      console.warn('Error reading whitelist entry:', e);
+    }
+
+    // Verify whitelist existence & expiration for non-superadmin
+    if (!isSuperAdmin) {
+      if (!whitelistUser) {
+        return NextResponse.json(
+          { success: false, error: 'ขออภัย บัญชีของคุณไม่อยู่ในรายชื่อผู้ได้รับอนุญาตให้ใช้งาน (Not Whitelisted)' },
+          { status: 403 }
+        );
+      }
+      if (whitelistUser.expires_at) {
+        const isExpired = new Date(whitelistUser.expires_at).getTime() < Date.now();
+        if (isExpired) {
+          return NextResponse.json(
+            { success: false, error: 'ขออภัย สิทธิ์การใช้งานของคุณหมดอายุแล้ว กรุณาติดต่อผู้ดูแลระบบ' },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    // Resolve finalUserId
+    let finalUserId = userId;
+    if (!finalUserId && userEmail) {
+      try {
+        const { data: authUsers } = await supabase.auth.admin.listUsers();
+        const foundUser = authUsers?.users?.find(u => u.email?.toLowerCase() === userEmail.toLowerCase());
+        if (foundUser) {
+          finalUserId = foundUser.id;
+        }
+      } catch (e) {
+        console.warn('Error querying auth users:', e);
+      }
+    }
+
+    // Count daily generations
+    const dailyLimit = isSuperAdmin ? 99999 : (whitelistUser?.generation_limit || 10);
+    if (finalUserId) {
+      const localStartOfDay = new Date();
+      localStartOfDay.setHours(0, 0, 0, 0);
+
+      const { count: todaysGensCount } = await supabase
+        .from('generations')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', finalUserId)
+        .gte('created_at', localStartOfDay.toISOString());
+
+      if (todaysGensCount !== null && todaysGensCount >= dailyLimit) {
+        return NextResponse.json(
+          { success: false, error: `ขออภัย คุณใช้งานเกินขีดจำกัดประจำวันแล้ว (${todaysGensCount}/${dailyLimit} คลิป)` },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Fetch system provider config
+    let activeProvider = 'siliconflow'; // default fallback
+    try {
+      const { data: providerConfig } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'open_source_provider')
+        .single();
+      if (providerConfig?.value) {
+        activeProvider = providerConfig.value;
+      }
+    } catch (e) {
+      console.warn('Error fetching open_source_provider setting:', e);
+    }
+
     const timestamp = Date.now();
 
     // 1. Upload reference image
@@ -178,7 +331,7 @@ export async function POST(req: NextRequest) {
     const drivingVideoUrl = await uploadToSupabaseStorage(videoBuffer, drivingPath, 'video/mp4');
 
     // 3. Run face motion AI
-    const tempVideoUrl = await runFaceMotion(imageUrl, drivingVideoUrl, modelId);
+    const tempVideoUrl = await runFaceMotion(imageUrl, drivingVideoUrl, modelId, activeProvider);
 
     if (!tempVideoUrl) {
       throw new Error('No video URL returned from face motion AI');
@@ -202,24 +355,6 @@ export async function POST(req: NextRequest) {
     };
 
     // 5. Save generation history to Supabase generations table
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    let finalUserId = userId;
-    
-    // Fallback search in auth users if userId is not provided
-    if (!finalUserId && userEmail) {
-      try {
-        const { data: authUsers } = await supabase.auth.admin.listUsers();
-        const foundUser = authUsers?.users?.find(u => u.email?.toLowerCase() === userEmail.toLowerCase());
-        if (foundUser) {
-          finalUserId = foundUser.id;
-        }
-      } catch (e) {
-        console.warn('Error querying auth users:', e);
-      }
-    }
 
     if (finalUserId) {
       // Ensure the profile row exists in the profiles table to avoid foreign key violations

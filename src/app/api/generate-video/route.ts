@@ -162,6 +162,37 @@ async function generateOpenAITTS(text: string, voiceId: string, speedFactor: num
   return Buffer.from(arrayBuffer);
 }
 
+async function generateCosyVoiceTTS(text: string, voiceId: string, speedFactor: number = 1.0): Promise<Buffer> {
+  const apiKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
+  if (!apiKey) throw new Error('ไม่พบ SILICONFLOW_API_KEY ในระบบ สำหรับการใช้งาน CosyVoice TTS');
+
+  console.log(`[SiliconFlow CosyVoice] Generating TTS audio for voice ID: ${voiceId} with speed: ${speedFactor}`);
+
+  const sfResponse = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'FunAudioLLM/CosyVoice2-0.5B',
+      input: text,
+      voice: voiceId,
+      response_format: 'mp3',
+      speed: speedFactor,
+    }),
+  });
+
+  if (!sfResponse.ok) {
+    const errText = await sfResponse.text();
+    console.error('[SiliconFlow CosyVoice API Error]', errText);
+    throw new Error(`SiliconFlow CosyVoice API failed with status ${sfResponse.status}: ${errText}`);
+  }
+
+  const arrayBuffer = await sfResponse.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 async function enhancePromptWithGPT(
   situationPrompt: string,
   scriptText: string,
@@ -337,6 +368,94 @@ export async function POST(req: NextRequest) {
     const loraModelUrl = formData.get('lora_model_url') as string || '';
     const loraTriggerWord = formData.get('lora_trigger_word') as string || '';
 
+    // Initialize Supabase client
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const isSuperAdmin = userEmail === 'whootthira@gmail.com';
+    let whitelistUser: any = null;
+
+    try {
+      const { data } = await supabase
+        .from('whitelist')
+        .select('generation_limit, expires_at')
+        .eq('email', userEmail)
+        .single();
+      whitelistUser = data;
+    } catch (e) {
+      console.warn('Error reading whitelist entry:', e);
+    }
+
+    // Verify whitelist existence & expiration for non-superadmin
+    if (!isSuperAdmin) {
+      if (!whitelistUser) {
+        return NextResponse.json(
+          { success: false, error: 'ขออภัย บัญชีของคุณไม่อยู่ในรายชื่อผู้ได้รับอนุญาตให้ใช้งาน (Not Whitelisted)' },
+          { status: 403 }
+        );
+      }
+      if (whitelistUser.expires_at) {
+        const isExpired = new Date(whitelistUser.expires_at).getTime() < Date.now();
+        if (isExpired) {
+          return NextResponse.json(
+            { success: false, error: 'ขออภัย สิทธิ์การใช้งานของคุณหมดอายุแล้ว กรุณาติดต่อผู้ดูแลระบบ' },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    // Resolve finalUserId
+    let finalUserId = userId;
+    if (!finalUserId && userEmail) {
+      try {
+        const { data: authUsers } = await supabase.auth.admin.listUsers();
+        const foundUser = authUsers?.users?.find(u => u.email?.toLowerCase() === userEmail.toLowerCase());
+        if (foundUser) {
+          finalUserId = foundUser.id;
+        }
+      } catch (e) {
+        console.warn('Error querying auth users:', e);
+      }
+    }
+
+    // Count daily generations
+    const dailyLimit = isSuperAdmin ? 99999 : (whitelistUser?.generation_limit || 10);
+    if (finalUserId) {
+      const localStartOfDay = new Date();
+      localStartOfDay.setHours(0, 0, 0, 0);
+
+      const { count: todaysGensCount } = await supabase
+        .from('generations')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', finalUserId)
+        .gte('created_at', localStartOfDay.toISOString());
+
+      if (todaysGensCount !== null && todaysGensCount >= dailyLimit) {
+        return NextResponse.json(
+          { success: false, error: `ขออภัย คุณใช้งานเกินขีดจำกัดประจำวันแล้ว (${todaysGensCount}/${dailyLimit} คลิป)` },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Fetch system provider config
+    let activeProvider = 'siliconflow'; // default fallback
+    try {
+      const { data: providerConfig } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'open_source_provider')
+        .single();
+      if (providerConfig?.value) {
+        activeProvider = providerConfig.value;
+      }
+    } catch (e) {
+      console.warn('Error fetching open_source_provider setting:', e);
+    }
+
+
     if (isMotionControl) {
       if ((!imageFile && !characterImageUrl) || !videoFile || !userEmail) {
         return NextResponse.json(
@@ -477,6 +596,8 @@ export async function POST(req: NextRequest) {
           audioBuffer = await generateGoogleTTS(scriptText, voiceId, speedFactor);
         } else if (ttsProvider === 'openai') {
           audioBuffer = await generateOpenAITTS(scriptText, voiceId, speedFactor);
+        } else if (ttsProvider === 'cosyvoice') {
+          audioBuffer = await generateCosyVoiceTTS(scriptText, voiceId, speedFactor);
         } else {
           audioBuffer = await generateTTS(scriptText, voiceId, speedFactor);
         }
@@ -490,119 +611,153 @@ export async function POST(req: NextRequest) {
     const isCinema = modelType === 'cinema';
     const isMotionControlModel = modelType === 'motion-control';
     const isGrok = modelType === 'grok-video';
-    const modelEndpoint = isCinema
-      ? 'fal-ai/wan-i2v'
-      : (isMotionControlModel 
-          ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
-        );
+    const isSiliconFlow = 
+      modelType === 'hunyuan' || 
+      modelType === 'ltx-video' || 
+      (isCinema && activeProvider === 'siliconflow');
 
-    // 4. Build Fal.ai request body
-    let requestBody: Record<string, any>;
-    if (isCinema) {
-      const wanParams = getWanVideoParams(selectedDuration);
-      console.log(`[Wan 2.5 Cinema Params] Selected duration: ${selectedDuration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
-      
-      let negativePrompt = 'blurry, distorted, low quality, static, frozen';
-      if (characterNegativePrompt) {
-        negativePrompt += `, ${characterNegativePrompt}`;
+    let requestId = '';
+
+    if (isSiliconFlow) {
+      const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
+      if (!sfKey) throw new Error('ไม่พบ SILICONFLOW_API_KEY ในระบบ สำหรับการใช้งาน SiliconFlow');
+
+      const sfModel = modelType === 'hunyuan' 
+        ? 'tencent/HunyuanVideo' 
+        : (modelType === 'ltx-video' ? 'Lightricks/LTX-Video' : 'Wan-AI/Wan2.1-I2V-14B-720P');
+
+      const sfPayload: Record<string, any> = {
+        model: sfModel,
+        prompt: combinedPrompt,
+        image_size: aspectRatio === '16:9' ? '1280x720' : (aspectRatio === '9:16' ? '720x1280' : '960x960'),
+      };
+
+      if (modelType !== 'hunyuan') {
+        sfPayload.image = imageUrl;
       }
 
-      requestBody = {
-        image_url: imageUrl,
-        audio_url: audioUrl,
-        prompt: combinedPrompt,
-        negative_prompt: negativePrompt,
-        num_frames: wanParams.num_frames,
-        frames_per_second: wanParams.frames_per_second,
-        aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-        resolution: '720p',
-        num_inference_steps: 30,
-        guide_scale: 5.0,
-        shift: 3.0,
-      };
-    } else if (isMotionControlModel) {
-      requestBody = {
-        image_url: imageUrl,
-        video_url: videoUrl,
-        character_orientation: 'video',
-        keep_original_sound: motionAudioSource === 'video',
-      };
-      if (situationPrompt) {
-        requestBody.prompt = situationPrompt;
+      console.log(`[STEP 3] Submitting request to SiliconFlow (${sfModel})...`);
+      console.log('[SiliconFlow Request Payload]:', JSON.stringify(sfPayload, null, 2));
+
+      const submitResponse = await fetch('https://api.siliconflow.cn/v1/video/submit', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sfKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sfPayload),
+      });
+
+      if (!submitResponse.ok) {
+        const errText = await submitResponse.text();
+        console.error(`[SiliconFlow Submit Error]`, errText);
+        throw new Error(`ส่งคำสั่งสร้างวิดีโอไปยัง SiliconFlow ไม่สำเร็จ: ${errText}`);
       }
-    } else if (isGrok) {
-      requestBody = {
-        image_url: imageUrl,
-        prompt: combinedPrompt,
-        aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-        duration: selectedDuration,
-        enable_safety_checker: !safetyFilterDisabled,
-        enable_safety_checks: !safetyFilterDisabled,
-      };
-      if (characterNegativePrompt) {
-        requestBody.negative_prompt = characterNegativePrompt;
+
+      const submitResult = await submitResponse.json();
+      requestId = submitResult.requestId;
+      console.log(`[SiliconFlow] Job submitted. Request ID: ${requestId}`);
+
+      if (!requestId) {
+        throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      requestBody = {
-        image_url: imageUrl,
-        prompt: combinedPrompt,
-        aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-        duration: selectedDuration <= 5 ? 5 : 10,
-      };
-      if (characterNegativePrompt) {
-        requestBody.negative_prompt = characterNegativePrompt;
+      const modelEndpoint = isCinema
+        ? 'fal-ai/wan-i2v'
+        : (isMotionControlModel 
+            ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
+            : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
+          );
+
+      // 4. Build Fal.ai request body
+      let requestBody: Record<string, any>;
+      if (isCinema) {
+        const wanParams = getWanVideoParams(selectedDuration);
+        console.log(`[Wan 2.5 Cinema Params] Selected duration: ${selectedDuration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
+        
+        let negativePrompt = 'blurry, distorted, low quality, static, frozen';
+        if (characterNegativePrompt) {
+          negativePrompt += `, ${characterNegativePrompt}`;
+        }
+
+        requestBody = {
+          image_url: imageUrl,
+          audio_url: audioUrl,
+          prompt: combinedPrompt,
+          negative_prompt: negativePrompt,
+          num_frames: wanParams.num_frames,
+          frames_per_second: wanParams.frames_per_second,
+          aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+          resolution: '720p',
+          num_inference_steps: 30,
+          guide_scale: 5.0,
+          shift: 3.0,
+        };
+      } else if (isMotionControlModel) {
+        requestBody = {
+          image_url: imageUrl,
+          video_url: videoUrl,
+          character_orientation: 'video',
+          keep_original_sound: motionAudioSource === 'video',
+        };
+        if (situationPrompt) {
+          requestBody.prompt = situationPrompt;
+        }
+      } else if (isGrok) {
+        requestBody = {
+          image_url: imageUrl,
+          prompt: combinedPrompt,
+          aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+          duration: selectedDuration,
+          enable_safety_checker: !safetyFilterDisabled,
+          enable_safety_checks: !safetyFilterDisabled,
+        };
+        if (characterNegativePrompt) {
+          requestBody.negative_prompt = characterNegativePrompt;
+        }
+      } else {
+        requestBody = {
+          image_url: imageUrl,
+          prompt: combinedPrompt,
+          aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+          duration: selectedDuration <= 5 ? 5 : 10,
+        };
+        if (characterNegativePrompt) {
+          requestBody.negative_prompt = characterNegativePrompt;
+        }
+        if (modelType === 'fast' && endImageUrl) {
+          requestBody.tail_image_url = endImageUrl;
+        }
       }
-      if (modelType === 'fast' && endImageUrl) {
-        requestBody.tail_image_url = endImageUrl;
+
+      // 5. Submit job to Fal.ai queue
+      console.log(`[STEP 3] Submitting queue request to Fal.ai (${modelEndpoint})...`);
+      console.log('[Fal.ai Request Payload]:', JSON.stringify(requestBody, null, 2));
+      const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Key ${falKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!submitResponse.ok) {
+        const errText = await submitResponse.text();
+        console.error(`[Fal.ai Submit Error]`, errText);
+        throw new Error('ส่งคำสั่งสร้างวิดีโอไปยัง Fal.ai ไม่สำเร็จ');
       }
-    }
 
-    // 5. Submit job to Fal.ai queue
-    console.log(`[STEP 3] Submitting queue request to Fal.ai (${modelEndpoint})...`);
-    console.log('[Fal.ai Request Payload]:', JSON.stringify(requestBody, null, 2));
-    const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Key ${falKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
+      const submitResult = await submitResponse.json();
+      requestId = submitResult.request_id;
+      console.log(`[Fal.ai] Job submitted. Request ID: ${requestId}`);
 
-    if (!submitResponse.ok) {
-      const errText = await submitResponse.text();
-      console.error(`[Fal.ai Submit Error]`, errText);
-      throw new Error('ส่งคำสั่งสร้างวิดีโอไปยัง Fal.ai ไม่สำเร็จ');
-    }
-
-    const submitResult = await submitResponse.json();
-    const requestId = submitResult.request_id;
-    console.log(`[Fal.ai] Job submitted. Request ID: ${requestId}`);
-
-    if (!requestId) {
-      throw new Error('ระบบ AI ไม่ได้ส่งคืน Request ID');
+      if (!requestId) {
+        throw new Error('ระบบ AI ไม่ได้ส่งคืน Request ID');
+      }
     }
 
     // 6. Save initial pending/processing generation state to Supabase
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    let finalUserId = userId;
-    
-    // Fallback search in auth users if userId is not provided
-    if (!finalUserId && userEmail) {
-      try {
-        const { data: authUsers } = await supabase.auth.admin.listUsers();
-        const foundUser = authUsers?.users?.find(u => u.email?.toLowerCase() === userEmail.toLowerCase());
-        if (foundUser) {
-          finalUserId = foundUser.id;
-        }
-      } catch (e) {
-        console.warn('Error querying auth users:', e);
-      }
-    }
 
     if (finalUserId) {
       // Ensure the profile row exists in the profiles table to avoid foreign key violations
@@ -651,12 +806,19 @@ export async function POST(req: NextRequest) {
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             visual_style: visualStyle,
-            model_name: isMotionControl 
-              ? 'kling-2.6-motion-control' 
-              : (isCinema 
-                  ? 'wan-2.5-cinema' 
-                  : (modelType === 'grok-video' ? 'grok-1.5-imagine-video' : 'kling-2.5-turbo')
+            model_name: modelType === 'hunyuan'
+              ? 'hunyuan-video'
+              : (modelType === 'ltx-video'
+                  ? 'ltx-video'
+                  : (isMotionControl 
+                      ? 'kling-2.6-motion-control' 
+                      : (isCinema 
+                          ? (activeProvider === 'siliconflow' ? 'wan-2.5-cinema-sf' : 'wan-2.5-cinema')
+                          : (modelType === 'grok-video' ? 'grok-1.5-imagine-video' : 'kling-2.5-turbo')
+                        )
+                    )
                 ),
+            api_provider: isSiliconFlow ? 'siliconflow' : 'fal',
             voice_id: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : voiceId),
             tts_provider: isNoSpeech ? 'none' : (customAudioFile ? 'custom_upload' : ttsProvider),
             storage_provider: storageProvider,

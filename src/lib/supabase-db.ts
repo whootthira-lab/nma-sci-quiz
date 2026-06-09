@@ -14,14 +14,21 @@ export async function checkWhitelistUser(email: string) {
   // or query whitelist table directly if they are just logging in.
   const { data, error } = await supabase
     .from('whitelist')
-    .select('email')
+    .select('email, display_name, expires_at, generation_limit')
     .eq('email', email)
     .single();
 
   if (error || !data) {
     // If not in whitelist, check if they are the super admin
     if (email === 'whootthira@gmail.com') {
-      return { email, role: 'admin', is_admin: true };
+      return { 
+        email, 
+        role: 'admin', 
+        is_admin: true,
+        display_name: 'Super Admin',
+        expires_at: null,
+        generation_limit: 99999
+      };
     }
     return null;
   }
@@ -35,6 +42,9 @@ export async function checkWhitelistUser(email: string) {
 
   return {
     email: data.email,
+    display_name: data.display_name,
+    expires_at: data.expires_at,
+    generation_limit: data.generation_limit,
     is_admin: profile?.role === 'admin' || email === 'whootthira@gmail.com'
   };
 }

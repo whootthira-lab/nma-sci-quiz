@@ -6,6 +6,7 @@ export interface UserDoc {
   last_login: Date;
   expires_at: Date;
   display_name?: string;
+  generation_limit?: number;
 }
 
 export interface GenerationDoc {
@@ -35,7 +36,7 @@ export interface ThaiVoice {
   label: string;
   gender: 'male' | 'female';
   sample_url: string;
-  provider: 'botnoi' | 'google' | 'openai';
+  provider: 'botnoi' | 'google' | 'openai' | 'cosyvoice';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
@@ -51,6 +52,12 @@ export const THAI_VOICES: ThaiVoice[] = [
   { id: 'echo', name: 'Echo', label: 'เอคโค่ (ชาย, อบอุ่น)', gender: 'male', sample_url: '/samples/echo.mp3', provider: 'openai' },
   { id: 'onyx', name: 'Onyx', label: 'โอนิกส์ (ชาย, เข้ม)', gender: 'male', sample_url: '/samples/onyx.mp3', provider: 'openai' },
   { id: 'fable', name: 'Fable', label: 'เฟเบิล (ชาย, บรรยาย)', gender: 'male', sample_url: '/samples/fable.mp3', provider: 'openai' },
+
+  // Alibaba CosyVoice via SiliconFlow
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'Cosy-Anna', label: 'คอซี่-แอนนา (หญิง, สุภาพ)', gender: 'female', sample_url: '/samples/cosy-anna.mp3', provider: 'cosyvoice' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'Cosy-Claire', label: 'คอซี่-แคลร์ (หญิง, อ่อนโยน)', gender: 'female', sample_url: '/samples/cosy-claire.mp3', provider: 'cosyvoice' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'Cosy-Alex', label: 'คอซี่-อเล็กซ์ (ชาย, สุขุม)', gender: 'male', sample_url: '/samples/cosy-alex.mp3', provider: 'cosyvoice' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'Cosy-Benjamin', label: 'คอซี่-เบนจามิน (ชาย, ทุ้ม)', gender: 'male', sample_url: '/samples/cosy-benjamin.mp3', provider: 'cosyvoice' },
 ];
 
 // ─── Aspect Ratio Options ───────────────────────────

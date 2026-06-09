@@ -20,7 +20,7 @@ import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
 import { ASPECT_RATIOS, THAI_VOICES } from '@/types';
 import { useAuth } from '@/lib/auth-context';
-import { getCharacters } from '@/lib/supabase-db';
+import { getCharacters, supabase } from '@/lib/supabase-db';
 
 interface Character {
   id: string;
@@ -47,9 +47,13 @@ interface Mode1FormProps {
 
 export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   // ดึงสิทธิ์แอดมินของจริงมาใช้แล้วครับ (ไม่มีการแฮกโค้ดแล้ว)
-  const { user, isAdmin } = useAuth(); 
+  const { user, isAdmin, whitelistData } = useAuth(); 
 
   const [imageFile, setImageFile] = useState<File | null>(null);
+  // สถานะการทำงาน
+  const [processing, setProcessing] = useState(false);
+  const [processingStage, setProcessingStage] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [endImageFile, setEndImageFile] = useState<File | null>(null);
   const [endImagePreview, setEndImagePreview] = useState<string | null>(null);
@@ -83,7 +87,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
-  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai'>('google');
+  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice'>('google');
 
   // KRUTH Engine Model Selection
   const [modelType, setModelType] = useState('fast'); 
@@ -140,6 +144,36 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       });
     }
   }, [user?.email]);
+
+  // Quota states and fetch hook
+  const [todaysCount, setTodaysCount] = useState<number>(0);
+  const [loadingQuota, setLoadingQuota] = useState(true);
+
+  const fetchTodayQuota = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const localStartOfDay = new Date();
+      localStartOfDay.setHours(0, 0, 0, 0);
+
+      const { count, error } = await supabase
+        .from('generations')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', localStartOfDay.toISOString());
+
+      if (!error && count !== null) {
+        setTodaysCount(count);
+      }
+    } catch (err) {
+      console.error('Error fetching today quota count:', err);
+    } finally {
+      setLoadingQuota(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchTodayQuota();
+  }, [fetchTodayQuota, processing]);
 
   // Sync starting image preview from selected character avatar & angle
   useEffect(() => {
@@ -209,10 +243,6 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     ? [5, 10, 15, 25]
     : (modelType === 'grok-video' ? [5, 10, 15] : [5, 10]);
   
-  // สถานะการทำงาน
-  const [processing, setProcessing] = useState(false);
-  const [processingStage, setProcessingStage] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
 
@@ -554,6 +584,45 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
       <div className="space-y-6">
         
+        {/* User Quota & License Status Card */}
+        {whitelistData && (
+          <div className="p-4 bg-surface-2/60 border border-white/5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md animate-fade-in font-thai">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-accent-warm animate-pulse" />
+                <span className="text-xs font-semibold text-text-muted">สถานะสิทธิ์การใช้งานบัญชีของคุณ</span>
+              </div>
+              <p className="text-sm font-bold text-text-primary">
+                ยินดีต้อนรับคุณ, <span className="text-[#D4AF37]">{whitelistData.display_name || user?.email}</span>
+              </p>
+              <div className="text-[11px] text-text-muted flex gap-3">
+                <span>วันหมดอายุ: {whitelistData.expires_at ? new Date(whitelistData.expires_at).toLocaleDateString('th-TH') : 'ถาวร (Permanent)'}</span>
+                {whitelistData.expires_at && (
+                  <span className="text-[#D4AF37]">
+                    ({(() => {
+                      const expiry = new Date(whitelistData.expires_at);
+                      const diffMs = expiry.getTime() - Date.now();
+                      if (diffMs <= 0) return 'หมดอายุ';
+                      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+                      return `เหลือเวลาอีกประมาณ ${diffDays} วัน`;
+                    })()})
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            <div className="bg-[#1A1A1A] px-4 py-2.5 rounded-xl border border-white/5 flex flex-col items-center justify-center w-full sm:w-auto shadow-inner text-center">
+              <span className="text-[10px] text-text-muted font-medium">โควตาสร้างคลิปประจำวันนี้</span>
+              <p className="text-base font-bold text-[#D4AF37] font-mono">
+                {todaysCount} / {whitelistData.generation_limit || 10}
+              </p>
+              <span className="text-[10px] text-accent-success">
+                (สร้างได้อีก {Math.max(0, (whitelistData.generation_limit || 10) - todaysCount)} คลิป)
+              </span>
+            </div>
+          </div>
+        )}
+        
         {/* Admin Model Selector */}
         {isAdmin && (
           <div className="space-y-3 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4">
@@ -569,6 +638,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               >
                 <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
                 <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
+                <option value="hunyuan">🌌 KRUTH Cosmic (Tencent HunyuanVideo)</option>
+                <option value="ltx-video">⚡ KRUTH Draft (LTX-Video Quick Draft)</option>
                 <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
                 <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
               </select>
@@ -1187,6 +1258,20 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                   }`}
                 >
                   🧠 OpenAI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsProvider('cosyvoice');
+                    setSelectedVoice('FunAudioLLM/CosyVoice2-0.5B:anna');
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    ttsProvider === 'cosyvoice'
+                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                  }`}
+                >
+                  🎙️ CosyVoice
                 </button>
               </div>
             </div>
