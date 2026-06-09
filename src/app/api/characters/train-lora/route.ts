@@ -37,9 +37,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!imageFiles || imageFiles.length < 4) {
+    if (!imageFiles || imageFiles.length < 6) {
       return NextResponse.json(
-        { success: false, error: 'กรุณาอัปโหลดรูปภาพตัวละครเพื่อฝึกสอนอย่างน้อย 4 รูป (แนะนำ 10-15 รูป)' },
+        { success: false, error: 'กรุณาอัปโหลดรูปภาพตัวละครเพื่อฝึกสอนอย่างน้อย 6 รูป' },
+        { status: 400 }
+      );
+    }
+
+    if (imageFiles.length > 20) {
+      return NextResponse.json(
+        { success: false, error: 'ระบบจำกัดการอัปโหลดรูปภาพชุดตัวอย่างได้ไม่เกิน 20 รูป' },
         { status: 400 }
       );
     }

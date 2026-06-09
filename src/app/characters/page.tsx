@@ -357,8 +357,12 @@ export default function CharactersPage() {
       alert('กรุณากรอก Trigger Word สำหรับโมเดลตัวละคร');
       return;
     }
-    if (files.length < 4) {
-      alert('กรุณาอัปโหลดรูปภาพชุดตัวอย่างเพื่อฝึกสอนอย่างน้อย 4 รูป (แนะนำ 10-15 รูป)');
+    if (files.length < 6) {
+      alert('กรุณาอัปโหลดรูปภาพชุดตัวอย่างเพื่อฝึกสอนอย่างน้อย 6 รูป');
+      return;
+    }
+    if (files.length > 20) {
+      alert('ระบบจำกัดการอัปโหลดรูปภาพชุดตัวอย่างได้ไม่เกิน 20 รูป เพื่อควบคุมทรัพยากรการประมวลผล');
       return;
     }
 
@@ -916,7 +920,7 @@ export default function CharactersPage() {
                       {/* Dataset images selection */}
                       <div className="space-y-2">
                         <label className="block text-[11px] font-medium text-text-secondary font-thai">
-                          1. เลือกรูปภาพตัวละครเดียวกันในหลากมุมกล้อง (Training Set) <span className="text-accent-danger">*</span> (แนะนำ 10-15 รูป)
+                          1. เลือกรูปภาพตัวละครเดียวกันในหลากมุมกล้อง (Training Set) <span className="text-accent-danger">*</span> (ขั้นต่ำ 6 รูป, สูงสุด 20 รูป)
                         </label>
                         <div 
                           onClick={() => loraInputRef.current?.click()}
