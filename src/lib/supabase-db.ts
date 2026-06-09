@@ -260,43 +260,20 @@ export async function getCharacters(email: string) {
 }
 
 export async function createCharacter(characterData: Record<string, any>) {
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('email', characterData.user_email)
-    .single();
+  const response = await fetch('/api/characters/create', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(characterData),
+  });
 
-  if (profileError || !profile) {
-    throw new Error(`Profile not found for email: ${characterData.user_email}`);
+  const resData = await response.json();
+  if (!response.ok || !resData.success) {
+    throw new Error(resData.error || 'Failed to create character');
   }
 
-  const { data, error } = await supabase
-    .from('characters')
-    .insert({
-      user_id: profile.id,
-      name: characterData.name,
-      code: characterData.code,
-      visual_description: characterData.visual_description,
-      negative_prompt: characterData.negative_prompt || null,
-      avatar_front_url: characterData.avatar_front_url || null,
-      avatar_front_path: characterData.avatar_front_path || null,
-      avatar_45_url: characterData.avatar_45_url || null,
-      avatar_45_path: characterData.avatar_45_path || null,
-      avatar_side_url: characterData.avatar_side_url || null,
-      avatar_side_path: characterData.avatar_side_path || null,
-      lora_status: characterData.lora_status || 'not_started',
-      lora_job_id: characterData.lora_job_id || null,
-      lora_model_url: characterData.lora_model_url || null,
-      lora_trigger_word: characterData.lora_trigger_word || null,
-      lora_dataset_url: characterData.lora_dataset_url || null,
-      lora_dataset_path: characterData.lora_dataset_path || null,
-      lora_steps: characterData.lora_steps || 1000
-    })
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data;
+  return resData.data;
 }
 
 export async function deleteCharacter(id: string) {
