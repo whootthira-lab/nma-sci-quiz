@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
     const triggerWordRaw = formData.get('trigger_word') as string || '';
     const steps = parseInt(formData.get('steps') as string || '1000', 10);
     const imageFiles = formData.getAll('images') as File[];
+    const angles = formData.getAll('angles') as string[];
 
     if (!characterId || !userEmail) {
       return NextResponse.json(
@@ -119,10 +120,28 @@ export async function POST(req: NextRequest) {
 
     // Concurrently analyze images using Vision API
     const analysisResults = await Promise.all(
-      imageFiles.map(async (file) => {
+      imageFiles.map(async (file, idx) => {
         const buffer = Buffer.from(await file.arrayBuffer());
         const mime = file.type || 'image/png';
-        const analysis = await analyzeImageWithVision(buffer, mime);
+        
+        // Check if user specified a manual angle
+        const userAngle = angles[idx]; // 'front', '45', 'side', 'auto'
+        let analysis;
+        if (userAngle && userAngle !== 'auto') {
+          // We still want the AI description for details, but we can override the angle
+          const visionResult = await analyzeImageWithVision(buffer, mime);
+          let mappedAngle = 'front view';
+          if (userAngle === 'front') mappedAngle = 'front view';
+          else if (userAngle === '45') mappedAngle = 'three-quarter view';
+          else if (userAngle === 'side') mappedAngle = 'side view';
+          
+          analysis = {
+            angle: mappedAngle,
+            description: visionResult.description
+          };
+        } else {
+          analysis = await analyzeImageWithVision(buffer, mime);
+        }
         return { file, buffer, analysis };
       })
     );

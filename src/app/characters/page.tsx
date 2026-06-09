@@ -63,7 +63,7 @@ export default function CharactersPage() {
   const [activeLoraCharId, setActiveLoraCharId] = useState<string | null>(null);
   const [loraTriggerWord, setLoraTriggerWord] = useState('');
   const [loraSteps, setLoraSteps] = useState(1000);
-  const [loraFiles, setLoraFiles] = useState<File[]>([]);
+  const [loraFiles, setLoraFiles] = useState<{ file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]>([]);
   const [submittingLora, setSubmittingLora] = useState<string | null>(null);
   const loraInputRef = useRef<HTMLInputElement>(null);
 
@@ -316,18 +316,28 @@ export default function CharactersPage() {
   const handleLoraFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newFiles: File[] = [];
+    const newFiles: { file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (file.type.startsWith('image/')) {
-        newFiles.push(file);
+        newFiles.push({
+          file,
+          preview: URL.createObjectURL(file),
+          angle: 'auto'
+        });
       }
     }
     setLoraFiles(prev => [...prev, ...newFiles]);
   };
 
   const removeLoraFile = (idx: number) => {
-    setLoraFiles(prev => prev.filter((_, i) => i !== idx));
+    setLoraFiles(prev => {
+      const item = prev[idx];
+      if (item && item.preview) {
+        URL.revokeObjectURL(item.preview);
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
   };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
@@ -404,7 +414,12 @@ export default function CharactersPage() {
     }
   };
 
-  const handleTrainLoraSubmit = async (charId: string, triggerWord: string, steps: number, files: File[]) => {
+  const handleTrainLoraSubmit = async (
+    charId: string, 
+    triggerWord: string, 
+    steps: number, 
+    files: { file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]
+  ) => {
     if (!triggerWord.trim()) {
       alert('กรุณากรอก Trigger Word สำหรับโมเดลตัวละคร');
       return;
@@ -426,7 +441,11 @@ export default function CharactersPage() {
     formData.append('user_email', user?.email || '');
     formData.append('trigger_word', triggerWord.trim());
     formData.append('steps', String(steps));
-    files.forEach(f => formData.append('images', f));
+    
+    files.forEach(item => {
+      formData.append('images', item.file);
+      formData.append('angles', item.angle);
+    });
 
     try {
       const res = await fetch('/api/characters/train-lora', {
@@ -1006,33 +1025,147 @@ export default function CharactersPage() {
                         </label>
                         <div 
                           onClick={() => loraInputRef.current?.click()}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const transferFiles = Array.from(e.dataTransfer.files);
+                            if (transferFiles.length === 0) return;
+                            
+                            // Check if zip file is dropped
+                            const zipFile = transferFiles.find(
+                              f =>
+                                f.name.endsWith('.zip') ||
+                                f.type === 'application/zip' ||
+                                f.type === 'application/x-zip-compressed'
+                            );
+
+                            if (zipFile) {
+                              try {
+                                const zip = await JSZip.loadAsync(zipFile);
+                                const imageFiles: { file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[] = [];
+
+                                for (const [filename, fileObj] of Object.entries(zip.files)) {
+                                  if (fileObj.dir) continue;
+                                  const lowerName = filename.toLowerCase();
+                                  const ext = filename.split('.').pop()?.toLowerCase();
+                                  if (
+                                    ['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext || '') ||
+                                    lowerName.endsWith('.png') ||
+                                    lowerName.endsWith('.jpg') ||
+                                    lowerName.endsWith('.jpeg') ||
+                                    lowerName.endsWith('.webp') ||
+                                    lowerName.endsWith('.bmp')
+                                  ) {
+                                    const blob = await fileObj.async('blob');
+                                    const baseName = filename.split('/').pop() || filename;
+                                    const mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+                                    const file = new File([blob], baseName, { type: mime });
+                                    
+                                    let detectedAngle: 'auto' | 'front' | '45' | 'side' = 'auto';
+                                    const lowerBaseName = baseName.toLowerCase();
+                                    if (lowerBaseName.includes('front') || lowerBaseName.includes('ตรง') || lowerBaseName.includes('หน้า') || lowerBaseName.includes('1.')) {
+                                      detectedAngle = 'front';
+                                    } else if (lowerBaseName.includes('45') || lowerBaseName.includes('angle') || lowerBaseName.includes('2.')) {
+                                      detectedAngle = '45';
+                                    } else if (lowerBaseName.includes('side') || lowerBaseName.includes('ข้าง') || lowerBaseName.includes('3.')) {
+                                      detectedAngle = 'side';
+                                    }
+
+                                    imageFiles.push({
+                                      file,
+                                      preview: URL.createObjectURL(file),
+                                      angle: detectedAngle
+                                    });
+                                  }
+                                }
+
+                                if (imageFiles.length === 0) {
+                                  alert('ไม่พบรูปภาพ (PNG, JPG, JPEG, WEBP, BMP) ในไฟล์ ZIP');
+                                  return;
+                                }
+
+                                setLoraFiles(prev => [...prev, ...imageFiles]);
+                              } catch (err: any) {
+                                console.error('ZIP extraction failed:', err);
+                                alert('เกิดข้อผิดพลาดในการดึงข้อมูลจากไฟล์ ZIP');
+                              }
+                            } else {
+                              const validImages = transferFiles.filter(f => f.type.startsWith('image/'));
+                              if (validImages.length === 0) {
+                                alert('กรุณาลากวางไฟล์รูปภาพ (PNG, JPG, JPEG) หรือไฟล์ ZIP');
+                                return;
+                              }
+                              const mapped = validImages.map(file => {
+                                let detectedAngle: 'auto' | 'front' | '45' | 'side' = 'auto';
+                                const lowerBaseName = file.name.toLowerCase();
+                                if (lowerBaseName.includes('front') || lowerBaseName.includes('ตรง') || lowerBaseName.includes('หน้า') || lowerBaseName.includes('1.')) {
+                                  detectedAngle = 'front';
+                                } else if (lowerBaseName.includes('45') || lowerBaseName.includes('angle') || lowerBaseName.includes('2.')) {
+                                  detectedAngle = '45';
+                                } else if (lowerBaseName.includes('side') || lowerBaseName.includes('ข้าง') || lowerBaseName.includes('3.')) {
+                                  detectedAngle = 'side';
+                                }
+                                return {
+                                  file,
+                                  preview: URL.createObjectURL(file),
+                                  angle: detectedAngle
+                                };
+                              });
+                              setLoraFiles(prev => [...prev, ...mapped]);
+                            }
+                          }}
                           className="border-2 border-dashed border-white/10 hover:border-[#D4AF37] bg-surface-2 p-5 rounded-xl text-center cursor-pointer transition-all"
                         >
                           <Upload className="w-6 h-6 text-text-muted mx-auto mb-1.5" />
-                          <span className="text-xs text-text-secondary font-thai block">คลิกเพื่ออัปโหลดภาพชุดฝึกสอน (เลือกหลายไฟล์ได้)</span>
-                          <span className="text-[10px] text-text-muted font-thai block mt-1">* ภาพถ่ายควรโฟกัสใบหน้าชัดเจน มีเสื้อผ้า หน้าตา และฉากหลังที่หลากหลายกันออกไป</span>
+                          <span className="text-xs text-text-secondary font-thai block">คลิก หรือ ลากวางไฟล์ภาพ / ไฟล์ ZIP ที่นี่</span>
+                          <span className="text-[10px] text-text-muted font-thai block mt-1">* อัปโหลดภาพหลากมุมกล้อง 6-20 รูป (ลากคลุมวางทีเดียวได้)</span>
                         </div>
                         <input 
                           ref={loraInputRef} 
                           type="file" 
                           multiple 
-                          accept="image/*" 
+                          accept="image/*,.zip" 
                           className="hidden" 
                           onChange={handleLoraFilesChange} 
                         />
                         
-                        {/* Dataset thumbnails preview */}
+                        {/* Dataset thumbnails preview with angle selectors */}
                         {loraFiles.length > 0 && (
-                          <div className="space-y-1">
-                            <span className="text-[10px] text-text-secondary font-thai block">รูปภาพที่พร้อมอัปโหลด ({loraFiles.length} รูป):</span>
-                            <div className="grid grid-cols-5 gap-2 p-2 bg-surface-2 rounded-xl border border-white/5 max-h-24 overflow-y-auto">
-                              {loraFiles.map((file, idx) => (
-                                <div key={idx} className="relative group h-12 bg-surface-3 rounded-lg overflow-hidden border border-white/5">
-                                  <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                          <div className="space-y-2 font-thai pt-1">
+                            <span className="text-xs font-bold text-text-secondary block">
+                              🖼️ รูปภาพในชุดฝึกสอน ({loraFiles.length} รูป):
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-72 overflow-y-auto p-2.5 bg-surface-2 rounded-xl border border-white/5">
+                              {loraFiles.map((item, idx) => (
+                                <div key={idx} className="bg-surface-3 p-2 rounded-xl border border-white/5 flex flex-col items-center gap-1.5 relative group">
+                                  <img src={item.preview} alt="" className="w-14 h-14 object-cover rounded-lg" />
+                                  <span className="text-[10px] text-text-muted truncate max-w-[80px]" title={item.file.name}>
+                                    {item.file.name}
+                                  </span>
+                                  
+                                  <select
+                                    value={item.angle}
+                                    onChange={(e) => {
+                                      const newAngle = e.target.value as any;
+                                      setLoraFiles(prev => prev.map((f, i) => i === idx ? { ...f, angle: newAngle } : f));
+                                    }}
+                                    className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[10px] rounded px-1 py-0.5 outline-none cursor-pointer text-center font-semibold"
+                                  >
+                                    <option value="auto">🤖 AI วิเคราะห์</option>
+                                    <option value="front">👤 หน้าตรง</option>
+                                    <option value="45">📐 มุม 45°</option>
+                                    <option value="side">👥 มุมข้าง</option>
+                                  </select>
+
                                   <button 
                                     type="button" 
                                     onClick={() => removeLoraFile(idx)} 
-                                    className="absolute top-0.5 right-0.5 p-0.5 bg-black/70 hover:bg-black/90 rounded text-white transition-all"
+                                    className="absolute -top-1.5 -right-1.5 p-1 bg-accent-danger text-white rounded-full transition-all shadow-md opacity-0 group-hover:opacity-100"
+                                    title="ลบรูปภาพ"
                                   >
                                     <X className="w-3 h-3" />
                                   </button>
@@ -1106,7 +1239,7 @@ export default function CharactersPage() {
                       {/* Action buttons */}
                       <button 
                         type="button" 
-                        disabled={submittingLora === char.id || loraFiles.length < 4}
+                        disabled={submittingLora === char.id || loraFiles.length < 6}
                         onClick={() => handleTrainLoraSubmit(char.id, loraTriggerWord, loraSteps, loraFiles)}
                         className="w-full btn-primary py-3 rounded-xl text-xs font-thai flex items-center justify-center gap-2 disabled:opacity-40"
                       >
