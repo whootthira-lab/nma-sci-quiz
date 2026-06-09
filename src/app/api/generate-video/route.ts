@@ -168,29 +168,42 @@ async function generateCosyVoiceTTS(text: string, voiceId: string, speedFactor: 
 
   console.log(`[SiliconFlow CosyVoice] Generating TTS audio for voice ID: ${voiceId} with speed: ${speedFactor}`);
 
-  const sfResponse = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'FunAudioLLM/CosyVoice2-0.5B',
-      input: text,
-      voice: voiceId,
-      response_format: 'mp3',
-      speed: speedFactor,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
-  if (!sfResponse.ok) {
-    const errText = await sfResponse.text();
-    console.error('[SiliconFlow CosyVoice API Error]', errText);
-    throw new Error(`SiliconFlow CosyVoice API failed with status ${sfResponse.status}: ${errText}`);
+  try {
+    const sfResponse = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'FunAudioLLM/CosyVoice2-0.5B',
+        input: text,
+        voice: voiceId,
+        response_format: 'mp3',
+        speed: speedFactor,
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!sfResponse.ok) {
+      const errText = await sfResponse.text();
+      console.error('[SiliconFlow CosyVoice API Error]', errText);
+      throw new Error(`SiliconFlow CosyVoice API failed with status ${sfResponse.status}: ${errText}`);
+    }
+
+    const arrayBuffer = await sfResponse.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('การเชื่อมต่อกับ SiliconFlow CosyVoice หมดเวลา (Timeout) กรุณาลองใหม่อีกครั้ง');
+    }
+    throw err;
   }
-
-  const arrayBuffer = await sfResponse.arrayBuffer();
-  return Buffer.from(arrayBuffer);
 }
 
 async function enhancePromptWithGPT(
@@ -267,6 +280,9 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
 
   try {
     console.log('[GPT Enhance] Enhancing prompt with gpt-4o-mini...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -282,7 +298,9 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
         temperature: 0.7,
         max_tokens: 250,
       }),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -297,8 +315,8 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
       console.log('[GPT Enhance] Enhanced prompt:', enhancedPrompt);
       return enhancedPrompt;
     }
-  } catch (error) {
-    console.warn('[GPT Enhance Exception] Failed to run enhancement:', error);
+  } catch (error: any) {
+    console.warn('[GPT Enhance Exception] Failed to run enhancement:', error.message || error);
   }
 
   return situationPrompt || '';

@@ -1,158 +1,88 @@
 const fs = require('fs');
 const path = require('path');
 
-// 1. Simple parser for .env.local file to load credentials
-function loadEnv() {
-  const envPath = path.join(__dirname, '..', '.env.local');
-  if (!fs.existsSync(envPath)) {
-    console.error('Cannot find .env.local file at:', envPath);
-    process.exit(1);
-  }
+// Load env variables
+const envPath = path.join(__dirname, '..', '.env.local');
+if (!fs.existsSync(envPath)) {
+  console.error('.env.local file not found');
+  process.exit(1);
+}
 
-  const content = fs.readFileSync(envPath, 'utf8');
-  const env = {};
-  content.split('\n').forEach(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return;
-    const parts = trimmed.split('=');
-    const key = parts[0].trim();
-    let val = parts.slice(1).join('=').trim();
-    // Strip quotes if present
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
+const envContent = fs.readFileSync(envPath, 'utf8');
+const env = {};
+envContent.split('\n').forEach(line => {
+  const match = line.match(/^\s*([\w\.\-]+)\s*=\s*(.*)?\s*$/);
+  if (match) {
+    let value = match[2] ? match[2].trim() : '';
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.substring(1, value.length - 1);
     }
-    env[key] = val;
-  });
-  return env;
+    env[match[1]] = value;
+  }
+});
+
+const sfKey = env.SILICONFLOW_API_KEY || env.NEXT_PUBLIC_SILICONFLOW_API_KEY;
+
+if (!sfKey) {
+  console.error('Missing SILICONFLOW_API_KEY in .env.local');
+  process.exit(1);
 }
 
-const env = loadEnv();
-const openAIKey = env.OPENAI_API_KEY;
-const googleKey = env.GOOGLE_API_KEY || env.NEXT_PUBLIC_GOOGLE_API_KEY;
-
-if (!openAIKey) {
-  console.error('Missing OPENAI_API_KEY in .env.local');
-}
-if (!googleKey) {
-  console.error('Missing GOOGLE_API_KEY in .env.local');
-}
+const voices = [
+  { id: 'anna', name: 'cosy-anna.mp3', text: 'Hello, my name is Anna. I am a polite female voice.' },
+  { id: 'claire', name: 'cosy-claire.mp3', text: 'Hello, my name is Claire. I am a gentle female voice.' },
+  { id: 'bella', name: 'cosy-bella.mp3', text: 'Hello, my name is Bella. I am a cheerful female voice.' },
+  { id: 'diana', name: 'cosy-diana.mp3', text: 'Hello, my name is Diana. I am a confident female voice.' },
+  { id: 'alex', name: 'cosy-alex.mp3', text: 'Hello, my name is Alex. I am a mature male voice.' },
+  { id: 'benjamin', name: 'cosy-benjamin.mp3', text: 'Hello, my name is Benjamin. I am a warm male voice.' },
+  { id: 'charles', name: 'cosy-charles.mp3', text: 'Hello, my name is Charles. I am a polite male voice.' },
+  { id: 'david', name: 'cosy-david.mp3', text: 'Hello, my name is David. I am a powerful male voice.' }
+];
 
 const samplesDir = path.join(__dirname, '..', 'public', 'samples');
 if (!fs.existsSync(samplesDir)) {
   fs.mkdirSync(samplesDir, { recursive: true });
 }
 
-// 2. Google Cloud TTS generator function
-async function generateGoogleTTS(voiceId, text, filename) {
-  console.log(`Generating Google TTS sample for ${voiceId}...`);
-  const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`;
-  
-  const response = await fetch(url, {
+async function generateSample(voice) {
+  const outputPath = path.join(samplesDir, voice.name);
+  console.log(`Generating sample for ${voice.id}...`);
+
+  const response = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sfKey}`,
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      input: { text },
-      voice: {
-        languageCode: 'th-TH',
-        name: voiceId
-      },
-      audioConfig: {
-        audioEncoding: 'MP3'
-      }
+      model: 'FunAudioLLM/CosyVoice2-0.5B',
+      input: voice.text,
+      voice: voice.id,
+      response_format: 'mp3'
     })
   });
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Google TTS failed: ${response.status} - ${errText}`);
-  }
-
-  const data = await response.json();
-  if (!data.audioContent) {
-    throw new Error('Google TTS did not return audioContent');
-  }
-
-  const buffer = Buffer.from(data.audioContent, 'base64');
-  const filePath = path.join(samplesDir, filename);
-  fs.writeFileSync(filePath, buffer);
-  console.log(`Save Google TTS sample to: ${filePath}`);
-}
-
-// 3. OpenAI TTS generator function
-async function generateOpenAITTS(voiceId, text, filename) {
-  console.log(`Generating OpenAI TTS sample for ${voiceId}...`);
-  const url = 'https://api.openai.com/v1/audio/speech';
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'tts-1',
-      input: text,
-      voice: voiceId
-    })
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenAI TTS failed: ${response.status} - ${errText}`);
+    throw new Error(`Failed to generate voice ${voice.id}: ${response.status} - ${errText}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const filePath = path.join(samplesDir, filename);
-  fs.writeFileSync(filePath, buffer);
-  console.log(`Save OpenAI TTS sample to: ${filePath}`);
+  fs.writeFileSync(outputPath, Buffer.from(arrayBuffer));
+  console.log(`Saved: ${outputPath}`);
 }
 
-async function main() {
-  // Google Voices Config
-  const googleVoices = [
-    { id: 'th-TH-Neural2-C', text: 'สวัสดีค่ะ นี่คือเสียงตัวอย่างภาษาไทยของกูเกิ้ล นิวรอล ทู ซี', filename: 'g-neural-c.mp3' },
-    { id: 'th-TH-Standard-A', text: 'สวัสดีค่ะ นี่คือเสียงตัวอย่างภาษาไทยของกูเกิ้ล สแตนดาร์ด เอ', filename: 'g-standard-a.mp3' },
-    { id: 'th-TH-Chirp3-HD-Algenib', text: 'สวัสดีครับ นี่คือเสียงตัวอย่างภาษาไทยของกูเกิ้ล เชิร์ป อัลเจนิบ', filename: 'g-chirp-algenib.mp3' },
-  ];
-
-  // OpenAI Voices Config
-  const openAIVoices = [
-    { id: 'alloy', text: 'Hello! This is a preview of the OpenAI Alloy voice.', filename: 'alloy.mp3' },
-    { id: 'nova', text: 'Hello! This is a preview of the OpenAI Nova voice.', filename: 'nova.mp3' },
-    { id: 'shimmer', text: 'Hello! This is a preview of the OpenAI Shimmer voice.', filename: 'shimmer.mp3' },
-    { id: 'echo', text: 'Hello! This is a preview of the OpenAI Echo voice.', filename: 'echo.mp3' },
-    { id: 'onyx', text: 'Hello! This is a preview of the OpenAI Onyx voice.', filename: 'onyx.mp3' },
-    { id: 'fable', text: 'Hello! This is a preview of the OpenAI Fable voice.', filename: 'fable.mp3' },
-  ];
-
-  // Generate Google TTS samples
-  if (googleKey) {
-    for (const voice of googleVoices) {
-      try {
-        await generateGoogleTTS(voice.id, voice.text, voice.filename);
-      } catch (err) {
-        console.error(`Failed to generate Google voice ${voice.id}:`, err.message);
-      }
+async function run() {
+  for (const voice of voices) {
+    try {
+      await generateSample(voice);
+      // Avoid rate limit
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (err) {
+      console.error(err.message);
     }
   }
-
-  // Generate OpenAI TTS samples
-  if (openAIKey) {
-    for (const voice of openAIVoices) {
-      try {
-        await generateOpenAITTS(voice.id, voice.text, voice.filename);
-      } catch (err) {
-        console.error(`Failed to generate OpenAI voice ${voice.id}:`, err.message);
-      }
-    }
-  }
-
-  console.log('All sample generation completed!');
+  console.log('Done.');
 }
 
-main().catch(err => {
-  console.error('Fatal execution error:', err);
-});
+run();

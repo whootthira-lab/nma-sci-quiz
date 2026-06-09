@@ -539,7 +539,26 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         body: formData,
       });
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (jsonErr) {
+        console.error('Failed to parse server response as JSON:', jsonErr);
+        
+        // Try to read as text to see the error details
+        const errText = await response.text().catch(() => '');
+        console.error('Server error response text:', errText);
+        
+        if (response.status === 504 || response.status === 502) {
+          throw new Error('เซิร์ฟเวอร์ตอบสนองช้าเกินไป (Gateway Timeout) กรุณาลองใหม่อีกครั้ง');
+        }
+        
+        if (errText.includes('Api key is invalid') || errText.includes('invalid_api_key')) {
+          throw new Error('SiliconFlow API Key ไม่ถูกต้อง กรุณาอัปเดต API Key ในระบบออนไลน์ (Vercel Dashboard)');
+        }
+        
+        throw new Error(`เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ (รหัสสถานะ: ${response.status}) กรุณาตรวจสอบ logs บน Vercel Dashboard`);
+      }
 
       if (!result.success) {
         throw new Error(result.error || 'เกิดข้อผิดพลาดในการส่งคำสั่งสร้างวิดีโอ');
