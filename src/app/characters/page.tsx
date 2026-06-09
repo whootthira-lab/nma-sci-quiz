@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import Navbar from '@/components/Navbar';
 import { Loader2, Plus, Users, Trash2, ShieldAlert, Sparkles, Upload, X, Brain } from 'lucide-react';
 import { getCharacters, createCharacter, deleteCharacter, uploadToStorage } from '@/lib/supabase-db';
+import JSZip from 'jszip';
 
 interface Character {
   id: string;
@@ -51,6 +52,7 @@ export default function CharactersPage() {
   const [angle45Preview, setAngle45Preview] = useState<string | null>(null);
   const [sideFile, setSideFile] = useState<File | null>(null);
   const [sidePreview, setSidePreview] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const frontInputRef = useRef<HTMLInputElement>(null);
   const angle45InputRef = useRef<HTMLInputElement>(null);
@@ -143,6 +145,121 @@ export default function CharactersPage() {
       setSidePreview(previewUrl);
     }
     setError(null);
+  };
+
+  const processImageFiles = (files: File[]) => {
+    let matchedFront: File | null = null;
+    let matched45: File | null = null;
+    let matchedSide: File | null = null;
+    const unmatched: File[] = [];
+
+    for (const file of files) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.includes('front') || lowerName.includes('ตรง') || lowerName.includes('หน้า') || lowerName.includes('1.')) {
+        matchedFront = file;
+      } else if (lowerName.includes('45') || lowerName.includes('angle') || lowerName.includes('2.')) {
+        matched45 = file;
+      } else if (lowerName.includes('side') || lowerName.includes('ข้าง') || lowerName.includes('3.')) {
+        matchedSide = file;
+      } else {
+        unmatched.push(file);
+      }
+    }
+
+    // Fallback for unmatched files to fill remaining slots
+    for (const file of unmatched) {
+      if (!matchedFront) {
+        matchedFront = file;
+      } else if (!matched45) {
+        matched45 = file;
+      } else if (!matchedSide) {
+        matchedSide = file;
+      }
+    }
+
+    let successCount = 0;
+    if (matchedFront) {
+      setFrontFile(matchedFront);
+      setFrontPreview(URL.createObjectURL(matchedFront));
+      successCount++;
+    }
+    if (matched45) {
+      setAngle45File(matched45);
+      setAngle45Preview(URL.createObjectURL(matched45));
+      successCount++;
+    }
+    if (matchedSide) {
+      setSideFile(matchedSide);
+      setSidePreview(URL.createObjectURL(matchedSide));
+      successCount++;
+    }
+
+    if (successCount > 0) {
+      setError(null);
+    } else {
+      setError('ไม่พบไฟล์รูปภาพที่เหมาะสม');
+    }
+  };
+
+  const handleBulkDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const transferFiles = Array.from(e.dataTransfer.files);
+    if (transferFiles.length === 0) return;
+
+    // Check if zip file is dropped
+    const zipFile = transferFiles.find(
+      f =>
+        f.name.endsWith('.zip') ||
+        f.type === 'application/zip' ||
+        f.type === 'application/x-zip-compressed'
+    );
+
+    if (zipFile) {
+      try {
+        const zip = await JSZip.loadAsync(zipFile);
+        const imageFiles: File[] = [];
+
+        for (const [filename, fileObj] of Object.entries(zip.files)) {
+          if (fileObj.dir) continue;
+          const lowerName = filename.toLowerCase();
+          const ext = filename.split('.').pop()?.toLowerCase();
+          if (
+            ['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext || '') ||
+            lowerName.endsWith('.png') ||
+            lowerName.endsWith('.jpg') ||
+            lowerName.endsWith('.jpeg') ||
+            lowerName.endsWith('.webp') ||
+            lowerName.endsWith('.bmp')
+          ) {
+            const blob = await fileObj.async('blob');
+            const baseName = filename.split('/').pop() || filename;
+            const mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+            const file = new File([blob], baseName, { type: mime });
+            imageFiles.push(file);
+          }
+        }
+
+        if (imageFiles.length === 0) {
+          setError('ไม่พบรูปภาพ (PNG, JPG, JPEG, WEBP, BMP) ในไฟล์ ZIP');
+          return;
+        }
+
+        processImageFiles(imageFiles);
+      } catch (err: any) {
+        console.error('ZIP extraction failed:', err);
+        setError('เกิดข้อผิดพลาดในการดึงข้อมูลจากไฟล์ ZIP');
+      }
+    } else {
+      // Normal image drop
+      const validImages = transferFiles.filter(f => f.type.startsWith('image/'));
+      if (validImages.length === 0) {
+        setError('กรุณาลากวางไฟล์รูปภาพ (PNG, JPG, JPEG) หรือไฟล์ ZIP');
+        return;
+      }
+      processImageFiles(validImages);
+    }
   };
 
   const handleLoraFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -421,6 +538,36 @@ export default function CharactersPage() {
               <label className="block text-sm font-medium text-text-secondary font-thai">
                 รูปถ่ายตัวละครอ้างอิงรายมุม (Reference Images)
               </label>
+
+              {/* Bulk Drop-Zone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleBulkDrop}
+                className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                  isDragging
+                    ? 'border-[#D4AF37] bg-[#D4AF37]/5 shadow-[0_0_15px_rgba(212,175,55,0.15)]'
+                    : 'border-white/10 hover:border-[#D4AF37] bg-surface-3'
+                }`}
+              >
+                <div className="flex flex-col items-center justify-center gap-2">
+                  <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                    <Upload className="w-5 h-5 text-[#D4AF37]" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold font-thai text-text-primary">
+                      ลากและวางไฟล์ภาพหลายรูป หรือไฟล์ .zip ที่นี่
+                    </p>
+                    <p className="text-xs font-thai text-text-muted mt-1">
+                      ระบบจะวิเคราะห์คีย์เวิร์ดชื่อไฟล์ (เช่น front, 45, side) เพื่อจัดเรียงลงช่องมุมอ้างอิงโดยอัตโนมัติ
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Front view */}
                 <div className="space-y-2">

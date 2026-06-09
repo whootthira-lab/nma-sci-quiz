@@ -348,6 +348,7 @@ export async function POST(req: NextRequest) {
     const userEmail = formData.get('user_email') as string;
     const userId = formData.get('user_id') as string;
     const modelType = formData.get('model_type') as string || 'fast';
+    const videoMode = formData.get('video_mode') as string || 'image_to_video';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
     const ttsProvider = formData.get('tts_provider') as string || 'google';
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
@@ -470,11 +471,20 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
-      if ((!imageFile && !characterImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
-        return NextResponse.json(
-          { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
-          { status: 400 }
-        );
+      if (videoMode === 'image_to_video') {
+        if ((!imageFile && !characterImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
+          return NextResponse.json(
+            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
+            { status: 400 }
+          );
+        }
+      } else {
+        if ((!isNoSpeech && !scriptText) || !userEmail) {
+          return NextResponse.json(
+            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์และข้อมูลผู้ใช้' },
+            { status: 400 }
+          );
+        }
       }
     }
 
@@ -499,60 +509,62 @@ export async function POST(req: NextRequest) {
     let imageUrl = '';
     let imagePath = '';
 
-    if (useLoraModel && loraModelUrl && loraTriggerWord) {
-      console.log('[STEP 1] Generating reference image using Character LoRA model...');
-      const fluxPrompt = `photo of ${loraTriggerWord}, ${combinedPrompt}`;
-      console.log(`[LoRA Flux Prompt]: ${fluxPrompt}`);
+    if (videoMode === 'image_to_video') {
+      if (useLoraModel && loraModelUrl && loraTriggerWord) {
+        console.log('[STEP 1] Generating reference image using Character LoRA model...');
+        const fluxPrompt = `photo of ${loraTriggerWord}, ${combinedPrompt}`;
+        console.log(`[LoRA Flux Prompt]: ${fluxPrompt}`);
 
-      let imageSize = 'landscape_16_9';
-      if (aspectRatio === '9:16') {
-        imageSize = 'portrait_16_9';
-      } else if (aspectRatio === '1:1') {
-        imageSize = 'square_hd';
+        let imageSize = 'landscape_16_9';
+        if (aspectRatio === '9:16') {
+          imageSize = 'portrait_16_9';
+        } else if (aspectRatio === '1:1') {
+          imageSize = 'square_hd';
+        }
+
+        const fluxResponse = await fetch('https://fal.run/fal-ai/flux-lora', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Key ${falKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: fluxPrompt,
+            loras: [
+              {
+                path: loraModelUrl,
+                scale: 1.0,
+              }
+            ],
+            image_size: imageSize,
+            num_inference_steps: 28,
+            enable_safety_checker: true,
+          }),
+        });
+
+        if (!fluxResponse.ok) {
+          const errText = await fluxResponse.text();
+          console.error('[LoRA Flux Generation Error]', errText);
+          throw new Error('เจเนอเรตภาพเริ่มต้นด้วยโมเดลตัวละคร (LoRA) ไม่สำเร็จ');
+        }
+
+        const fluxResult = await fluxResponse.json();
+        imageUrl = fluxResult.images?.[0]?.url;
+        console.log('[STEP 1] Generated image from LoRA model:', imageUrl);
+
+        if (!imageUrl) {
+          throw new Error('ไม่พบ URL ภาพผลลัพธ์ที่เทรนด้วย LoRA');
+        }
+      } else if (imageFile) {
+        console.log('[STEP 1] Uploading reference image to Supabase...');
+        const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
+        imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
+        imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
+        console.log('[STEP 1] Image uploaded:', imageUrl);
+      } else if (characterImageUrl) {
+        console.log('[STEP 1] Using character library image URL:', characterImageUrl);
+        imageUrl = characterImageUrl;
       }
-
-      const fluxResponse = await fetch('https://fal.run/fal-ai/flux-lora', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Key ${falKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: fluxPrompt,
-          loras: [
-            {
-              path: loraModelUrl,
-              scale: 1.0,
-            }
-          ],
-          image_size: imageSize,
-          num_inference_steps: 28,
-          enable_safety_checker: true,
-        }),
-      });
-
-      if (!fluxResponse.ok) {
-        const errText = await fluxResponse.text();
-        console.error('[LoRA Flux Generation Error]', errText);
-        throw new Error('เจเนอเรตภาพเริ่มต้นด้วยโมเดลตัวละคร (LoRA) ไม่สำเร็จ');
-      }
-
-      const fluxResult = await fluxResponse.json();
-      imageUrl = fluxResult.images?.[0]?.url;
-      console.log('[STEP 1] Generated image from LoRA model:', imageUrl);
-
-      if (!imageUrl) {
-        throw new Error('ไม่พบ URL ภาพผลลัพธ์ที่เทรนด้วย LoRA');
-      }
-    } else if (imageFile) {
-      console.log('[STEP 1] Uploading reference image to Supabase...');
-      const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
-      imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
-      imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
-      console.log('[STEP 1] Image uploaded:', imageUrl);
-    } else if (characterImageUrl) {
-      console.log('[STEP 1] Using character library image URL:', characterImageUrl);
-      imageUrl = characterImageUrl;
     }
 
     // 1.5. Upload reference video for Motion Control
@@ -569,7 +581,7 @@ export async function POST(req: NextRequest) {
     // 1.7. Upload end reference image if present (Kling 2.5 visual morphing)
     let endImageUrl = '';
     let endImagePath = '';
-    if (modelType === 'fast' && endImageFile) {
+    if (videoMode === 'image_to_video' && modelType === 'fast' && endImageFile) {
       console.log('[STEP 1.7] Uploading end reference image to Supabase...');
       const endImageBuffer = Buffer.from(await endImageFile.arrayBuffer());
       endImagePath = `references/${userEmail}/${timestamp}_end_ref.${endImageFile.type.split('/')[1] || 'png'}`;
@@ -622,9 +634,14 @@ export async function POST(req: NextRequest) {
       const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
       if (!sfKey) throw new Error('ไม่พบ SILICONFLOW_API_KEY ในระบบ สำหรับการใช้งาน SiliconFlow');
 
-      const sfModel = modelType === 'hunyuan' 
-        ? 'tencent/HunyuanVideo' 
-        : (modelType === 'ltx-video' ? 'Lightricks/LTX-Video' : 'Wan-AI/Wan2.1-I2V-14B-720P');
+      let sfModel = '';
+      if (modelType === 'hunyuan') {
+        sfModel = 'tencent/HunyuanVideo';
+      } else if (modelType === 'ltx-video') {
+        sfModel = 'Lightricks/LTX-Video';
+      } else {
+        sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.1-T2V-14B-720P' : 'Wan-AI/Wan2.1-I2V-14B-720P';
+      }
 
       const sfPayload: Record<string, any> = {
         model: sfModel,
@@ -632,7 +649,7 @@ export async function POST(req: NextRequest) {
         image_size: aspectRatio === '16:9' ? '1280x720' : (aspectRatio === '9:16' ? '720x1280' : '960x960'),
       };
 
-      if (modelType !== 'hunyuan') {
+      if (videoMode === 'image_to_video' && modelType !== 'hunyuan') {
         sfPayload.image = imageUrl;
       }
 
@@ -663,10 +680,13 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const modelEndpoint = isCinema
-        ? 'fal-ai/wan-i2v'
+        ? (videoMode === 'text_to_video' ? 'fal-ai/wan-t2v' : 'fal-ai/wan-i2v')
         : (isMotionControlModel 
             ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-            : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
+            : (isGrok 
+                ? (videoMode === 'text_to_video' ? 'xai/grok-imagine-video/v1.5/text-to-video' : 'xai/grok-imagine-video/v1.5/image-to-video')
+                : (videoMode === 'text_to_video' ? 'fal-ai/kling-video/v2.5-turbo/standard/text-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
+              )
           );
 
       // 4. Build Fal.ai request body
@@ -681,7 +701,6 @@ export async function POST(req: NextRequest) {
         }
 
         requestBody = {
-          image_url: imageUrl,
           audio_url: audioUrl,
           prompt: combinedPrompt,
           negative_prompt: negativePrompt,
@@ -693,6 +712,9 @@ export async function POST(req: NextRequest) {
           guide_scale: 5.0,
           shift: 3.0,
         };
+        if (videoMode === 'image_to_video') {
+          requestBody.image_url = imageUrl;
+        }
       } else if (isMotionControlModel) {
         requestBody = {
           image_url: imageUrl,
@@ -705,28 +727,32 @@ export async function POST(req: NextRequest) {
         }
       } else if (isGrok) {
         requestBody = {
-          image_url: imageUrl,
           prompt: combinedPrompt,
           aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
           duration: selectedDuration,
           enable_safety_checker: !safetyFilterDisabled,
           enable_safety_checks: !safetyFilterDisabled,
         };
+        if (videoMode === 'image_to_video') {
+          requestBody.image_url = imageUrl;
+        }
         if (characterNegativePrompt) {
           requestBody.negative_prompt = characterNegativePrompt;
         }
       } else {
         requestBody = {
-          image_url: imageUrl,
           prompt: combinedPrompt,
           aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
           duration: selectedDuration <= 5 ? 5 : 10,
         };
+        if (videoMode === 'image_to_video') {
+          requestBody.image_url = imageUrl;
+          if (modelType === 'fast' && endImageUrl) {
+            requestBody.tail_image_url = endImageUrl;
+          }
+        }
         if (characterNegativePrompt) {
           requestBody.negative_prompt = characterNegativePrompt;
-        }
-        if (modelType === 'fast' && endImageUrl) {
-          requestBody.tail_image_url = endImageUrl;
         }
       }
 
@@ -800,7 +826,7 @@ export async function POST(req: NextRequest) {
           status: 'processing',
           fal_request_id: requestId,
           metadata: {
-            mode: isMotionControl ? 'motion-control' : 'text-to-video',
+            mode: isMotionControl ? 'motion-control' : videoMode,
             script_text: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : scriptText),
             situation_prompt: situationPrompt || '',
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',

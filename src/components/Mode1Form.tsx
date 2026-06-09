@@ -62,6 +62,20 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [endSituationPrompt, setEndSituationPrompt] = useState('');
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [videoMode, setVideoMode] = useState<'image_to_video' | 'text_to_video'>('image_to_video');
+
+  const [modelType, setModelType] = useState('fast'); 
+  const isMotionControl = modelType === 'motion-control';
+  const isGrok = modelType === 'grok-video';
+
+  // If text-to-video mode is selected, make sure modelType is one that supports text-to-video
+  useEffect(() => {
+    if (videoMode === 'text_to_video') {
+      if (modelType === 'motion-control' || modelType === 'ltx-video' || modelType === 'grok-video') {
+        setModelType('fast');
+      }
+    }
+  }, [videoMode, modelType]);
 
   // New premium states
   const [isNoSpeech, setIsNoSpeech] = useState(false);
@@ -89,10 +103,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice'>('google');
 
-  // KRUTH Engine Model Selection
-  const [modelType, setModelType] = useState('fast'); 
-  const isMotionControl = modelType === 'motion-control';
-  const isGrok = modelType === 'grok-video';
+
 
   // Safety filter and legal liability modal states
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState<boolean>(false);
@@ -436,10 +447,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setProcessingStage('กำลังอัพโหลดข้อมูลเข้าสู่ KRUTH Engine...');
       setProcessingProgress(5);
       const formData = new FormData();
-      if (imageFile) {
-        formData.append('image', imageFile);
-      } else if (selectedCharacterId && imagePreview) {
-        formData.append('character_image_url', imagePreview);
+      if (videoMode === 'image_to_video') {
+        if (imageFile) {
+          formData.append('image', imageFile);
+        } else if (selectedCharacterId && imagePreview) {
+          formData.append('character_image_url', imagePreview);
+        }
       }
 
       if (modelType === 'motion-control') {
@@ -503,6 +516,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('user_email', user?.email || 'user@kruth.com');
       formData.append('user_id', user?.id || '');
       formData.append('model_type', modelType);
+      formData.append('video_mode', videoMode);
       formData.append('storage_provider', storageProvider);
       formData.append('duration', String(selectedDuration));
       formData.append('safety_filter_disabled', String(safetyFilterDisabled));
@@ -541,7 +555,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         return;
       }
     } else {
-      if (!imageFile && (!selectedCharacterId || !imagePreview)) {
+      if (videoMode === 'image_to_video' && !imageFile && (!selectedCharacterId || !imagePreview)) {
         setError('กรุณาอัปโหลดรูปภาพอ้างอิงเริ่มต้น หรือเลือกตัวละครจากคลัง');
         return;
       }
@@ -622,10 +636,41 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             </div>
           </div>
         )}
+
+        {/* Generation Mode Selector */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary font-thai">
+            🎬 รูปแบบการสร้างวิดีโอ (Generation Mode)
+          </label>
+          <div className="flex bg-gray-100 p-1.5 rounded-xl border border-gray-200">
+            <button
+              type="button"
+              onClick={() => setVideoMode('image_to_video')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold font-thai transition-all ${
+                videoMode === 'image_to_video'
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              🖼️ ภาพเคลื่อนไหว (Image to Video)
+            </button>
+            <button
+              type="button"
+              onClick={() => setVideoMode('text_to_video')}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold font-thai transition-all ${
+                videoMode === 'text_to_video'
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              ✍️ ข้อความเป็นวิดีโอ (Text to Video)
+            </button>
+          </div>
+        </div>
         
         {/* Admin Model Selector */}
         {isAdmin && (
-          <div className="space-y-3 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4">
+          <div className="space-y-3 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4 font-thai">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-[#D4AF37] font-semibold text-sm">
                 <Settings className="w-4 h-4" />
@@ -639,9 +684,13 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
                 <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
                 <option value="hunyuan">🌌 KRUTH Cosmic (Tencent HunyuanVideo)</option>
-                <option value="ltx-video">⚡ KRUTH Draft (LTX-Video Quick Draft)</option>
-                <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
-                <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
+                {videoMode === 'image_to_video' && (
+                  <>
+                    <option value="ltx-video">⚡ KRUTH Draft (LTX-Video Quick Draft)</option>
+                    <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
+                    <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
+                  </>
+                )}
               </select>
             </div>
             
@@ -787,7 +836,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               ))}
             </select>
 
-            {selectedCharacterId && (
+            {selectedCharacterId && videoMode === 'image_to_video' && (
               <select
                 value={selectedCharacterAngle}
                 onChange={(e) => setSelectedCharacterAngle(e.target.value as any)}
@@ -799,7 +848,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               </select>
             )}
 
-            {selectedCharacterId && characterList.find(c => c.id === selectedCharacterId)?.lora_status === 'completed' && (
+            {selectedCharacterId && videoMode === 'image_to_video' && characterList.find(c => c.id === selectedCharacterId)?.lora_status === 'completed' && (
               <div className="flex items-center gap-2.5 p-3.5 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-xl animate-fade-in">
                 <input
                   type="checkbox"
@@ -829,60 +878,62 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         </div>
 
         {/* Image Upload */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            รูปภาพอ้างอิง (Reference Image)
-          </label>
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className={`relative group cursor-pointer rounded-xl border-2 border-dashed transition-all duration-200 overflow-hidden ${
-              imagePreview
-                ? 'border-accent-primary/30'
-                : 'border-gray-300 hover:border-[#D4AF37]'
-            }`}
-          >
-            {imagePreview ? (
-              <div className="relative">
-                <img src={imagePreview} alt="Preview" className={getPreviewAspectClass()} />
-                {useLoraModel && (
-                  <div className="absolute top-2 left-2 px-2.5 py-1 bg-[#D4AF37] text-white text-[10px] font-bold rounded-lg flex items-center gap-1 shadow font-thai animate-pulse">
-                    <Sparkles className="w-3 h-3" />
-                    ใช้โมเดล AI ล็อคใบหน้า (LoRA)
+        {videoMode === 'image_to_video' && (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              รูปภาพอ้างอิง (Reference Image)
+            </label>
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className={`relative group cursor-pointer rounded-xl border-2 border-dashed transition-all duration-200 overflow-hidden ${
+                imagePreview
+                  ? 'border-accent-primary/30'
+                  : 'border-gray-300 hover:border-[#D4AF37]'
+              }`}
+            >
+              {imagePreview ? (
+                <div className="relative">
+                  <img src={imagePreview} alt="Preview" className={getPreviewAspectClass()} />
+                  {useLoraModel && (
+                    <div className="absolute top-2 left-2 px-2.5 py-1 bg-[#D4AF37] text-white text-[10px] font-bold rounded-lg flex items-center gap-1 shadow font-thai animate-pulse">
+                      <Sparkles className="w-3 h-3" />
+                      ใช้โมเดล AI ล็อคใบหน้า (LoRA)
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <p className="text-white text-sm font-medium font-thai">คลิกเพื่อเปลี่ยนรูป</p>
                   </div>
-                )}
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <p className="text-white text-sm font-medium font-thai">คลิกเพื่อเปลี่ยนรูป</p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setImageFile(null);
+                      setImagePreview(null);
+                    }}
+                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-black/70 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setImageFile(null);
-                    setImagePreview(null);
-                  }}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-black/70 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 px-4">
-                <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-[#D4AF37]/10 transition-colors">
-                  <ImagePlus className="w-7 h-7 text-gray-500 group-hover:text-[#D4AF37]" />
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 px-4">
+                  <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-[#D4AF37]/10 transition-colors">
+                    <ImagePlus className="w-7 h-7 text-gray-500 group-hover:text-[#D4AF37]" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-700 mb-1 font-thai">
+                    คลิกเพื่ออัพโหลดรูปภาพ
+                  </p>
+                  <p className="text-xs text-gray-400 font-thai">
+                    รองรับ JPG, PNG, WebP (สูงสุด 10MB)
+                  </p>
                 </div>
-                <p className="text-sm font-medium text-gray-700 mb-1 font-thai">
-                  คลิกเพื่ออัพโหลดรูปภาพ
-                </p>
-                <p className="text-xs text-gray-400 font-thai">
-                  รองรับ JPG, PNG, WebP (สูงสุด 10MB)
-                </p>
-              </div>
-            )}
+              )}
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-        </div>
+        )}
 
         {/* End Frame Settings (Kling 2.5 only) */}
-        {modelType === 'fast' && (
+        {videoMode === 'image_to_video' && modelType === 'fast' && (
           <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
             <h3 className="text-sm font-semibold text-gray-800 font-thai border-b border-gray-200 pb-2 flex items-center gap-2">
               🎬 ตั้งค่าเฟรมท้าย (End Frame Morphing Settings)
