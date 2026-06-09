@@ -315,10 +315,22 @@ export async function deleteCharacter(id: string) {
 
   if (dbError) throw dbError;
 
+  const parsePaths = (val: string | null): string[] => {
+    if (!val) return [];
+    if (val.startsWith('[') && val.endsWith(']')) {
+      try {
+        return JSON.parse(val);
+      } catch (e) {
+        return [val];
+      }
+    }
+    return [val];
+  };
+
   const pathsToDelete: string[] = [];
-  if (character.avatar_front_path) pathsToDelete.push(character.avatar_front_path);
-  if (character.avatar_45_path) pathsToDelete.push(character.avatar_45_path);
-  if (character.avatar_side_path) pathsToDelete.push(character.avatar_side_path);
+  pathsToDelete.push(...parsePaths(character.avatar_front_path));
+  pathsToDelete.push(...parsePaths(character.avatar_45_path));
+  pathsToDelete.push(...parsePaths(character.avatar_side_path));
   if (character.lora_dataset_path) pathsToDelete.push(character.lora_dataset_path);
 
   if (pathsToDelete.length > 0) {

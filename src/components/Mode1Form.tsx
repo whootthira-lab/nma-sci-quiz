@@ -201,10 +201,23 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setUseLoraModel(false);
     }
 
+    const parseFirstUrl = (val: string | undefined | null): string => {
+      if (!val) return '';
+      if (val.startsWith('[') && val.endsWith(']')) {
+        try {
+          const arr = JSON.parse(val);
+          return Array.isArray(arr) && arr.length > 0 ? arr[0] : '';
+        } catch (e) {
+          return val;
+        }
+      }
+      return val;
+    };
+
     let url = '';
-    if (selectedCharacterAngle === 'front') url = char.avatar_front_url || '';
-    else if (selectedCharacterAngle === '45') url = char.avatar_45_url || '';
-    else if (selectedCharacterAngle === 'side') url = char.avatar_side_url || '';
+    if (selectedCharacterAngle === 'front') url = parseFirstUrl(char.avatar_front_url);
+    else if (selectedCharacterAngle === '45') url = parseFirstUrl(char.avatar_45_url);
+    else if (selectedCharacterAngle === 'side') url = parseFirstUrl(char.avatar_side_url);
 
     if (url) {
       setImagePreview(url);

@@ -199,8 +199,8 @@ export async function POST(req: NextRequest) {
             });
           if (!uploadErr) {
             const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(path);
-            updatePayload.avatar_front_url = publicUrl;
-            updatePayload.avatar_front_path = path;
+            updatePayload.avatar_front_url = JSON.stringify([publicUrl]);
+            updatePayload.avatar_front_path = JSON.stringify([path]);
             console.log('[Auto-Populate] Front view populated:', publicUrl);
           }
         }
@@ -216,8 +216,8 @@ export async function POST(req: NextRequest) {
             });
           if (!uploadErr) {
             const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(path);
-            updatePayload.avatar_45_url = publicUrl;
-            updatePayload.avatar_45_path = path;
+            updatePayload.avatar_45_url = JSON.stringify([publicUrl]);
+            updatePayload.avatar_45_path = JSON.stringify([path]);
             console.log('[Auto-Populate] 45 degree view populated:', publicUrl);
           }
         }
@@ -233,8 +233,8 @@ export async function POST(req: NextRequest) {
             });
           if (!uploadErr) {
             const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(path);
-            updatePayload.avatar_side_url = publicUrl;
-            updatePayload.avatar_side_path = path;
+            updatePayload.avatar_side_url = JSON.stringify([publicUrl]);
+            updatePayload.avatar_side_path = JSON.stringify([path]);
             console.log('[Auto-Populate] Side view populated:', publicUrl);
           }
         }

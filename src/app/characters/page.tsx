@@ -46,18 +46,10 @@ export default function CharactersPage() {
   const [visualDesc, setVisualDesc] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   
-  const [frontFile, setFrontFile] = useState<File | null>(null);
-  const [frontPreview, setFrontPreview] = useState<string | null>(null);
-  const [angle45File, setAngle45File] = useState<File | null>(null);
-  const [angle45Preview, setAngle45Preview] = useState<string | null>(null);
-  const [sideFile, setSideFile] = useState<File | null>(null);
-  const [sidePreview, setSidePreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [bulkUploadedFiles, setBulkUploadedFiles] = useState<{ file: File; preview: string; mappedSlot: 'front' | '45' | 'side' | 'none' }[]>([]);
 
-  const frontInputRef = useRef<HTMLInputElement>(null);
-  const angle45InputRef = useRef<HTMLInputElement>(null);
-  const sideInputRef = useRef<HTMLInputElement>(null);
+  const bulkInputRef = useRef<HTMLInputElement>(null);
 
   // LoRA Training States
   const [activeLoraCharId, setActiveLoraCharId] = useState<string | null>(null);
@@ -122,134 +114,44 @@ export default function CharactersPage() {
     return () => clearInterval(interval);
   }, [characters]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'front' | '45' | 'side') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError('กรุณาเลือกเฉพาะไฟล์รูปภาพเท่านั้น');
+  const handleBulkInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const validImages = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (validImages.length === 0) {
+      setError('กรุณาเลือกไฟล์รูปภาพ (PNG, JPG, JPEG)');
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setError('ขนาดรูปภาพต้องไม่เกิน 8MB');
-      return;
-    }
-
-    const previewUrl = URL.createObjectURL(file);
-    if (type === 'front') {
-      setFrontFile(file);
-      setFrontPreview(previewUrl);
-    } else if (type === '45') {
-      setAngle45File(file);
-      setAngle45Preview(previewUrl);
-    } else {
-      setSideFile(file);
-      setSidePreview(previewUrl);
-    }
-    setError(null);
+    processImageFiles(validImages);
   };
 
   const assignSlot = (file: File, preview: string, slot: 'front' | '45' | 'side' | 'none') => {
-    if (slot === 'front') {
-      setFrontFile(file);
-      setFrontPreview(preview);
-    } else if (slot === '45') {
-      setAngle45File(file);
-      setAngle45Preview(preview);
-    } else if (slot === 'side') {
-      setSideFile(file);
-      setSidePreview(preview);
-    } else {
-      setBulkUploadedFiles(prev => {
-        const item = prev.find(i => i.file === file);
-        if (item) {
-          if (item.mappedSlot === 'front') {
-            setFrontFile(null);
-            setFrontPreview(null);
-          } else if (item.mappedSlot === '45') {
-            setAngle45File(null);
-            setAngle45Preview(null);
-          } else if (item.mappedSlot === 'side') {
-            setSideFile(null);
-            setSidePreview(null);
-          }
-        }
-        return prev;
-      });
-    }
-
     setBulkUploadedFiles(prev => prev.map(item => {
       if (item.file === file) {
         return { ...item, mappedSlot: slot };
-      }
-      if (slot !== 'none' && item.mappedSlot === slot) {
-        return { ...item, mappedSlot: 'none' };
       }
       return item;
     }));
   };
 
   const processImageFiles = (files: File[]) => {
-    let matchedFront: File | null = null;
-    let matched45: File | null = null;
-    let matchedSide: File | null = null;
-    const unmatched: File[] = [];
-
-    for (const file of files) {
-      const lowerName = file.name.toLowerCase();
-      if (lowerName.includes('front') || lowerName.includes('ตรง') || lowerName.includes('หน้า') || lowerName.includes('1.')) {
-        matchedFront = file;
-      } else if (lowerName.includes('45') || lowerName.includes('angle') || lowerName.includes('2.')) {
-        matched45 = file;
-      } else if (lowerName.includes('side') || lowerName.includes('ข้าง') || lowerName.includes('3.')) {
-        matchedSide = file;
-      } else {
-        unmatched.push(file);
-      }
-    }
-
-    // Fallback for unmatched files to fill remaining slots
-    for (const file of unmatched) {
-      if (!matchedFront) {
-        matchedFront = file;
-      } else if (!matched45) {
-        matched45 = file;
-      } else if (!matchedSide) {
-        matchedSide = file;
-      }
-    }
-
-    const items = files.map(file => {
+    const newItems = files.map(file => {
       const preview = URL.createObjectURL(file);
       let mappedSlot: 'front' | '45' | 'side' | 'none' = 'none';
-      if (file === matchedFront) mappedSlot = 'front';
-      else if (file === matched45) mappedSlot = '45';
-      else if (file === matchedSide) mappedSlot = 'side';
+      const lowerName = file.name.toLowerCase();
+      
+      if (lowerName.includes('front') || lowerName.includes('ตรง') || lowerName.includes('หน้า') || lowerName.includes('1.')) {
+        mappedSlot = 'front';
+      } else if (lowerName.includes('45') || lowerName.includes('angle') || lowerName.includes('2.')) {
+        mappedSlot = '45';
+      } else if (lowerName.includes('side') || lowerName.includes('ข้าง') || lowerName.includes('3.')) {
+        mappedSlot = 'side';
+      }
       return { file, preview, mappedSlot };
     });
-    setBulkUploadedFiles(items);
 
-    let successCount = 0;
-    if (matchedFront) {
-      setFrontFile(matchedFront);
-      setFrontPreview(URL.createObjectURL(matchedFront));
-      successCount++;
-    }
-    if (matched45) {
-      setAngle45File(matched45);
-      setAngle45Preview(URL.createObjectURL(matched45));
-      successCount++;
-    }
-    if (matchedSide) {
-      setSideFile(matchedSide);
-      setSidePreview(URL.createObjectURL(matchedSide));
-      successCount++;
-    }
-
-    if (successCount > 0) {
-      setError(null);
-    } else {
-      setError('ไม่พบไฟล์รูปภาพที่เหมาะสม');
-    }
+    setBulkUploadedFiles(prev => [...prev, ...newItems]);
+    setError(null);
   };
 
   const handleBulkDrop = async (e: React.DragEvent<HTMLDivElement>) => {
@@ -353,6 +255,12 @@ export default function CharactersPage() {
     try {
       const timestamp = Date.now();
       const email = user?.email || 'user';
+      
+      // Get all mapped files
+      const frontFiles = bulkUploadedFiles.filter(item => item.mappedSlot === 'front');
+      const angle45Files = bulkUploadedFiles.filter(item => item.mappedSlot === '45');
+      const sideFiles = bulkUploadedFiles.filter(item => item.mappedSlot === 'side');
+
       let avatar_front_url = '';
       let avatar_front_path = '';
       let avatar_45_url = '';
@@ -360,22 +268,49 @@ export default function CharactersPage() {
       let avatar_side_url = '';
       let avatar_side_path = '';
 
-      // Upload Front View if present
-      if (frontFile) {
-        avatar_front_path = `characters/${email}/${timestamp}_front.${frontFile.type.split('/')[1] || 'png'}`;
-        avatar_front_url = await uploadToStorage(frontFile, avatar_front_path);
+      // Upload Front Views
+      if (frontFiles.length > 0) {
+        const urls: string[] = [];
+        const paths: string[] = [];
+        for (let i = 0; i < frontFiles.length; i++) {
+          const item = frontFiles[i];
+          const path = `characters/${email}/${timestamp}_front_${i}.${item.file.type.split('/')[1] || 'png'}`;
+          const url = await uploadToStorage(item.file, path);
+          urls.push(url);
+          paths.push(path);
+        }
+        avatar_front_url = JSON.stringify(urls);
+        avatar_front_path = JSON.stringify(paths);
       }
 
-      // Upload 45-degree View if present
-      if (angle45File) {
-        avatar_45_path = `characters/${email}/${timestamp}_45.${angle45File.type.split('/')[1] || 'png'}`;
-        avatar_45_url = await uploadToStorage(angle45File, avatar_45_path);
+      // Upload 45-degree Views
+      if (angle45Files.length > 0) {
+        const urls: string[] = [];
+        const paths: string[] = [];
+        for (let i = 0; i < angle45Files.length; i++) {
+          const item = angle45Files[i];
+          const path = `characters/${email}/${timestamp}_45_${i}.${item.file.type.split('/')[1] || 'png'}`;
+          const url = await uploadToStorage(item.file, path);
+          urls.push(url);
+          paths.push(path);
+        }
+        avatar_45_url = JSON.stringify(urls);
+        avatar_45_path = JSON.stringify(paths);
       }
 
-      // Upload Side View if present
-      if (sideFile) {
-        avatar_side_path = `characters/${email}/${timestamp}_side.${sideFile.type.split('/')[1] || 'png'}`;
-        avatar_side_url = await uploadToStorage(sideFile, avatar_side_path);
+      // Upload Side Views
+      if (sideFiles.length > 0) {
+        const urls: string[] = [];
+        const paths: string[] = [];
+        for (let i = 0; i < sideFiles.length; i++) {
+          const item = sideFiles[i];
+          const path = `characters/${email}/${timestamp}_side_${i}.${item.file.type.split('/')[1] || 'png'}`;
+          const url = await uploadToStorage(item.file, path);
+          urls.push(url);
+          paths.push(path);
+        }
+        avatar_side_url = JSON.stringify(urls);
+        avatar_side_path = JSON.stringify(paths);
       }
 
       await createCharacter({
@@ -397,12 +332,6 @@ export default function CharactersPage() {
       setCode('');
       setVisualDesc('');
       setNegativePrompt('');
-      setFrontFile(null);
-      setFrontPreview(null);
-      setAngle45File(null);
-      setAngle45Preview(null);
-      setSideFile(null);
-      setSidePreview(null);
       setBulkUploadedFiles([]);
       setShowAddForm(false);
       await fetchCharactersList();
@@ -614,7 +543,7 @@ export default function CharactersPage() {
                 รูปถ่ายตัวละครอ้างอิงรายมุม (Reference Images)
               </label>
 
-              {/* Bulk Drop-Zone */}
+              {/* Bulk Drop-Zone & File Selector */}
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -622,7 +551,8 @@ export default function CharactersPage() {
                 }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleBulkDrop}
-                className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                onClick={() => bulkInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
                   isDragging
                     ? 'border-[#D4AF37] bg-[#D4AF37]/5 shadow-[0_0_15px_rgba(212,175,55,0.15)]'
                     : 'border-white/10 hover:border-[#D4AF37] bg-surface-3'
@@ -634,20 +564,28 @@ export default function CharactersPage() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold font-thai text-text-primary">
-                      ลากและวางไฟล์ภาพหลายรูป หรือไฟล์ .zip ที่นี่
+                      คลิก หรือ ลากวางไฟล์รูปภาพ (หลายรูป) หรือไฟล์ ZIP ที่นี่
                     </p>
                     <p className="text-xs font-thai text-text-muted mt-1">
-                      ระบบจะวิเคราะห์คีย์เวิร์ดชื่อไฟล์ (เช่น front, 45, side) เพื่อจัดเรียงลงช่องมุมอ้างอิงโดยอัตโนมัติ
+                      ระบบจะวิเคราะห์คีย์เวิร์ดชื่อไฟล์ (เช่น front, 45, side) เพื่อจัดเรียงมุมอัตโนมัติ และรองรับการแนบหลายภาพในแต่ละมุม
                     </p>
                   </div>
                 </div>
               </div>
+              <input 
+                ref={bulkInputRef} 
+                type="file" 
+                multiple 
+                accept="image/*,.zip" 
+                className="hidden" 
+                onChange={handleBulkInputChange} 
+              />
 
               {/* Preview Gallery of Bulk Uploaded Files */}
               {bulkUploadedFiles.length > 0 && (
                 <div className="space-y-2 p-4 bg-surface-2 rounded-xl border border-white/5 animate-fade-in font-thai">
-                  <span className="text-xs font-bold text-text-secondary">
-                    🖼️ ภาพที่อัปโหลด/สกัดจาก ZIP ทั้งหมด ({bulkUploadedFiles.length} รูป):
+                  <span className="text-xs font-bold text-text-secondary block">
+                    🖼️ ภาพอ้างอิงตัวละครที่แนบทั้งหมด ({bulkUploadedFiles.length} รูป):
                   </span>
                   <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
                     {bulkUploadedFiles.map((item, idx) => (
@@ -663,119 +601,33 @@ export default function CharactersPage() {
                           className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[10px] rounded px-1 py-0.5 outline-none cursor-pointer text-center font-semibold"
                         >
                           <option value="none">⚪ ไม่ได้ใช้</option>
-                          <option value="front">👤 หน้าตรง</option>
-                          <option value="45">📐 มุม 45°</option>
-                          <option value="side">👥 มุมข้าง</option>
+                          <option value="front">👤 หน้าตรง (Front)</option>
+                          <option value="45">📐 มุม 45° (45° View)</option>
+                          <option value="side">👥 มุมข้าง (Side)</option>
                         </select>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setBulkUploadedFiles(prev => {
+                              const item = prev[idx];
+                              if (item && item.preview) {
+                                URL.revokeObjectURL(item.preview);
+                              }
+                              return prev.filter((_, i) => i !== idx);
+                            });
+                          }}
+                          className="absolute -top-1.5 -right-1.5 p-1 bg-accent-danger text-white rounded-full transition-all shadow-md opacity-0 group-hover:opacity-100"
+                          title="ลบรูปภาพ"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Front view */}
-                <div className="space-y-2">
-                  <span className="text-xs text-text-muted font-thai">👤 1. รูปหน้าตรง (Front View)</span>
-                  <div
-                    onClick={() => frontInputRef.current?.click()}
-                    className={`relative border-2 border-dashed rounded-xl p-4 cursor-pointer text-center transition-all ${
-                      frontPreview ? 'border-accent-primary/40 bg-surface-3' : 'border-white/10 hover:border-[#D4AF37] bg-surface-3'
-                    }`}
-                  >
-                    {frontPreview ? (
-                      <div className="relative group">
-                        <img src={frontPreview} alt="Front View" className="h-32 mx-auto object-cover rounded-lg" />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setFrontFile(null);
-                            setFrontPreview(null);
-                          }}
-                          className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="py-6">
-                        <Upload className="w-6 h-6 text-text-muted mx-auto mb-1.5" />
-                        <span className="text-xs font-thai text-text-secondary">อัปโหลดภาพหน้าตรง</span>
-                      </div>
-                    )}
-                  </div>
-                  <input ref={frontInputRef} type="file" accept="image/*" className="hidden" onChange={e => handleFileChange(e, 'front')} />
-                </div>
-
-                {/* 45 degree view */}
-                <div className="space-y-2">
-                  <span className="text-xs text-text-muted font-thai">📐 2. รูปมุม 45 องศา (45° View)</span>
-                  <div
-                    onClick={() => angle45InputRef.current?.click()}
-                    className={`relative border-2 border-dashed rounded-xl p-4 cursor-pointer text-center transition-all ${
-                      angle45Preview ? 'border-accent-primary/40 bg-surface-3' : 'border-white/10 hover:border-[#D4AF37] bg-surface-3'
-                    }`}
-                  >
-                    {angle45Preview ? (
-                      <div className="relative group">
-                        <img src={angle45Preview} alt="45 Degree View" className="h-32 mx-auto object-cover rounded-lg" />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAngle45File(null);
-                            setAngle45Preview(null);
-                          }}
-                          className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="py-6">
-                        <Upload className="w-6 h-6 text-text-muted mx-auto mb-1.5" />
-                        <span className="text-xs font-thai text-text-secondary">อัปโหลดภาพมุม 45 องศา</span>
-                      </div>
-                    )}
-                  </div>
-                  <input ref={angle45InputRef} type="file" accept="image/*" className="hidden" onChange={e => handleFileChange(e, '45')} />
-                </div>
-
-                {/* Side view */}
-                <div className="space-y-2">
-                  <span className="text-xs text-text-muted font-thai">👥 3. รูปมุมข้าง (Side View)</span>
-                  <div
-                    onClick={() => sideInputRef.current?.click()}
-                    className={`relative border-2 border-dashed rounded-xl p-4 cursor-pointer text-center transition-all ${
-                      sidePreview ? 'border-accent-primary/40 bg-surface-3' : 'border-white/10 hover:border-[#D4AF37] bg-surface-3'
-                    }`}
-                  >
-                    {sidePreview ? (
-                      <div className="relative group">
-                        <img src={sidePreview} alt="Side View" className="h-32 mx-auto object-cover rounded-lg" />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSideFile(null);
-                            setSidePreview(null);
-                          }}
-                          className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="py-6">
-                        <Upload className="w-6 h-6 text-text-muted mx-auto mb-1.5" />
-                        <span className="text-xs font-thai text-text-secondary">อัปโหลดภาพมุมข้าง</span>
-                      </div>
-                    )}
-                  </div>
-                  <input ref={sideInputRef} type="file" accept="image/*" className="hidden" onChange={e => handleFileChange(e, 'side')} />
-                </div>
-              </div>
             </div>
 
             {/* Form Footer Actions */}
@@ -873,38 +725,92 @@ export default function CharactersPage() {
                   <span className="text-[11px] font-bold text-text-secondary uppercase tracking-wider font-thai block">รูปถ่ายที่อ้างอิงในคลัง (Uploaded Views):</span>
                   <div className="grid grid-cols-3 gap-2">
                     {/* Front view */}
-                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1 text-center flex flex-col justify-between min-h-[100px]">
-                      {char.avatar_front_url ? (
-                        <img src={char.avatar_front_url} alt="Front" className="h-16 w-full object-cover rounded-md" />
-                      ) : (
-                        <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
-                          <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
-                        </div>
-                      )}
+                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1.5 text-center flex flex-col justify-between min-h-[110px]">
+                      {(() => {
+                        let urls: string[] = [];
+                        if (char.avatar_front_url) {
+                          if (char.avatar_front_url.startsWith('[')) {
+                            try { urls = JSON.parse(char.avatar_front_url); } catch (e) { urls = [char.avatar_front_url]; }
+                          } else {
+                            urls = [char.avatar_front_url];
+                          }
+                        }
+                        if (urls.length > 0) {
+                          return (
+                            <div className="space-y-1">
+                              <img src={urls[0]} alt="Front" className="h-16 w-full object-cover rounded-md" />
+                              {urls.length > 1 && (
+                                <span className="text-[8px] bg-white/10 px-1 py-0.5 rounded text-text-primary block font-mono">+{urls.length - 1} รูปเพิ่มเติม</span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
+                            <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
+                          </div>
+                        );
+                      })()}
                       <span className="text-[9px] text-text-muted mt-1 font-thai block">หน้าตรง</span>
                     </div>
 
                     {/* 45 degree view */}
-                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1 text-center flex flex-col justify-between min-h-[100px]">
-                      {char.avatar_45_url ? (
-                        <img src={char.avatar_45_url} alt="45 Degree" className="h-16 w-full object-cover rounded-md" />
-                      ) : (
-                        <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
-                          <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
-                        </div>
-                      )}
+                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1.5 text-center flex flex-col justify-between min-h-[110px]">
+                      {(() => {
+                        let urls: string[] = [];
+                        if (char.avatar_45_url) {
+                          if (char.avatar_45_url.startsWith('[')) {
+                            try { urls = JSON.parse(char.avatar_45_url); } catch (e) { urls = [char.avatar_45_url]; }
+                          } else {
+                            urls = [char.avatar_45_url];
+                          }
+                        }
+                        if (urls.length > 0) {
+                          return (
+                            <div className="space-y-1">
+                              <img src={urls[0]} alt="45 Degree" className="h-16 w-full object-cover rounded-md" />
+                              {urls.length > 1 && (
+                                <span className="text-[8px] bg-white/10 px-1 py-0.5 rounded text-text-primary block font-mono">+{urls.length - 1} รูปเพิ่มเติม</span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
+                            <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
+                          </div>
+                        );
+                      })()}
                       <span className="text-[9px] text-text-muted mt-1 font-thai block">มุม 45°</span>
                     </div>
 
                     {/* Side view */}
-                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1 text-center flex flex-col justify-between min-h-[100px]">
-                      {char.avatar_side_url ? (
-                        <img src={char.avatar_side_url} alt="Side" className="h-16 w-full object-cover rounded-md" />
-                      ) : (
-                        <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
-                          <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
-                        </div>
-                      )}
+                    <div className="bg-surface-3 rounded-lg overflow-hidden border border-white/5 p-1.5 text-center flex flex-col justify-between min-h-[110px]">
+                      {(() => {
+                        let urls: string[] = [];
+                        if (char.avatar_side_url) {
+                          if (char.avatar_side_url.startsWith('[')) {
+                            try { urls = JSON.parse(char.avatar_side_url); } catch (e) { urls = [char.avatar_side_url]; }
+                          } else {
+                            urls = [char.avatar_side_url];
+                          }
+                        }
+                        if (urls.length > 0) {
+                          return (
+                            <div className="space-y-1">
+                              <img src={urls[0]} alt="Side" className="h-16 w-full object-cover rounded-md" />
+                              {urls.length > 1 && (
+                                <span className="text-[8px] bg-white/10 px-1 py-0.5 rounded text-text-primary block font-mono">+{urls.length - 1} รูปเพิ่มเติม</span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="h-16 w-full bg-surface-2 rounded-md flex items-center justify-center">
+                            <span className="text-[10px] text-text-muted font-thai">ไม่มีรูป</span>
+                          </div>
+                        );
+                      })()}
                       <span className="text-[9px] text-text-muted mt-1 font-thai block">มุมข้าง</span>
                     </div>
                   </div>
