@@ -53,6 +53,7 @@ export default function CharactersPage() {
   const [sideFile, setSideFile] = useState<File | null>(null);
   const [sidePreview, setSidePreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [bulkUploadedFiles, setBulkUploadedFiles] = useState<{ file: File; preview: string; mappedSlot: 'front' | '45' | 'side' | 'none' }[]>([]);
 
   const frontInputRef = useRef<HTMLInputElement>(null);
   const angle45InputRef = useRef<HTMLInputElement>(null);
@@ -147,6 +148,46 @@ export default function CharactersPage() {
     setError(null);
   };
 
+  const assignSlot = (file: File, preview: string, slot: 'front' | '45' | 'side' | 'none') => {
+    if (slot === 'front') {
+      setFrontFile(file);
+      setFrontPreview(preview);
+    } else if (slot === '45') {
+      setAngle45File(file);
+      setAngle45Preview(preview);
+    } else if (slot === 'side') {
+      setSideFile(file);
+      setSidePreview(preview);
+    } else {
+      setBulkUploadedFiles(prev => {
+        const item = prev.find(i => i.file === file);
+        if (item) {
+          if (item.mappedSlot === 'front') {
+            setFrontFile(null);
+            setFrontPreview(null);
+          } else if (item.mappedSlot === '45') {
+            setAngle45File(null);
+            setAngle45Preview(null);
+          } else if (item.mappedSlot === 'side') {
+            setSideFile(null);
+            setSidePreview(null);
+          }
+        }
+        return prev;
+      });
+    }
+
+    setBulkUploadedFiles(prev => prev.map(item => {
+      if (item.file === file) {
+        return { ...item, mappedSlot: slot };
+      }
+      if (slot !== 'none' && item.mappedSlot === slot) {
+        return { ...item, mappedSlot: 'none' };
+      }
+      return item;
+    }));
+  };
+
   const processImageFiles = (files: File[]) => {
     let matchedFront: File | null = null;
     let matched45: File | null = null;
@@ -176,6 +217,16 @@ export default function CharactersPage() {
         matchedSide = file;
       }
     }
+
+    const items = files.map(file => {
+      const preview = URL.createObjectURL(file);
+      let mappedSlot: 'front' | '45' | 'side' | 'none' = 'none';
+      if (file === matchedFront) mappedSlot = 'front';
+      else if (file === matched45) mappedSlot = '45';
+      else if (file === matchedSide) mappedSlot = 'side';
+      return { file, preview, mappedSlot };
+    });
+    setBulkUploadedFiles(items);
 
     let successCount = 0;
     if (matchedFront) {
@@ -342,6 +393,7 @@ export default function CharactersPage() {
       setAngle45Preview(null);
       setSideFile(null);
       setSidePreview(null);
+      setBulkUploadedFiles([]);
       setShowAddForm(false);
       await fetchCharactersList();
     } catch (err: any) {
@@ -571,6 +623,36 @@ export default function CharactersPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Preview Gallery of Bulk Uploaded Files */}
+              {bulkUploadedFiles.length > 0 && (
+                <div className="space-y-2 p-4 bg-surface-2 rounded-xl border border-white/5 animate-fade-in font-thai">
+                  <span className="text-xs font-bold text-text-secondary">
+                    🖼️ ภาพที่อัปโหลด/สกัดจาก ZIP ทั้งหมด ({bulkUploadedFiles.length} รูป):
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                    {bulkUploadedFiles.map((item, idx) => (
+                      <div key={idx} className="bg-surface-3 p-2.5 rounded-xl border border-white/5 flex flex-col items-center gap-1.5 relative group">
+                        <img src={item.preview} alt="" className="w-14 h-14 object-cover rounded-lg" />
+                        <span className="text-[10px] text-text-muted truncate max-w-[80px]" title={item.file.name}>
+                          {item.file.name}
+                        </span>
+                        
+                        <select
+                          value={item.mappedSlot}
+                          onChange={(e) => assignSlot(item.file, item.preview, e.target.value as any)}
+                          className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[10px] rounded px-1 py-0.5 outline-none cursor-pointer text-center font-semibold"
+                        >
+                          <option value="none">⚪ ไม่ได้ใช้</option>
+                          <option value="front">👤 หน้าตรง</option>
+                          <option value="45">📐 มุม 45°</option>
+                          <option value="side">👥 มุมข้าง</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Front view */}
