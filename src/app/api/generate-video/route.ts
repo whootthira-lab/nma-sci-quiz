@@ -654,11 +654,14 @@ export async function POST(req: NextRequest) {
 
       let sfModel = '';
       if (modelType === 'hunyuan') {
-        sfModel = 'tencent/HunyuanVideo';
+        // SiliconFlow has retired tencent/HunyuanVideo. Route to active Wan 2.2.
+        sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.2-T2V-A14B' : 'Wan-AI/Wan2.2-I2V-A14B';
       } else if (modelType === 'ltx-video') {
-        sfModel = 'Lightricks/LTX-Video';
+        // SiliconFlow has retired Lightricks/LTX-Video. Route to active Wan 2.2.
+        sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.2-T2V-A14B' : 'Wan-AI/Wan2.2-I2V-A14B';
       } else {
-        sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.1-T2V-14B-720P' : 'Wan-AI/Wan2.1-I2V-14B-720P';
+        // Route standard Cinema mode to active Wan 2.2.
+        sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.2-T2V-A14B' : 'Wan-AI/Wan2.2-I2V-A14B';
       }
 
       const sfPayload: Record<string, any> = {
@@ -667,7 +670,7 @@ export async function POST(req: NextRequest) {
         image_size: aspectRatio === '16:9' ? '1280x720' : (aspectRatio === '9:16' ? '720x1280' : '960x960'),
       };
 
-      if (videoMode === 'image_to_video' && modelType !== 'hunyuan') {
+      if (videoMode === 'image_to_video') {
         sfPayload.image = imageUrl;
       }
 
