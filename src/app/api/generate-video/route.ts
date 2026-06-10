@@ -703,7 +703,16 @@ export async function POST(req: NextRequest) {
       if (!submitResponse.ok) {
         const errText = await submitResponse.text();
         console.error(`[SiliconFlow Submit Error]`, errText);
-        throw new Error(`ส่งคำสั่งสร้างวิดีโอไปยัง SiliconFlow ไม่สำเร็จ: ${errText}`);
+        let customMessage = `ส่งคำสั่งสร้างวิดีโอไปยัง SiliconFlow ไม่สำเร็จ: ${errText}`;
+        try {
+          const errJson = JSON.parse(errText);
+          if (errJson.code === 60000 || errJson.code === 60002 || (errJson.message && errJson.message.toLowerCase().includes('unknown error'))) {
+            customMessage = `ส่งคำสั่งสร้างวิดีโอไปยัง SiliconFlow ไม่สำเร็จ: เกิดข้อผิดพลาดของระบบ (Unknown error) คาดว่าเกิดจากบัญชี SiliconFlow ของคุณยังไม่ได้ยืนยันตัวตนด้วยชื่อจริง (Real-name Verification / 实名认证) หรือประเภทบัญชี (category 0) ยังไม่ได้รับสิทธิ์สร้างวิดีโอ กรุณาเข้าระบบของ SiliconFlow เพื่อยืนยันตัวตน หรือเปลี่ยนไปใช้งาน Fal.ai ในหน้าแอดมิน`;
+          }
+        } catch (parseErr) {
+          // ignore parsing error, use default message
+        }
+        throw new Error(customMessage);
       }
 
       const submitResult = await submitResponse.json();
