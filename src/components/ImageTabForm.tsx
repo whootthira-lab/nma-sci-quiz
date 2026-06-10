@@ -59,9 +59,11 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   // Camera Orbit states
   const [cameraAngle, setCameraAngle] = useState('default');
   const [cameraZoom, setCameraZoom] = useState('default');
-  const joystickRef = useRef<HTMLDivElement>(null);
-  const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
-  const [isManipulatingJoystick, setIsManipulatingJoystick] = useState(false);
+  const joystickCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [yaw, setYaw] = useState(0); // -180 to 180 degrees
+  const [pitch, setPitch] = useState(0); // -80 to 80 degrees
+  const [isDraggingSphere, setIsDraggingSphere] = useState(false);
+  const sphereDragStart = useRef({ x: 0, y: 0, yaw: 0, pitch: 0 });
 
   // Generation flow states
   const [loading, setLoading] = useState(false);
@@ -310,89 +312,259 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   };
 
   // --- Orbit Camera Circular Control logic ---
-  const handleJoystickStart = () => {
-    setIsManipulatingJoystick(true);
+  const handleSphereMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    setIsDraggingSphere(true);
+    sphereDragStart.current = { x: e.clientX, y: e.clientY, yaw, pitch };
   };
 
-  const handleJoystickMove = (e: any) => {
-    if (!isManipulatingJoystick || !joystickRef.current) return;
-    const rect = joystickRef.current.getBoundingClientRect();
-    const radius = rect.width / 2;
-    const centerX = rect.left + radius;
-    const centerY = rect.top + radius;
-
-    let clientX, clientY;
-    if ('touches' in e || (e.touches && e.touches.length > 0)) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
+  const handleSphereTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length > 0) {
+      setIsDraggingSphere(true);
+      sphereDragStart.current = { 
+        x: e.touches[0].clientX, 
+        y: e.touches[0].clientY, 
+        yaw, 
+        pitch 
+      };
     }
-
-    const dx = clientX - centerX;
-    const dy = clientY - centerY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-
-    // Limit handle movement to the circle boundary
-    const limit = radius - 15;
-    let newX = dx;
-    let newY = dy;
-    if (distance > limit) {
-      newX = (dx / distance) * limit;
-      newY = (dy / distance) * limit;
-    }
-
-    setJoystickPos({ x: newX, y: newY });
-
-    // Map coordinates to camera angles
-    const angleX = newX / limit; // -1 to 1 (left to right)
-    const angleY = newY / limit; // -1 to 1 (up to down)
-
-    // Elevation & Azimuth Mapping
-    let angleLabel = 'default';
-    if (Math.abs(angleX) > 0.4 || Math.abs(angleY) > 0.4) {
-      if (Math.abs(angleX) > Math.abs(angleY)) {
-        angleLabel = angleX < 0 ? 'side profile view shot from the left side' : 'side profile view shot from the right side';
-      } else {
-        angleLabel = angleY < 0 ? 'high angle shot, looking down at the subject' : 'low angle shot, dramatic camera tilt looking up';
-      }
-    }
-    setCameraAngle(angleLabel);
-  };
-
-  const handleJoystickEnd = () => {
-    setIsManipulatingJoystick(false);
   };
 
   useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      if (isManipulatingJoystick) handleJoystickEnd();
-    };
     const handleGlobalMouseMove = (e: MouseEvent) => {
-      if (isManipulatingJoystick) handleJoystickMove(e);
-    };
-    const handleGlobalTouchEnd = () => {
-      if (isManipulatingJoystick) handleJoystickEnd();
-    };
-    const handleGlobalTouchMove = (e: TouchEvent) => {
-      if (isManipulatingJoystick) handleJoystickMove(e);
+      if (!isDraggingSphere) return;
+      const dx = e.clientX - sphereDragStart.current.x;
+      const dy = e.clientY - sphereDragStart.current.y;
+      
+      const sensitivity = 0.8; 
+      let newYaw = sphereDragStart.current.yaw - dx * sensitivity;
+      let newPitch = sphereDragStart.current.pitch + dy * sensitivity;
+
+      if (newYaw > 180) newYaw -= 360;
+      if (newYaw < -180) newYaw += 360;
+      newPitch = Math.max(-80, Math.min(80, newPitch));
+
+      setYaw(newYaw);
+      setPitch(newPitch);
     };
 
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    window.addEventListener('mousemove', handleGlobalMouseMove);
-    window.addEventListener('touchend', handleGlobalTouchEnd);
-    window.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
-    return () => {
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
-      window.removeEventListener('mousemove', handleGlobalMouseMove);
-      window.removeEventListener('touchend', handleGlobalTouchEnd);
-      window.removeEventListener('touchmove', handleGlobalTouchMove);
+    const handleGlobalTouchMove = (e: TouchEvent) => {
+      if (!isDraggingSphere || e.touches.length === 0) return;
+      const dx = e.touches[0].clientX - sphereDragStart.current.x;
+      const dy = e.touches[0].clientY - sphereDragStart.current.y;
+      
+      const sensitivity = 0.8;
+      let newYaw = sphereDragStart.current.yaw - dx * sensitivity;
+      let newPitch = sphereDragStart.current.pitch + dy * sensitivity;
+
+      if (newYaw > 180) newYaw -= 360;
+      if (newYaw < -180) newYaw += 360;
+      newPitch = Math.max(-80, Math.min(80, newPitch));
+
+      setYaw(newYaw);
+      setPitch(newPitch);
+      
+      if (e.cancelable) e.preventDefault();
     };
-  }, [isManipulatingJoystick]);
+
+    const handleGlobalMouseUp = () => {
+      setIsDraggingSphere(false);
+    };
+
+    if (isDraggingSphere) {
+      window.addEventListener('mousemove', handleGlobalMouseMove);
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+      window.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
+      window.addEventListener('touchend', handleGlobalMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('touchmove', handleGlobalTouchMove);
+      window.removeEventListener('touchend', handleGlobalMouseUp);
+    };
+  }, [isDraggingSphere, yaw, pitch]);
+
+  useEffect(() => {
+    let angleLabel = 'default';
+    const absYaw = Math.abs(yaw);
+    
+    let yawLabel = 'front view';
+    if (absYaw > 22.5 && absYaw <= 67.5) {
+      yawLabel = yaw > 0 ? 'three-quarter view from the right side' : 'three-quarter view from the left side';
+    } else if (absYaw > 67.5 && absYaw <= 112.5) {
+      yawLabel = yaw > 0 ? 'side profile view shot from the right side' : 'side profile view shot from the left side';
+    } else if (absYaw > 112.5 && absYaw <= 157.5) {
+      yawLabel = yaw > 0 ? 'three-quarter view from behind on the right' : 'three-quarter view from behind on the left';
+    } else if (absYaw > 157.5) {
+      yawLabel = 'back view, shot from behind the subject';
+    }
+
+    let pitchLabel = 'eye-level shot';
+    if (pitch > 15) {
+      pitchLabel = 'low angle shot, camera looking up at the subject';
+    } else if (pitch < -15) {
+      pitchLabel = 'high angle shot, camera looking down at the subject';
+    }
+
+    if (yaw !== 0 || pitch !== 0) {
+      angleLabel = `${yawLabel}, ${pitchLabel}`;
+    }
+    setCameraAngle(angleLabel);
+  }, [yaw, pitch]);
+
+  useEffect(() => {
+    const canvas = joystickCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = 60;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const radYaw = (-yaw * Math.PI) / 180;
+    const radPitch = (pitch * Math.PI) / 180;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = '#1A1A1D';
+    ctx.fill();
+
+    const gradient = ctx.createRadialGradient(
+      cx - radius / 3,
+      cy - radius / 3,
+      radius / 8,
+      cx,
+      cy,
+      radius
+    );
+    gradient.addColorStop(0, '#5A5A62');
+    gradient.addColorStop(0.3, '#2A2A2E');
+    gradient.addColorStop(0.8, '#131316');
+    gradient.addColorStop(1, '#08080A');
+    
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    const project = (lat: number, lon: number) => {
+      const x = Math.cos(lat) * Math.sin(lon);
+      const y = Math.sin(lat);
+      const z = Math.cos(lat) * Math.cos(lon);
+
+      const y1 = y * Math.cos(radPitch) - z * Math.sin(radPitch);
+      const z1 = y * Math.sin(radPitch) + z * Math.cos(radPitch);
+      const x1 = x;
+
+      const x2 = x1 * Math.cos(radYaw) + z1 * Math.sin(radYaw);
+      const z2 = -x1 * Math.sin(radYaw) + z1 * Math.cos(radYaw);
+      const y2 = y1;
+
+      return {
+        x: cx + x2 * radius,
+        y: cy - y2 * radius,
+        visible: z2 > 0
+      };
+    };
+
+    ctx.lineWidth = 1;
+    for (let lonDeg = -180; lonDeg < 180; lonDeg += 30) {
+      const lonRad = (lonDeg * Math.PI) / 180;
+      ctx.beginPath();
+      let first = true;
+      for (let latDeg = -90; latDeg <= 90; latDeg += 5) {
+        const latRad = (latDeg * Math.PI) / 180;
+        const pt = project(latRad, lonRad);
+        if (pt.visible) {
+          if (first) {
+            ctx.moveTo(pt.x, pt.y);
+            first = false;
+          } else {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        } else {
+          first = true;
+        }
+      }
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+    }
+
+    for (let latDeg = -60; latDeg <= 60; latDeg += 30) {
+      const latRad = (latDeg * Math.PI) / 180;
+      ctx.beginPath();
+      let first = true;
+      for (let lonDeg = -180; lonDeg <= 180; lonDeg += 5) {
+        const lonRad = (lonDeg * Math.PI) / 180;
+        const pt = project(latRad, lonRad);
+        if (pt.visible) {
+          if (first) {
+            ctx.moveTo(pt.x, pt.y);
+            first = false;
+          } else {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        } else {
+          first = true;
+        }
+      }
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    let firstEquator = true;
+    for (let lonDeg = -180; lonDeg <= 180; lonDeg += 5) {
+      const lonRad = (lonDeg * Math.PI) / 180;
+      const pt = project(0, lonRad);
+      if (pt.visible) {
+        if (firstEquator) {
+          ctx.moveTo(pt.x, pt.y);
+          firstEquator = false;
+        } else {
+          ctx.lineTo(pt.x, pt.y);
+        }
+      } else {
+        firstEquator = true;
+      }
+    }
+    ctx.strokeStyle = 'rgba(212, 175, 55, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const cameraPt = project(0, 0);
+    if (cameraPt.visible) {
+      ctx.beginPath();
+      ctx.arc(cameraPt.x, cameraPt.y, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = '#D4AF37';
+      ctx.shadowColor = '#D4AF37';
+      ctx.shadowBlur = 10;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.beginPath();
+      ctx.arc(cameraPt.x, cameraPt.y, 3, 0, 2 * Math.PI);
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }, [yaw, pitch]);
 
   const resetJoystick = () => {
-    setJoystickPos({ x: 0, y: 0 });
+    setYaw(0);
+    setPitch(0);
     setCameraAngle('default');
   };
 
@@ -744,27 +916,14 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               <label className="text-xs font-semibold text-text-secondary uppercase text-center w-full">
                 🔄 หมุนคันโยกปรับทิศทางมุมกล้อง (Camera Orbit)
               </label>
-              <div 
-                ref={joystickRef}
-                onMouseDown={handleJoystickStart}
-                onTouchStart={handleJoystickStart}
-                className="relative w-36 h-36 rounded-full bg-black border-2 border-white/10 flex items-center justify-center cursor-grab active:cursor-grabbing"
-              >
-                {/* Visual grid lines */}
-                <div className="absolute inset-0 border-t border-white/5 top-1/2"></div>
-                <div className="absolute inset-0 border-l border-white/5 left-1/2"></div>
-                
-                {/* Drag handle */}
-                <div
-                  style={{
-                    transform: `translate(${joystickPos.x}px, ${joystickPos.y}px)`,
-                    transition: isManipulatingJoystick ? 'none' : 'transform 0.2s ease-out'
-                  }}
-                  className="w-8 h-8 rounded-full bg-[#D4AF37] shadow-lg flex items-center justify-center text-black font-bold text-xs"
-                >
-                  <Camera className="w-4 h-4 text-black" />
-                </div>
-              </div>
+              <canvas
+                ref={joystickCanvasRef}
+                width={144}
+                height={144}
+                onMouseDown={handleSphereMouseDown}
+                onTouchStart={handleSphereTouchStart}
+                className="w-36 h-36 rounded-full bg-black border border-white/10 cursor-grab active:cursor-grabbing shadow-inner"
+              />
               <button
                 type="button"
                 onClick={resetJoystick}
@@ -779,6 +938,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 <span className="text-[10px] text-text-muted font-bold block mb-1">สถานะทิศทางมุมกล้องที่ตรวจจับได้:</span>
                 <span className="text-xs text-[#D4AF37] font-semibold block bg-black/40 p-2 rounded-lg border border-white/5">
                   {cameraAngle === 'default' ? '📸 หน้าตรงปกติ (Default)' : `📸 ${cameraAngle}`}
+                </span>
+                <span className="text-[9px] text-text-muted mt-1 block font-mono">
+                  Yaw (หมุนซ้าย-ขวา): {Math.round(yaw)}° | Pitch (ก้ม-เงย): {Math.round(pitch)}°
                 </span>
               </div>
 
@@ -854,7 +1016,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         {/* Right column: Previews / Interactive canvases */}
         <div className="lg:col-span-5 flex flex-col justify-start">
           {imageMode === 'text_to_image' ? (
-            <div className={`border border-white/10 rounded-2xl bg-black/30 overflow-hidden flex flex-col justify-center items-center p-6 border-dashed transition-all duration-300 ${getContainerAspectClass()}`}>
+            <div className={`border border-white/10 rounded-2xl bg-black/30 overflow-hidden flex flex-col justify-center items-center p-6 border-dashed transition-all duration-300 w-full self-center ${getContainerAspectClass()}`}>
               {generatedImageUrl ? (
                 <div className="relative w-full h-full flex items-center justify-center bg-black">
                   <img 
@@ -906,8 +1068,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 </div>
               ) : (
                 /* Interactive Canvas containers */
-                <div className="space-y-3">
-                  <div className={`relative border border-white/10 rounded-2xl bg-[#0F0F11] overflow-hidden flex items-center justify-center p-4 transition-all duration-300 ${getContainerAspectClass()}`}>
+                <div className="space-y-3 w-full self-center flex flex-col items-center">
+                  <div className={`relative border border-white/10 rounded-2xl bg-[#0F0F11] overflow-hidden flex items-center justify-center p-4 transition-all duration-300 w-full self-center ${getContainerAspectClass()}`}>
                     {/* Mode: Standard Image to Image */}
                     {imageMode === 'image_to_image' && (
                       <img 
@@ -1020,7 +1182,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
               {/* Generated Image output for image modes */}
               {generatedImageUrl && (
-                <div className={`relative border border-white/10 rounded-2xl bg-black overflow-hidden flex items-center justify-center p-4 transition-all duration-300 ${getContainerAspectClass()}`}>
+                <div className={`relative border border-white/10 rounded-2xl bg-black overflow-hidden flex items-center justify-center p-4 transition-all duration-300 w-full self-center ${getContainerAspectClass()}`}>
                   <img 
                     src={generatedImageUrl} 
                     alt="Generated output" 
