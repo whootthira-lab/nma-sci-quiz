@@ -48,7 +48,7 @@ async function generateSample(voice) {
   const outputPath = path.join(samplesDir, voice.name);
   console.log(`Generating sample for ${voice.id}...`);
 
-  const response = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
+  const response = await fetch('https://api.siliconflow.com/v1/audio/speech', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${sfKey}`,
