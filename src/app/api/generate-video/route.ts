@@ -501,7 +501,7 @@ export async function POST(req: NextRequest) {
 
     if (!isSuperAdmin && userCredits < requiredCredits) {
       return NextResponse.json(
-        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการสร้างวิดีโอนี้ (ต้องการ ${requiredCredits} เครดิต, คงเหลือ ${userCredits} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
+        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการสร้างวิดีโอนี้ (ต้องการ ${(requiredCredits / 10).toFixed(1).replace('.0', '')} เครดิต, คงเหลือ ${(userCredits / 10).toFixed(1).replace('.0', '')} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
         { status: 403 }
       );
     }

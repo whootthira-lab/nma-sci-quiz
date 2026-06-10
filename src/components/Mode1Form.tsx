@@ -675,7 +675,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
             <div className="bg-[#1A1A1A] px-4 py-2.5 rounded-xl border border-white/5 flex flex-col items-center justify-center w-full sm:w-auto shadow-inner text-center">
               <span className="text-[10px] text-text-muted font-medium">ยอดเครดิตสะสมคงเหลือ</span>
               <p className="text-base font-bold text-[#D4AF37] font-mono">
-                {whitelistData.generation_limit || 0} เครดิต
+                {((whitelistData.generation_limit || 0) / 10).toFixed(1).replace('.0', '')} เครดิต
               </p>
               <span className="text-[10px] text-accent-success">
                 (ใช้หักตามโมเดลและระยะเวลา)

@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
     if (!isSuperAdmin && userCredits < trainingCost) {
       return NextResponse.json(
-        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการฝึกสอนโมเดลตัวละครนี้ (ต้องการ ${trainingCost} เครดิต, คงเหลือ ${userCredits} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
+        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการฝึกสอนโมเดลตัวละครนี้ (ต้องการ ${(trainingCost / 10).toFixed(1).replace('.0', '')} เครดิต, คงเหลือ ${(userCredits / 10).toFixed(1).replace('.0', '')} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
         { status: 403 }
       );
     }

@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Count daily generations
-    const dailyLimit = isSuperAdmin ? 99999 : (whitelistUser?.generation_limit || 10);
+    const dailyLimit = isSuperAdmin ? 99999 : Math.floor((whitelistUser?.generation_limit || 100) / 10);
     if (finalUserId) {
       const localStartOfDay = new Date();
       localStartOfDay.setHours(0, 0, 0, 0);

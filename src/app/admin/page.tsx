@@ -274,7 +274,7 @@ export default function AdminPage() {
     setNameField(user.display_name || '');
     const dateStr = user.expires_at ? new Date(user.expires_at).toISOString().split('T')[0] : '';
     setExpiryField(dateStr);
-    setLimitField(user.generation_limit || 0);
+    setLimitField((user.generation_limit || 0) / 10);
     setActionError(null);
     setShowModal(true);
   };
@@ -291,7 +291,7 @@ export default function AdminPage() {
         email: emailField.trim().toLowerCase(),
         display_name: nameField.trim() || null,
         expires_at: expiryField ? new Date(expiryField).toISOString() : null,
-        generation_limit: limitField,
+        generation_limit: Math.round(limitField * 10),
       };
 
       const { error } = await supabase
@@ -767,7 +767,7 @@ export default function AdminPage() {
                   {whitelist.map((item) => {
                     const timeLeft = getTimeLeft(item.expires_at);
                     const isExpired = timeLeft === 'หมดอายุแล้ว (Expired)';
-                    const credits = item.generation_limit || 0;
+                    const credits = (item.generation_limit || 0) / 10;
                     
                     return (
                       <tr key={item.email} className="hover:bg-white/5 transition-colors">
@@ -786,7 +786,7 @@ export default function AdminPage() {
                           </span>
                         </td>
                         <td className="py-3.5 px-4 text-center font-mono text-text-primary font-bold">
-                          {credits} เครดิต
+                          {credits.toFixed(1).replace('.0', '')} เครดิต
                         </td>
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex justify-end gap-2">
