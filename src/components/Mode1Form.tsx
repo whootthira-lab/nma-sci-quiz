@@ -268,9 +268,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       else if (targetSecs <= 15) finalDuration = 15;
       else finalDuration = 25;
     } else if (modelType === 'grok-video') {
-      if (targetSecs <= 5) finalDuration = 5;
-      else if (targetSecs <= 10) finalDuration = 10;
-      else finalDuration = 15;
+      finalDuration = Math.max(1, Math.min(15, targetSecs));
     } else {
       if (targetSecs <= 5) finalDuration = 5;
       else finalDuration = 10;
@@ -281,7 +279,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
   const durationOptions = modelType === 'cinema'
     ? [5, 10, 15, 25]
-    : (modelType === 'grok-video' ? [5, 10, 15] : [5, 10]);
+    : (modelType === 'grok-video'
+        ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        : [5, 10]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1420,19 +1420,19 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 </span>
               </div>
             ) : (
-              <div className="flex gap-2 animate-fade-in">
+              <div className="flex flex-wrap gap-2 animate-fade-in">
                 {durationOptions.map((d) => (
                   <button
                     key={d}
                     type="button"
                     onClick={() => setSelectedDuration(d)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    className={`px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
                       selectedDuration === d
                         ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
                         : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
                     }`}
                   >
-                    ⏱️ {d} วินาที
+                    ⏱️ {d} วิ
                   </button>
                 ))}
               </div>

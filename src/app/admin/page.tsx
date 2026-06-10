@@ -18,6 +18,8 @@ import {
   ToggleRight,
   AlertTriangle,
   X,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-db';
 
@@ -28,6 +30,10 @@ export default function AdminPage() {
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
+  const [wanResolution, setWanResolution] = useState('720p');
+  const [klingResolution, setKlingResolution] = useState('720p');
+  const [grokResolution, setGrokResolution] = useState('720p');
+  const [klingAudioEnabled, setKlingAudioEnabled] = useState(false);
   const [stats, setStats] = useState({
     totalGenerations: 0,
     mode1Count: 0,
@@ -78,10 +84,19 @@ export default function AdminPage() {
         const mode2 = data.find((item: any) => item.key === 'mode2_enabled');
         const provider = data.find((item: any) => item.key === 'open_source_provider');
         const safetyFilter = data.find((item: any) => item.key === 'safety_filter_disabled');
+        const wanRes = data.find((item: any) => item.key === 'wan_resolution');
+        const klingRes = data.find((item: any) => item.key === 'kling_resolution');
+        const grokRes = data.find((item: any) => item.key === 'grok_resolution');
+        const klingAudio = data.find((item: any) => item.key === 'kling_audio_enabled');
+        
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
         setMode2Enabled(mode2 ? mode2.value === 'true' : true);
         setProviderSetting(provider ? provider.value : 'siliconflow');
         setSafetyFilterDisabled(safetyFilter ? safetyFilter.value === 'true' : false);
+        setWanResolution(wanRes ? wanRes.value : '720p');
+        setKlingResolution(klingRes ? klingRes.value : '720p');
+        setGrokResolution(grokRes ? grokRes.value : '720p');
+        setKlingAudioEnabled(klingAudio ? klingAudio.value === 'true' : false);
       }
     } catch (err) {
       console.error('Failed to load config:', err);
@@ -118,6 +133,74 @@ export default function AdminPage() {
       if (error) throw error;
     } catch (err) {
       console.error('Failed to save provider config:', err);
+    }
+  };
+
+  const saveWanResolution = async (value: string) => {
+    try {
+      setWanResolution(value);
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'wan_resolution',
+          value,
+          description: 'Resolution for Wan 2.2/2.5 on Fal.ai (480p or 720p)',
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save wan resolution:', err);
+    }
+  };
+
+  const saveKlingResolution = async (value: string) => {
+    try {
+      setKlingResolution(value);
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'kling_resolution',
+          value,
+          description: 'Resolution for Kling 2.6 Pro (720p Standard or 1080p Pro)',
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save kling resolution:', err);
+    }
+  };
+
+  const saveGrokResolution = async (value: string) => {
+    try {
+      setGrokResolution(value);
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'grok_resolution',
+          value,
+          description: 'Resolution for Grok Imagine Video (480p or 720p)',
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save grok resolution:', err);
+    }
+  };
+
+  const saveKlingAudioEnabled = async (value: boolean) => {
+    try {
+      setKlingAudioEnabled(value);
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'kling_audio_enabled',
+          value: String(value),
+          description: 'Toggle Sound Effects & Ambient Audio for Kling 2.6 Pro',
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save kling audio enabled:', err);
     }
   };
 
@@ -493,6 +576,154 @@ export default function AdminPage() {
               >
                 SiliconFlow
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Video Model Configurations */}
+        <div className="glow-card p-6 mb-8">
+          <h2 className="text-lg font-display font-semibold text-text-primary mb-5 font-thai">
+            การตั้งค่าความละเอียดและระบบเสียงของโมเดล (Video Model Settings)
+          </h2>
+          <div className="space-y-4">
+            {/* Wan Resolution Settings */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Film className="w-5 h-5 text-accent-primary" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ความละเอียดของโมเดล Wan (Cinema Mode)
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    เลือกความละเอียดของภาพ (480p ช่วยประหยัดค่าใช้จ่าย Fal.ai ลง 50%)
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 bg-[#1A1A1A] p-1 rounded-xl border border-white/5">
+                <button
+                  onClick={() => saveWanResolution('480p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    wanResolution === '480p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  480p (ประหยัด 50%)
+                </button>
+                <button
+                  onClick={() => saveWanResolution('720p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    wanResolution === '720p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  720p (ปกติ)
+                </button>
+              </div>
+            </div>
+
+            {/* Kling Resolution Settings */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Film className="w-5 h-5 text-accent-warm" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ความละเอียดของโมเดล Kling 2.6 Pro (Fast Mode)
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    สลับการรันโมเดลระหว่าง Standard (720p) และ Pro (1080p)
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 bg-[#1A1A1A] p-1 rounded-xl border border-white/5">
+                <button
+                  onClick={() => saveKlingResolution('720p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    klingResolution === '720p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  720p (Standard)
+                </button>
+                <button
+                  onClick={() => saveKlingResolution('1080p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    klingResolution === '1080p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  1080p (Pro)
+                </button>
+              </div>
+            </div>
+
+            {/* Kling Ambient Audio Toggle */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                {klingAudioEnabled ? (
+                  <Volume2 className="w-5 h-5 text-accent-success" />
+                ) : (
+                  <VolumeX className="w-5 h-5 text-text-muted" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ระบบเสียงแวดล้อมและเอฟเฟกต์ Kling 2.6 Pro
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    เปิดสร้างเสียงลม/เอฟเฟกต์ตาม Prompt (เมื่อเปิดจะมีราคาเป็น 2 เท่า หรือ $0.14/วินาที)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => saveKlingAudioEnabled(!klingAudioEnabled)}
+                className="text-2xl"
+              >
+                {klingAudioEnabled ? (
+                  <ToggleRight className="w-10 h-10 text-accent-success" />
+                ) : (
+                  <ToggleLeft className="w-10 h-10 text-text-muted" />
+                )}
+              </button>
+            </div>
+
+            {/* Grok Resolution Settings */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Film className="w-5 h-5 text-accent-success" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ความละเอียดของโมเดล Grok Imagine Video
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    เลือกคุณภาพของผลลัพธ์วิดีโอ Grok 1.5
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 bg-[#1A1A1A] p-1 rounded-xl border border-white/5">
+                <button
+                  onClick={() => saveGrokResolution('480p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    grokResolution === '480p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  480p (ประหยัด)
+                </button>
+                <button
+                  onClick={() => saveGrokResolution('720p')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                    grokResolution === '720p'
+                      ? 'bg-[#D4AF37] text-black shadow-md'
+                      : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  720p (ปกติ)
+                </button>
+              </div>
             </div>
           </div>
         </div>
