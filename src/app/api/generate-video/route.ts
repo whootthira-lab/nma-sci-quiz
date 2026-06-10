@@ -496,7 +496,7 @@ export async function POST(req: NextRequest) {
     }
 
     const duration = isMotionControl ? 5 : selectedDuration;
-    const requiredCredits = (ratePerSecond * duration) + 1; // Base cost + 1 credit GPT fee
+    const requiredCredits = ((ratePerSecond * duration) + 1) * 10; // Scaled x10 (Base cost + 1 credit GPT fee)
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 
     if (!isSuperAdmin && userCredits < requiredCredits) {

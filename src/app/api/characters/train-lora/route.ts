@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const trainingCost = 80;
+    const trainingCost = 800;
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
     if (!isSuperAdmin && userCredits < trainingCost) {
       return NextResponse.json(

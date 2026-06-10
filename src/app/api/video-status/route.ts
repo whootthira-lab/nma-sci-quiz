@@ -43,11 +43,18 @@ export async function POST(req: NextRequest) {
     const isCinema = modelType === 'cinema';
     const isMotionControl = modelType === 'motion-control';
     const isGrok = modelType === 'grok-video';
+    const isFlux = modelType?.includes('flux') || modelType === 'fill';
     const modelEndpoint = isCinema
       ? 'fal-ai/wan-i2v'
       : (isMotionControl 
           ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-          : (isGrok ? 'xai/grok-imagine-video/v1.5/image-to-video' : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video')
+          : (isGrok 
+              ? 'xai/grok-imagine-video/v1.5/image-to-video' 
+              : (isFlux 
+                  ? 'fal-ai/flux/dev' 
+                  : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video'
+                )
+            )
         );
 
     // Fal.ai queue parent namespace is always the first two segments of the model path
@@ -253,26 +260,28 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const finalVideoUrl = tempUrl;
-      console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลดวิดีโอมาเก็บที่ ${finalStorageProvider}...`);
+      const isImage = videoPath.endsWith('.png') || videoPath.endsWith('.jpg') || videoPath.endsWith('.jpeg');
+      const contentType = isImage ? (videoPath.endsWith('.png') ? 'image/png' : 'image/jpeg') : 'video/mp4';
+      const fileTypeLabel = isImage ? 'รูปภาพ' : 'วิดีโอ';
+      console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลด${fileTypeLabel}มาเก็บที่ ${finalStorageProvider}...`);
 
-      const videoRes = await fetch(finalVideoUrl);
+      const videoRes = await fetch(tempUrl);
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
       let publicUrl = '';
       if (finalStorageProvider === 'firebase') {
-        publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, 'video/mp4');
+        publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, contentType);
       } else {
         // Upload to Supabase Storage
         const { error: uploadError } = await supabase.storage
           .from('kruth-ai-assets')
           .upload(videoPath, videoBuffer, {
-            contentType: 'video/mp4',
+            contentType,
             upsert: true,
           });
 
         if (uploadError) {
-          throw new Error(`อัปโหลดวิดีโอขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
+          throw new Error(`อัปโหลด${fileTypeLabel}ขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
         }
 
         // Get Public URL

@@ -6,12 +6,13 @@ import { useAuth } from '@/lib/auth-context';
 import Navbar from '@/components/Navbar';
 import Mode1Form from '@/components/Mode1Form';
 import Mode2Form from '@/components/Mode2Form';
-import { Film, Scan, Loader2, Lock } from 'lucide-react';
+import ImageTabForm from '@/components/ImageTabForm';
+import { Film, Scan, Loader2, Lock, Image as ImageIcon } from 'lucide-react';
 
 export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'mode1' | 'mode2'>('mode1');
+  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'mode2'>('mode1');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -55,18 +56,31 @@ export default function DashboardPage() {
         <div className="flex gap-1 p-1 rounded-2xl bg-white border border-gray-200 shadow-sm mb-8">
           <button
             onClick={() => setActiveTab('mode1')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
               activeTab === 'mode1'
                 ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
                 : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
             }`}
           >
             <Film className="w-4 h-4" />
-            <span className="font-thai">สร้างวิดีโอ (KRUTH Engine)</span>
+            <span className="font-thai">สร้างวิดีโอ (Video Gen)</span>
           </button>
+          
+          <button
+            onClick={() => setActiveTab('image')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
+              activeTab === 'image'
+                ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
+                : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
+            }`}
+          >
+            <ImageIcon className="w-4 h-4" />
+            <span className="font-thai">สร้างรูปภาพ (Image Gen)</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('mode2')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
               activeTab === 'mode2'
                 ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
                 : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
@@ -93,6 +107,16 @@ export default function DashboardPage() {
                   สร้างสื่อวิดีโอระดับมืออาชีพจากภาพนิ่งและบทพากย์ภาษาไทย ประมวลผลด้วย <span className="font-semibold text-[#D4AF37]">KRUTH Engine</span> ที่รองรับการขยับริมฝีปากอย่างเป็นธรรมชาติ
                 </p>
               </>
+            ) : activeTab === 'image' ? (
+              <>
+                <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5 text-[#D4AF37]" />
+                  ระบบสร้างรูปภาพอัจฉริยะ (Image Generator)
+                </h2>
+                <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
+                  สร้างภาพประกอบสื่อการสอนจากข้อความ แปลงสไตล์ภาพ แก้ไขจุดบกพร่อง และขยายขอบเฟรมด้วยโมเดล <span className="font-semibold text-[#D4AF37]">Flux.1 Dev</span> ที่มีความเที่ยงตรงสูง
+                </p>
+              </>
             ) : (
               <>
                 <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
@@ -109,6 +133,8 @@ export default function DashboardPage() {
           {/* Forms */}
           {activeTab === 'mode1' ? (
             <Mode1Form onVideoGenerated={handleVideoGenerated} />
+          ) : activeTab === 'image' ? (
+            <ImageTabForm onImageGenerated={handleVideoGenerated} />
           ) : isAdmin ? (
             <Mode2Form onVideoGenerated={handleVideoGenerated} />
           ) : (
