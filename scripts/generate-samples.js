@@ -29,14 +29,14 @@ if (!sfKey) {
 }
 
 const voices = [
-  { id: 'anna', name: 'cosy-anna.mp3', text: 'Hello, my name is Anna. I am a polite female voice.' },
-  { id: 'claire', name: 'cosy-claire.mp3', text: 'Hello, my name is Claire. I am a gentle female voice.' },
-  { id: 'bella', name: 'cosy-bella.mp3', text: 'Hello, my name is Bella. I am a cheerful female voice.' },
-  { id: 'diana', name: 'cosy-diana.mp3', text: 'Hello, my name is Diana. I am a confident female voice.' },
-  { id: 'alex', name: 'cosy-alex.mp3', text: 'Hello, my name is Alex. I am a mature male voice.' },
-  { id: 'benjamin', name: 'cosy-benjamin.mp3', text: 'Hello, my name is Benjamin. I am a warm male voice.' },
-  { id: 'charles', name: 'cosy-charles.mp3', text: 'Hello, my name is Charles. I am a polite male voice.' },
-  { id: 'david', name: 'cosy-david.mp3', text: 'Hello, my name is David. I am a powerful male voice.' }
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'cosy-anna.mp3', text: 'Hello, my name is Anna. I am a polite female voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'cosy-claire.mp3', text: 'Hello, my name is Claire. I am a gentle female voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:bella', name: 'cosy-bella.mp3', text: 'Hello, my name is Bella. I am a cheerful female voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:diana', name: 'cosy-diana.mp3', text: 'Hello, my name is Diana. I am a confident female voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'cosy-alex.mp3', text: 'Hello, my name is Alex. I am a mature male voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'cosy-benjamin.mp3', text: 'Hello, my name is Benjamin. I am a warm male voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:charles', name: 'cosy-charles.mp3', text: 'Hello, my name is Charles. I am a polite male voice.' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'cosy-david.mp3', text: 'Hello, my name is David. I am a powerful male voice.' }
 ];
 
 const samplesDir = path.join(__dirname, '..', 'public', 'samples');
