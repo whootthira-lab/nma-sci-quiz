@@ -70,7 +70,7 @@ async function runFaceMotion(
     if (!sfKey) throw new Error('ไม่พบ SILICONFLOW_API_KEY ในระบบ สำหรับการใช้งาน SiliconFlow LivePortrait');
     
     console.log(`[SiliconFlow LivePortrait] Submitting job...`);
-    const submitResponse = await fetch('https://api.siliconflow.cn/v1/video/submit', {
+    const submitResponse = await fetch('https://api.siliconflow.com/v1/video/submit', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${sfKey}`,
@@ -104,7 +104,7 @@ async function runFaceMotion(
       attempts++;
 
       console.log(`[SiliconFlow LivePortrait] Polling attempt ${attempts}...`);
-      const statusResponse = await fetch('https://api.siliconflow.cn/v1/video/status', {
+      const statusResponse = await fetch('https://api.siliconflow.com/v1/video/status', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${sfKey}`,

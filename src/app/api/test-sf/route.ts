@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     // Test connectivity to SiliconFlow
     console.log('[Diagnostic] Testing API key connection to SiliconFlow...');
-    const res = await fetch('https://api.siliconflow.cn/v1/user/info', {
+    const res = await fetch('https://api.siliconflow.com/v1/user/info', {
       headers: {
         'Authorization': `Bearer ${sfKey}`
       }

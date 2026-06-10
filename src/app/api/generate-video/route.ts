@@ -172,7 +172,7 @@ async function generateCosyVoiceTTS(text: string, voiceId: string, speedFactor: 
   const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
   try {
-    const sfResponse = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
+    const sfResponse = await fetch('https://api.siliconflow.com/v1/audio/speech', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -674,7 +674,7 @@ export async function POST(req: NextRequest) {
       console.log(`[STEP 3] Submitting request to SiliconFlow (${sfModel})...`);
       console.log('[SiliconFlow Request Payload]:', JSON.stringify(sfPayload, null, 2));
 
-      const submitResponse = await fetch('https://api.siliconflow.cn/v1/video/submit', {
+      const submitResponse = await fetch('https://api.siliconflow.com/v1/video/submit', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${sfKey}`,

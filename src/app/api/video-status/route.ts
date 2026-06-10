@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     } else if (apiProvider === 'siliconflow') {
       // 2. Fetch SiliconFlow status
       const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
-      const checkResponse = await fetch('https://api.siliconflow.cn/v1/video/status', {
+      const checkResponse = await fetch('https://api.siliconflow.com/v1/video/status', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${sfKey}`,
