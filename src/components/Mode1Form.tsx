@@ -63,19 +63,38 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [videoMode, setVideoMode] = useState<'image_to_video' | 'text_to_video'>('image_to_video');
+  const [activeTab, setActiveTab] = useState<'text_to_video' | 'voice_image_to_video' | 'image_to_video' | 'motion_control'>('voice_image_to_video');
 
   const [modelType, setModelType] = useState('fast'); 
   const isMotionControl = modelType === 'motion-control';
   const isGrok = modelType === 'grok-video';
 
-  // If text-to-video mode is selected, make sure modelType is one that supports text-to-video
+  // Sync videoMode, isNoSpeech, and modelType based on activeTab
   useEffect(() => {
-    if (videoMode === 'text_to_video') {
-      if (modelType === 'motion-control' || modelType === 'ltx-video' || modelType === 'grok-video') {
+    if (activeTab === 'text_to_video') {
+      setVideoMode('text_to_video');
+      setIsNoSpeech(true);
+      if (modelType === 'motion-control' || modelType === 'ltx-video') {
         setModelType('fast');
       }
+    } else if (activeTab === 'voice_image_to_video') {
+      setVideoMode('image_to_video');
+      setIsNoSpeech(false);
+      if (modelType === 'motion-control' || modelType === 'ltx-video') {
+        setModelType('fast');
+      }
+    } else if (activeTab === 'image_to_video') {
+      setVideoMode('image_to_video');
+      setIsNoSpeech(true);
+      if (modelType === 'motion-control' || modelType === 'ltx-video') {
+        setModelType('fast');
+      }
+    } else if (activeTab === 'motion_control') {
+      setVideoMode('image_to_video');
+      setIsNoSpeech(false);
+      setModelType('motion-control');
     }
-  }, [videoMode, modelType]);
+  }, [activeTab]);
 
   // New premium states
   const [isNoSpeech, setIsNoSpeech] = useState(false);
@@ -103,10 +122,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice'>('google');
 
-
-
   // Safety filter and legal liability modal states
-  const [safetyFilterDisabled, setSafetyFilterDisabled] = useState<boolean>(false);
   const [showLiabilityModal, setShowLiabilityModal] = useState<boolean>(false);
 
   // Kling v2.6 Motion Control states
@@ -532,7 +548,6 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('video_mode', videoMode);
       formData.append('storage_provider', storageProvider);
       formData.append('duration', String(selectedDuration));
-      formData.append('safety_filter_disabled', String(safetyFilterDisabled));
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -607,10 +622,10 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       return;
     }
 
-    // Check if we need to show the liability consent modal (safety filter disabled, or 18+/person lookalike keywords)
+    // Check if we need to show the liability consent modal (18+/person lookalike keywords)
     const hasAdultKeywords = /18\+|adult|nude|sexy|NSFW|เสียว|โป๊|เปลือย|18 บวก|คนจริง|หน้าเหมือน/i.test(scriptText) || /18\+|adult|nude|sexy|NSFW|เสียว|โป๊|เปลือย|18 บวก|คนจริง|หน้าเหมือน/i.test(situationPrompt);
     
-    if (safetyFilterDisabled || hasAdultKeywords) {
+    if (hasAdultKeywords) {
       setShowLiabilityModal(true);
       return;
     }
@@ -674,34 +689,56 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           <label className="block text-sm font-medium text-text-secondary font-thai">
             🎬 รูปแบบการสร้างวิดีโอ (Generation Mode)
           </label>
-          <div className="flex bg-gray-100 p-1.5 rounded-xl border border-gray-200">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
             <button
               type="button"
-              onClick={() => setVideoMode('image_to_video')}
-              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold font-thai transition-all ${
-                videoMode === 'image_to_video'
+              onClick={() => setActiveTab('text_to_video')}
+              className={`flex items-center justify-center gap-1.5 py-3 rounded-lg text-xs font-semibold font-thai transition-all ${
+                activeTab === 'text_to_video'
                   ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
                   : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              🖼️ ภาพเคลื่อนไหว (Image to Video)
+              ✍️ ข้อความ (Text to Video)
             </button>
             <button
               type="button"
-              onClick={() => setVideoMode('text_to_video')}
-              className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold font-thai transition-all ${
-                videoMode === 'text_to_video'
+              onClick={() => setActiveTab('voice_image_to_video')}
+              className={`flex items-center justify-center gap-1.5 py-3 rounded-lg text-xs font-semibold font-thai transition-all ${
+                activeTab === 'voice_image_to_video'
                   ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
                   : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              ✍️ ข้อความเป็นวิดีโอ (Text to Video)
+              🎙️ เสียงพากย์และรูป (Voice + Image)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('image_to_video')}
+              className={`flex items-center justify-center gap-1.5 py-3 rounded-lg text-xs font-semibold font-thai transition-all ${
+                activeTab === 'image_to_video'
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              🖼️ รูปภาพ (Image to Video)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('motion_control')}
+              className={`flex items-center justify-center gap-1.5 py-3 rounded-lg text-xs font-semibold font-thai transition-all ${
+                activeTab === 'motion_control'
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              🏃 วิดีโอต้นแบบ (Motion Control)
             </button>
           </div>
         </div>
         
         {/* Admin Model Selector */}
-        {isAdmin && (
+        {isAdmin && activeTab !== 'motion_control' && (
           <div className="space-y-3 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl mb-4 font-thai">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-[#D4AF37] font-semibold text-sm">
@@ -714,32 +751,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer"
               >
                 <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
-                <option value="cinema">🎬 KRUTH Master (Wan 2.5 Cinema)</option>
-                <option value="hunyuan">🌌 KRUTH Cosmic (Tencent HunyuanVideo)</option>
-                {videoMode === 'image_to_video' && (
-                  <>
-                    <option value="ltx-video">⚡ KRUTH Draft (LTX-Video Quick Draft)</option>
-                    <option value="motion-control">🏃 KRUTH Motion (Kling 2.6 Motion Control)</option>
-                    <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
-                  </>
-                )}
+                <option value="cinema">🎬 KRUTH Master (Wan 2.5 / 2.2 Cinema)</option>
+                <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
               </select>
-            </div>
-            
-            {/* Content Safety Switch */}
-            <div className="flex items-center justify-between border-t border-[#D4AF37]/20 pt-2 text-xs">
-              <span className="text-gray-700 font-thai font-medium">ปิดระบบกรองเนื้อหาความปลอดภัย (Disable Safety Filter / NSFW)</span>
-              <button
-                type="button"
-                onClick={() => setSafetyFilterDisabled(!safetyFilterDisabled)}
-                className={`px-3 py-1 rounded-lg font-thai font-bold transition-all ${
-                  safetyFilterDisabled
-                    ? 'bg-accent-danger text-white hover:bg-accent-danger-hover shadow-sm'
-                    : 'bg-white text-gray-600 border border-gray-300 hover:border-gray-400'
-                }`}
-              >
-                {safetyFilterDisabled ? '🔴 ปิดการกรอง (NSFW On)' : '🟢 เปิดการกรอง (NSFW Off)'}
-              </button>
             </div>
           </div>
         )}
@@ -756,62 +770,66 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Visual Style Preset */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            สไตล์ศิลปะวิดีโอ (Visual Style Preset)
-          </label>
-          <select
-            value={visualStyle}
-            onChange={(e) => setVisualStyle(e.target.value)}
-            className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
-          >
-            <option value="cinematic">🎬 Cinematic (สไตล์ภาพยนตร์ แสงเงาสวยงาม)</option>
-            <option value="studio">📸 Studio Portrait (ถ่ายในสตูดิโอ หน้าชัดหลังเบลอพรีเมียม)</option>
-            <option value="pixar">🧸 3D Pixar Animation (อนิมิชัน 3 มิติสีสันสดใส)</option>
-            <option value="retro">📼 Retro 90s (ภาพกล้องฟิล์มสีย้อนยุค 90)</option>
-            <option value="anime">🌸 Japanese Anime (ลายเส้นอนิเมะการ์ตูนญี่ปุ่น)</option>
-            <option value="none">⚪ ดั้งเดิม (Original / No Preset)</option>
-          </select>
-        </div>
-
-        {/* Character/Scene Emotion Selector */}
-        <div className="space-y-2 animate-fade-in">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            🎭 อารมณ์ของตัวละครหรือฉาก (Character/Scene Emotion)
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {activeTab !== 'motion_control' && (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              สไตล์ศิลปะวิดีโอ (Visual Style Preset)
+            </label>
             <select
-              value={characterEmotion}
-              onChange={(e) => {
-                setCharacterEmotion(e.target.value);
-                if (e.target.value !== 'custom') {
-                  setCustomEmotionText('');
-                }
-              }}
+              value={visualStyle}
+              onChange={(e) => setVisualStyle(e.target.value)}
               className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
             >
-              <option value="">⚪ ไม่ระบุอารมณ์ (ตามปกติ)</option>
-              <option value="Friendly & Smiling">😊 Friendly & Smiling (ยิ้มแย้ม เป็นกันเอง)</option>
-              <option value="Professional & Serious">💼 Professional & Serious (สุขุม จริงจัง มืออาชีพ)</option>
-              <option value="Energetic & Excited">⚡ Energetic & Excited (กระตือรือร้น ตื่นเต้น มีพลัง)</option>
-              <option value="Empathetic & Gentle">🤝 Empathetic & Gentle (อ่อนโยน เห็นอกเห็นใจ)</option>
-              <option value="Fearful & Worried">😨 Fearful & Worried (กังวล กลัว)</option>
-              <option value="Sad & Gloomy">😢 Sad & Gloomy (เศร้า หมองหม่น)</option>
-              <option value="custom">✍️ กำหนดเอง (พิมพ์อารมณ์เอง)</option>
+              <option value="cinematic">🎬 Cinematic (สไตล์ภาพยนตร์ แสงเงาสวยงาม)</option>
+              <option value="studio">📸 Studio Portrait (ถ่ายในสตูดิโอ หน้าชัดหลังเบลอพรีเมียม)</option>
+              <option value="pixar">🧸 3D Pixar Animation (อนิมิชัน 3 มิติสีสันสดใส)</option>
+              <option value="retro">📼 Retro 90s (ภาพกล้องฟิล์มสีย้อนยุค 90)</option>
+              <option value="anime">🌸 Japanese Anime (ลายเส้นอนิเมะการ์ตูนญี่ปุ่น)</option>
+              <option value="none">⚪ ดั้งเดิม (Original / No Preset)</option>
             </select>
-
-            {characterEmotion === 'custom' && (
-              <input
-                type="text"
-                required
-                value={customEmotionText}
-                onChange={(e) => setCustomEmotionText(e.target.value)}
-                placeholder="เช่น warm smile, looking serious, intense look"
-                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai animate-fade-in"
-              />
-            )}
           </div>
-        </div>
+        )}
+
+        {/* Character/Scene Emotion Selector */}
+        {activeTab !== 'motion_control' && (
+          <div className="space-y-2 animate-fade-in">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              🎭 อารมณ์ของตัวละครหรือฉาก (Character/Scene Emotion)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <select
+                value={characterEmotion}
+                onChange={(e) => {
+                  setCharacterEmotion(e.target.value);
+                  if (e.target.value !== 'custom') {
+                    setCustomEmotionText('');
+                  }
+                }}
+                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
+              >
+                <option value="">⚪ ไม่ระบุอารมณ์ (ตามปกติ)</option>
+                <option value="Friendly & Smiling">😊 Friendly & Smiling (ยิ้มแย้ม เป็นกันเอง)</option>
+                <option value="Professional & Serious">💼 Professional & Serious (สุขุม จริงจัง มืออาชีพ)</option>
+                <option value="Energetic & Excited">⚡ Energetic & Excited (กระตือรือร้น ตื่นเต้น มีพลัง)</option>
+                <option value="Empathetic & Gentle">🤝 Empathetic & Gentle (อ่อนโยน เห็นอกเห็นใจ)</option>
+                <option value="Fearful & Worried">😨 Fearful & Worried (กังวล กลัว)</option>
+                <option value="Sad & Gloomy">😢 Sad & Gloomy (เศร้า หมองหม่น)</option>
+                <option value="custom">✍️ กำหนดเอง (พิมพ์อารมณ์เอง)</option>
+              </select>
+
+              {characterEmotion === 'custom' && (
+                <input
+                  type="text"
+                  required
+                  value={customEmotionText}
+                  onChange={(e) => setCustomEmotionText(e.target.value)}
+                  placeholder="เช่น warm smile, looking serious, intense look"
+                  className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai animate-fade-in"
+                />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Aspect Ratio */}
         <div className="space-y-2">
@@ -844,70 +862,72 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         </div>
 
         {/* Character Library Selector */}
-        <div className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            👤 เลือกตัวละครจากคลัง (Character Library)
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <select
-              value={selectedCharacterId}
-              onChange={(e) => {
-                setSelectedCharacterId(e.target.value);
-                if (!e.target.value) {
-                  setImagePreview(null);
-                  setImageFile(null);
-                }
-              }}
-              className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
-            >
-              <option value="">⚪ ไม่ใช้ตัวละคร (อัปโหลดรูปภาพอิสระเอง)</option>
-              {characterList.map((char) => (
-                <option key={char.id} value={char.id}>
-                  👤 {char.name} ({char.code})
-                </option>
-              ))}
-            </select>
-
-            {selectedCharacterId && videoMode === 'image_to_video' && (
+        {activeTab !== 'text_to_video' && (
+          <div className="space-y-3 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              👤 เลือกตัวละครจากคลัง (Character Library)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <select
-                value={selectedCharacterAngle}
-                onChange={(e) => setSelectedCharacterAngle(e.target.value as any)}
-                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-[#D4AF37] font-bold outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all animate-fade-in"
+                value={selectedCharacterId}
+                onChange={(e) => {
+                  setSelectedCharacterId(e.target.value);
+                  if (!e.target.value) {
+                    setImagePreview(null);
+                    setImageFile(null);
+                  }
+                }}
+                className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
               >
-                <option value="front">👤 ภาพหน้าตรง (Front View)</option>
-                <option value="45">📐 ภาพมุม 45 องศา (45° View)</option>
-                <option value="side">👥 ภาพมุมข้าง (Side View)</option>
+                <option value="">⚪ ไม่ใช้ตัวละคร (อัปโหลดรูปภาพอิสระเอง)</option>
+                {characterList.map((char) => (
+                  <option key={char.id} value={char.id}>
+                    👤 {char.name} ({char.code})
+                  </option>
+                ))}
               </select>
-            )}
 
-            {selectedCharacterId && videoMode === 'image_to_video' && characterList.find(c => c.id === selectedCharacterId)?.lora_status === 'completed' && (
-              <div className="flex items-center gap-2.5 p-3.5 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-xl animate-fade-in">
-                <input
-                  type="checkbox"
-                  id="useLoraModel"
-                  checked={useLoraModel}
-                  onChange={(e) => setUseLoraModel(e.target.checked)}
-                  className="rounded border-gray-300 text-[#D4AF37] focus:ring-[#D4AF37] h-4.5 w-4.5 cursor-pointer"
-                />
-                <label htmlFor="useLoraModel" className="text-xs text-text-secondary font-thai font-medium cursor-pointer select-none flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
-                  เปิดใช้งานโมเดล AI ล็อคใบหน้าตัวละคร (Use LoRA Model)
-                </label>
+              {selectedCharacterId && videoMode === 'image_to_video' && (
+                <select
+                  value={selectedCharacterAngle}
+                  onChange={(e) => setSelectedCharacterAngle(e.target.value as any)}
+                  className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-[#D4AF37] font-bold outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all animate-fade-in"
+                >
+                  <option value="front">👤 ภาพหน้าตรง (Front View)</option>
+                  <option value="45">📐 ภาพมุม 45 องศา (45° View)</option>
+                  <option value="side">👥 ภาพมุมข้าง (Side View)</option>
+                </select>
+              )}
+
+              {selectedCharacterId && videoMode === 'image_to_video' && characterList.find(c => c.id === selectedCharacterId)?.lora_status === 'completed' && (
+                <div className="flex items-center gap-2.5 p-3.5 bg-[#D4AF37]/5 border border-[#D4AF37]/20 rounded-xl animate-fade-in">
+                  <input
+                    type="checkbox"
+                    id="useLoraModel"
+                    checked={useLoraModel}
+                    onChange={(e) => setUseLoraModel(e.target.checked)}
+                    className="rounded border-gray-300 text-[#D4AF37] focus:ring-[#D4AF37] h-4.5 w-4.5 cursor-pointer"
+                  />
+                  <label htmlFor="useLoraModel" className="text-xs text-text-secondary font-thai font-medium cursor-pointer select-none flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#D4AF37]" />
+                    เปิดใช้งานโมเดล AI ล็อคใบหน้าตัวละคร (Use LoRA Model)
+                  </label>
+                </div>
+              )}
+            </div>
+            {selectedCharacterId && (
+              <div className="text-xs text-text-secondary font-thai bg-white p-3 rounded-xl border border-gray-200 animate-fade-in space-y-1">
+                <span className="font-bold text-gray-700">รายละเอียดตัวละคร:</span>
+                <p className="italic">"{characterList.find(c => c.id === selectedCharacterId)?.visual_description}"</p>
+                {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt && (
+                  <p className="text-[#D4AF37] mt-1">
+                    <span className="font-bold">สิ่งที่เลี่ยง:</span> {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt}
+                  </p>
+                )}
               </div>
             )}
           </div>
-          {selectedCharacterId && (
-            <div className="text-xs text-text-secondary font-thai bg-white p-3 rounded-xl border border-gray-200 animate-fade-in space-y-1">
-              <span className="font-bold text-gray-700">รายละเอียดตัวละคร:</span>
-              <p className="italic">"{characterList.find(c => c.id === selectedCharacterId)?.visual_description}"</p>
-              {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt && (
-                <p className="text-[#D4AF37] mt-1">
-                  <span className="font-bold">สิ่งที่เลี่ยง:</span> {characterList.find(c => c.id === selectedCharacterId)?.negative_prompt}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Image Upload */}
         {videoMode === 'image_to_video' && (
@@ -965,7 +985,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* End Frame Settings (Kling 2.5 only) */}
-        {videoMode === 'image_to_video' && modelType === 'fast' && (
+        {activeTab === 'image_to_video' && modelType === 'fast' && (
           <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-2xl animate-fade-in">
             <h3 className="text-sm font-semibold text-gray-800 font-thai border-b border-gray-200 pb-2 flex items-center gap-2">
               🎬 ตั้งค่าเฟรมท้าย (End Frame Morphing Settings)
@@ -1113,34 +1133,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
         )}
 
-        {/* No-Speech Mode Checkbox */}
-        {(!isMotionControl) && (
-          <div className="flex items-center justify-between p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
-            <span className="text-sm font-medium text-gray-700 font-thai">🎬 โหมดไม่มีเสียงพากย์ (No-Speech / B-Roll Mode)</span>
-            <button
-              type="button"
-              onClick={() => {
-                const nextNoSpeech = !isNoSpeech;
-                setIsNoSpeech(nextNoSpeech);
-                if (nextNoSpeech) {
-                  setIsAutoDuration(false);
-                } else {
-                  setIsAutoDuration(true);
-                }
-              }}
-              className={`px-3 py-1 rounded-lg font-thai font-bold text-xs transition-all ${
-                isNoSpeech
-                  ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-sm'
-                  : 'bg-white text-gray-600 border border-gray-300 hover:border-gray-400'
-              }`}
-            >
-              {isNoSpeech ? '🔴 ปิดเสียงพากย์ (No-Speech On)' : '⚪ ใช้เสียงพากย์ (No-Speech Off)'}
-            </button>
-          </div>
-        )}
-
         {/* Audio Source Type Toggle */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && (
+        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && (
           <div className="space-y-2 p-3 bg-gray-50 border border-gray-200 rounded-xl">
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
               การจัดเตรียมเสียงพากย์ (Voice Source Type)
@@ -1173,7 +1167,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Custom Audio Upload Field */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && audioSourceType === 'upload' && (
+        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'upload' && (
           <div className="space-y-2 animate-fade-in">
             <label className="block text-sm font-medium text-text-secondary font-thai">
               🎙️ ไฟล์เสียงพากย์ของคุณ (Custom Audio File)
@@ -1230,7 +1224,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Script Text */}
-        {!isNoSpeech && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
+        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -1308,7 +1302,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
 
           {/* TTS Provider Option */}
-          {!isNoSpeech && audioSourceType === 'tts' && (
+          {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
             <div className="space-y-2 border-t border-gray-200 pt-3">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
                 ผู้ให้บริการเสียงพากย์ (TTS Provider)
@@ -1361,7 +1355,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           )}
 
           {/* Speech Speed Option */}
-          {!isNoSpeech && audioSourceType === 'tts' && (
+          {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
             <div className="space-y-2 border-t border-gray-200 pt-3 animate-fade-in">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
                 📈 ความเร็วในการพูด (Speech Speed)
@@ -1392,7 +1386,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         </div>
 
         {/* Voice Selection */}
-        {!isNoSpeech && audioSourceType === 'tts' && (!isMotionControl || (isMotionControl && motionAudioSource === 'tts')) && (
+        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
           <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
         )}
 

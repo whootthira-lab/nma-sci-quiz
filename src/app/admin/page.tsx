@@ -27,6 +27,7 @@ export default function AdminPage() {
 
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
+  const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
   const [stats, setStats] = useState({
     totalGenerations: 0,
     mode1Count: 0,
@@ -76,24 +77,25 @@ export default function AdminPage() {
         const mode1 = data.find((item: any) => item.key === 'mode1_enabled');
         const mode2 = data.find((item: any) => item.key === 'mode2_enabled');
         const provider = data.find((item: any) => item.key === 'open_source_provider');
+        const safetyFilter = data.find((item: any) => item.key === 'safety_filter_disabled');
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
         setMode2Enabled(mode2 ? mode2.value === 'true' : true);
         setProviderSetting(provider ? provider.value : 'siliconflow');
+        setSafetyFilterDisabled(safetyFilter ? safetyFilter.value === 'true' : false);
       }
     } catch (err) {
       console.error('Failed to load config:', err);
     }
   };
 
-  const saveConfig = async (field: string, value: boolean) => {
+  const saveConfig = async (key: string, value: boolean) => {
     try {
-      const key = field === 'mode1_enabled' ? 'mode1_enabled' : 'mode2_enabled';
       const { error } = await supabase
         .from('system_settings')
         .upsert({
           key,
           value: String(value),
-          description: `Master switch for ${field}`,
+          description: `Setting for ${key}`,
           updated_at: new Date().toISOString()
         });
       if (error) throw error;
@@ -416,6 +418,35 @@ export default function AdminPage() {
               >
                 {mode2Enabled ? (
                   <ToggleRight className="w-10 h-10 text-accent-success" />
+                ) : (
+                  <ToggleLeft className="w-10 h-10 text-text-muted" />
+                )}
+              </button>
+            </div>
+
+            {/* Safety Filter Toggle */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-accent-danger" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ปิดระบบกรองเนื้อหาความปลอดภัย (Disable Safety Filter / NSFW)
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    อนุญาตการสร้างคลิปโดยปิดระบบกรองความปลอดภัย (มีผลทั่วทั้งระบบสำหรับโมเดลที่รองรับ)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const newVal = !safetyFilterDisabled;
+                  setSafetyFilterDisabled(newVal);
+                  saveConfig('safety_filter_disabled', newVal);
+                }}
+                className="text-2xl"
+              >
+                {safetyFilterDisabled ? (
+                  <ToggleRight className="w-10 h-10 text-accent-danger" />
                 ) : (
                   <ToggleLeft className="w-10 h-10 text-text-muted" />
                 )}

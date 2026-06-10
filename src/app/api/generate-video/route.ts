@@ -351,6 +351,11 @@ export async function POST(req: NextRequest) {
     console.log('[STEP 0] Triggering Asynchronous Video Generation');
 
     const formData = await req.formData();
+
+    // Initialize Supabase client
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const imageFile = formData.get('image') as File | null;
     const endImageFile = formData.get('end_image') as File | null;
     const customAudioFile = formData.get('custom_audio') as File | null;
@@ -370,7 +375,19 @@ export async function POST(req: NextRequest) {
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
     const ttsProvider = formData.get('tts_provider') as string || 'google';
     const selectedDuration = parseInt(formData.get('duration') as string || '8', 10);
-    const safetyFilterDisabled = formData.get('safety_filter_disabled') === 'true';
+    let safetyFilterDisabled = false;
+    try {
+      const { data: safetyConfig } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'safety_filter_disabled')
+        .single();
+      if (safetyConfig?.value) {
+        safetyFilterDisabled = safetyConfig.value === 'true';
+      }
+    } catch (e) {
+      console.warn('Error fetching safety_filter_disabled setting:', e);
+    }
 
     // Character library, speech speed and emotion extraction
     const characterId = formData.get('character_id') as string || '';
@@ -387,10 +404,7 @@ export async function POST(req: NextRequest) {
     const loraModelUrl = formData.get('lora_model_url') as string || '';
     const loraTriggerWord = formData.get('lora_trigger_word') as string || '';
 
-    // Initialize Supabase client
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
 
     const isSuperAdmin = userEmail === 'whootthira@gmail.com';
     let whitelistUser: any = null;
