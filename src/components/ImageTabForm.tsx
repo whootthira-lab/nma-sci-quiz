@@ -71,6 +71,12 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const getContainerAspectClass = () => {
+    if (aspectRatio === '16:9') return 'aspect-[16/9] w-full max-h-[350px]';
+    if (aspectRatio === '9:16') return 'aspect-[9/16] h-[350px]';
+    return 'aspect-square h-[350px]'; // 1:1
+  };
+
   // Styles presets
   const stylePresets = [
     { id: 'none', label: '🎨 ไม่มีฟิลเตอร์ (None)' },
@@ -643,49 +649,25 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               </div>
             </div>
 
-            {imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'image_to_image' && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-text-secondary uppercase">
-                  📐 สัดส่วนรูปภาพ (Aspect Ratio)
-                </label>
-                <div className="flex gap-2 bg-[#1C1C1E] p-1.5 rounded-xl border border-white/10">
-                  {['1:1', '16:9', '9:16'].map((ratio) => (
-                    <button
-                      key={ratio}
-                      type="button"
-                      onClick={() => setAspectRatio(ratio)}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        aspectRatio === ratio ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'
-                      }`}
-                    >
-                      {ratio}
-                    </button>
-                  ))}
-                </div>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-text-secondary uppercase">
+                📐 สัดส่วนรูปภาพ (Aspect Ratio)
+              </label>
+              <div className="flex gap-2 bg-[#1C1C1E] p-1.5 rounded-xl border border-white/10">
+                {['1:1', '16:9', '9:16'].map((ratio) => (
+                  <button
+                    key={ratio}
+                    type="button"
+                    onClick={() => setAspectRatio(ratio)}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      aspectRatio === ratio ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'
+                    }`}
+                  >
+                    {ratio}
+                  </button>
+                ))}
               </div>
-            )}
-
-            {imageMode === 'outpainting' && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-text-secondary uppercase">
-                  📐 เปลี่ยนสัดส่วนเฟรมปลายทาง (Target Frame)
-                </label>
-                <div className="flex gap-2 bg-[#1C1C1E] p-1.5 rounded-xl border border-white/10">
-                  {['1:1', '16:9', '9:16'].map((ratio) => (
-                    <button
-                      key={ratio}
-                      type="button"
-                      onClick={() => setAspectRatio(ratio)}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        aspectRatio === ratio ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'
-                      }`}
-                    >
-                      {ratio}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            </div>
           </div>
 
           {/* Character Library integration */}
@@ -863,7 +845,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
             ) : (
               <>
                 <Sparkles className="w-5 h-5" />
-                <span>สร้างรูปภาพผลลัพธ์ (หัก 15 เครดิต)</span>
+                <span>สร้างรูปภาพผลลัพธ์ (หัก 20 เครดิต)</span>
               </>
             )}
           </button>
@@ -872,7 +854,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         {/* Right column: Previews / Interactive canvases */}
         <div className="lg:col-span-5 flex flex-col justify-start">
           {imageMode === 'text_to_image' ? (
-            <div className="border border-white/10 rounded-2xl bg-black/30 overflow-hidden flex flex-col justify-center items-center p-6 h-[400px] border-dashed">
+            <div className={`border border-white/10 rounded-2xl bg-black/30 overflow-hidden flex flex-col justify-center items-center p-6 border-dashed transition-all duration-300 ${getContainerAspectClass()}`}>
               {generatedImageUrl ? (
                 <div className="relative w-full h-full flex items-center justify-center bg-black">
                   <img 
@@ -925,7 +907,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               ) : (
                 /* Interactive Canvas containers */
                 <div className="space-y-3">
-                  <div className="relative border border-white/10 rounded-2xl bg-[#0F0F11] overflow-hidden flex items-center justify-center p-4">
+                  <div className={`relative border border-white/10 rounded-2xl bg-[#0F0F11] overflow-hidden flex items-center justify-center p-4 transition-all duration-300 ${getContainerAspectClass()}`}>
                     {/* Mode: Standard Image to Image */}
                     {imageMode === 'image_to_image' && (
                       <img 
@@ -967,7 +949,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                           onMouseMove={handleOutpaintDrag}
                           onMouseUp={handleOutpaintDragEnd}
                           onMouseLeave={handleOutpaintDragEnd}
-                          className="cursor-move border border-[#D4AF37]/30 rounded-xl shadow-lg"
+                          className="cursor-move border border-[#D4AF37]/30 rounded-xl shadow-lg max-w-full max-h-[280px] object-contain"
                         />
                         <span className="text-[10px] text-text-muted mt-2 block flex items-center gap-1">
                           <Move className="w-3 h-3" /> ลากเมาส์ขยับตำแหน่งรูปในเฟรมด้านบน
@@ -1038,7 +1020,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
               {/* Generated Image output for image modes */}
               {generatedImageUrl && (
-                <div className="relative border border-white/10 rounded-2xl bg-black overflow-hidden flex items-center justify-center p-4 h-[280px]">
+                <div className={`relative border border-white/10 rounded-2xl bg-black overflow-hidden flex items-center justify-center p-4 transition-all duration-300 ${getContainerAspectClass()}`}>
                   <img 
                     src={generatedImageUrl} 
                     alt="Generated output" 

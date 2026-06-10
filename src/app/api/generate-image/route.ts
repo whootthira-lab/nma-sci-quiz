@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const cost = 15; // 1.5 credits scaled by 10 = 15 credits
+    const cost = 20; // 2.0 credits scaled by 10 = 20 credits
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 
     if (!isSuperAdmin && userCredits < cost) {
@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
     };
 
     // Add aspect ratio or custom sizing for non-fill endpoints
-    if (imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'image_to_image') {
+    if (imageMode !== 'inpainting' && imageMode !== 'outpainting') {
       requestBody.image_size = aspectRatio === '16:9' ? '1280x720' : (aspectRatio === '9:16' ? '720x1280' : '1024x1024');
     }
 
