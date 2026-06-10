@@ -452,26 +452,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Count daily generations
-    const dailyLimit = isSuperAdmin ? 99999 : (whitelistUser?.generation_limit || 10);
-    if (finalUserId) {
-      const localStartOfDay = new Date();
-      localStartOfDay.setHours(0, 0, 0, 0);
-
-      const { count: todaysGensCount } = await supabase
-        .from('generations')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', finalUserId)
-        .gte('created_at', localStartOfDay.toISOString());
-
-      if (todaysGensCount !== null && todaysGensCount >= dailyLimit) {
-        return NextResponse.json(
-          { success: false, error: `ขออภัย คุณใช้งานเกินขีดจำกัดประจำวันแล้ว (${todaysGensCount}/${dailyLimit} คลิป)` },
-          { status: 403 }
-        );
-      }
-    }
-
     // Fetch system provider config
     let activeProvider = 'siliconflow'; // default fallback
     let wanResolution = '720p';
@@ -497,6 +477,33 @@ export async function POST(req: NextRequest) {
       }
     } catch (e) {
       console.warn('Error fetching system settings:', e);
+    }
+
+    // Calculate required credits for the request
+    let ratePerSecond = 3; // Default fallback
+    if (modelType === 'cinema') {
+      ratePerSecond = wanResolution === '480p' ? 2 : 4;
+    } else if (modelType === 'grok-video') {
+      ratePerSecond = grokResolution === '480p' ? 4 : 6;
+    } else if (modelType === 'fast') {
+      if (klingResolution === '1080p') {
+        ratePerSecond = klingAudioEnabled ? 7 : 4;
+      } else {
+        ratePerSecond = 3;
+      }
+    } else if (isMotionControl) {
+      ratePerSecond = 4;
+    }
+
+    const duration = isMotionControl ? 5 : selectedDuration;
+    const requiredCredits = (ratePerSecond * duration) + 1; // Base cost + 1 credit GPT fee
+    const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
+
+    if (!isSuperAdmin && userCredits < requiredCredits) {
+      return NextResponse.json(
+        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการสร้างวิดีโอนี้ (ต้องการ ${requiredCredits} เครดิต, คงเหลือ ${userCredits} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
+        { status: 403 }
+      );
     }
 
 
@@ -843,6 +850,18 @@ export async function POST(req: NextRequest) {
 
       if (!requestId) {
         throw new Error('ระบบ AI ไม่ได้ส่งคืน Request ID');
+      }
+    }
+    // Deduct credits from user whitelist (except Super Admin)
+    if (!isSuperAdmin && whitelistUser) {
+      const newCredits = Math.max(0, (whitelistUser.generation_limit || 0) - requiredCredits);
+      console.log(`[Credits] Deducting ${requiredCredits} credits from ${userEmail}. Old balance: ${whitelistUser.generation_limit}, New balance: ${newCredits}`);
+      const { error: deductError } = await supabase
+        .from('whitelist')
+        .update({ generation_limit: newCredits })
+        .eq('email', userEmail);
+      if (deductError) {
+        console.error('[Credits] Failed to deduct credits:', deductError);
       }
     }
 

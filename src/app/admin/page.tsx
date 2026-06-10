@@ -262,7 +262,7 @@ export default function AdminPage() {
     setEmailField('');
     setNameField('');
     setExpiryField('');
-    setLimitField(10);
+    setLimitField(100);
     setActionError(null);
     setShowModal(true);
   };
@@ -274,7 +274,7 @@ export default function AdminPage() {
     setNameField(user.display_name || '');
     const dateStr = user.expires_at ? new Date(user.expires_at).toISOString().split('T')[0] : '';
     setExpiryField(dateStr);
-    setLimitField(user.generation_limit || 10);
+    setLimitField(user.generation_limit || 0);
     setActionError(null);
     setShowModal(true);
   };
@@ -732,7 +732,7 @@ export default function AdminPage() {
         <div className="glow-card p-6 mb-8">
           <div className="flex justify-between items-center mb-5">
             <h2 className="text-lg font-display font-semibold text-text-primary font-thai">
-              รายชื่อผู้ใช้ที่ได้รับสิทธิ์สร้างคลิป (Whitelist & Daily Limits)
+              รายชื่อผู้ใช้ที่ได้รับสิทธิ์สร้างคลิป (Whitelist & Credits Balance)
             </h2>
             <button
               onClick={openAddModal}
@@ -759,7 +759,7 @@ export default function AdminPage() {
                     <th className="py-3 px-4 font-thai">ชื่อผู้ใช้ (Display Name)</th>
                     <th className="py-3 px-4 font-thai">วันหมดอายุ (Expires At)</th>
                     <th className="py-3 px-4 font-thai">ระยะเวลาคงเหลือ (Time Left)</th>
-                    <th className="py-3 px-4 text-center font-thai">โควตาที่ใช้ (Usage / Limit)</th>
+                    <th className="py-3 px-4 text-center font-thai">เครดิตสะสมคงเหลือ (Credits)</th>
                     <th className="py-3 px-4 text-right font-thai">การจัดการ</th>
                   </tr>
                 </thead>
@@ -767,9 +767,7 @@ export default function AdminPage() {
                   {whitelist.map((item) => {
                     const timeLeft = getTimeLeft(item.expires_at);
                     const isExpired = timeLeft === 'หมดอายุแล้ว (Expired)';
-                    const usedToday = item.used_today || 0;
-                    const limit = item.generation_limit || 0;
-                    const remaining = Math.max(0, limit - usedToday);
+                    const credits = item.generation_limit || 0;
                     
                     return (
                       <tr key={item.email} className="hover:bg-white/5 transition-colors">
@@ -787,13 +785,8 @@ export default function AdminPage() {
                             {timeLeft}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 text-center font-mono">
-                          <span className={`${remaining === 0 ? 'text-accent-danger font-bold' : 'text-text-primary'}`}>
-                            {usedToday} / {limit}
-                          </span>
-                          <span className="text-xs text-text-muted font-thai ml-1">
-                            (เหลือ {remaining})
-                          </span>
+                        <td className="py-3.5 px-4 text-center font-mono text-text-primary font-bold">
+                          {credits} เครดิต
                         </td>
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex justify-end gap-2">
@@ -898,16 +891,16 @@ export default function AdminPage() {
                 />
               </div>
 
-              {/* Generation Limit */}
+              {/* Generation Limit -> Credits */}
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-text-secondary uppercase font-thai">จำนวนคลิปที่อนุญาตให้สร้างต่อวัน (Daily Limit)</label>
+                <label className="text-xs font-semibold text-text-secondary uppercase font-thai">ยอดเครดิตสะสมคงเหลือ (Credits Balance)</label>
                 <input
                   type="number"
-                  min="1"
-                  max="1000"
+                  min="0"
+                  max="999999"
                   value={limitField}
-                  onChange={(e) => setLimitField(parseInt(e.target.value, 10) || 10)}
-                  placeholder="10"
+                  onChange={(e) => setLimitField(parseInt(e.target.value, 10) || 0)}
+                  placeholder="100"
                   className="w-full bg-[#2C2C2E] border border-white/10 p-3 rounded-xl text-sm text-white outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all font-mono"
                 />
               </div>

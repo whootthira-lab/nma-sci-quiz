@@ -86,6 +86,50 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const isSuperAdmin = userEmail === 'whootthira@gmail.com';
+    let whitelistUser: any = null;
+    try {
+      const { data } = await supabase
+        .from('whitelist')
+        .select('generation_limit, expires_at')
+        .eq('email', userEmail)
+        .single();
+      whitelistUser = data;
+    } catch (e) {
+      console.warn('Error reading whitelist entry:', e);
+    }
+
+    if (!isSuperAdmin) {
+      if (!whitelistUser) {
+        return NextResponse.json(
+          { success: false, error: 'ขออภัย บัญชีของคุณไม่อยู่ในรายชื่อผู้ได้รับอนุญาตให้ใช้งาน (Not Whitelisted)' },
+          { status: 403 }
+        );
+      }
+      if (whitelistUser.expires_at) {
+        const isExpired = new Date(whitelistUser.expires_at).getTime() < Date.now();
+        if (isExpired) {
+          return NextResponse.json(
+            { success: false, error: 'ขออภัย สิทธิ์การใช้งานของคุณหมดอายุแล้ว กรุณาติดต่อผู้ดูแลระบบ' },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    const trainingCost = 80;
+    const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
+    if (!isSuperAdmin && userCredits < trainingCost) {
+      return NextResponse.json(
+        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการฝึกสอนโมเดลตัวละครนี้ (ต้องการ ${trainingCost} เครดิต, คงเหลือ ${userCredits} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
+        { status: 403 }
+      );
+    }
+
     if (!triggerWordRaw) {
       return NextResponse.json(
         { success: false, error: 'กรุณากรอก Trigger Word สำหรับการฝึกสอนตัวละคร' },
@@ -167,10 +211,6 @@ export async function POST(req: NextRequest) {
     // 2. Upload ZIP to Supabase Storage
     const timestamp = Date.now();
     const zipPath = `datasets/${userEmail}/${timestamp}_dataset.zip`;
-    
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Auto-Populate missing reference images if any are empty
     try {
@@ -317,6 +357,18 @@ export async function POST(req: NextRequest) {
         { success: false, error: 'ระบบ AI ปลายทางไม่ได้ส่งคืนรหัสงานประมวลผล' },
         { status: 500 }
       );
+    }
+    // Deduct credits from user whitelist (except Super Admin)
+    if (!isSuperAdmin && whitelistUser) {
+      const newCredits = Math.max(0, (whitelistUser.generation_limit || 0) - trainingCost);
+      console.log(`[Credits-LoRA] Deducting ${trainingCost} credits from ${userEmail}. Old balance: ${whitelistUser.generation_limit}, New balance: ${newCredits}`);
+      const { error: deductError } = await supabase
+        .from('whitelist')
+        .update({ generation_limit: newCredits })
+        .eq('email', userEmail);
+      if (deductError) {
+        console.error('[Credits-LoRA] Failed to deduct credits:', deductError);
+      }
     }
 
     // 4. Update Character status in Supabase DB
