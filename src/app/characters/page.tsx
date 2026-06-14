@@ -56,8 +56,12 @@ export default function CharactersPage() {
   const [loraTriggerWord, setLoraTriggerWord] = useState('');
   const [loraSteps, setLoraSteps] = useState(1000);
   const [loraFiles, setLoraFiles] = useState<{ file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]>([]);
+  const [expressionFiles, setExpressionFiles] = useState<{ file: File; preview: string; category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom'; customTag?: string }[]>([]);
   const [submittingLora, setSubmittingLora] = useState<string | null>(null);
   const loraInputRef = useRef<HTMLInputElement>(null);
+  const expressionInputRef = useRef<HTMLInputElement>(null);
+  const [activeExpressionCategory, setActiveExpressionCategory] = useState<'shocked' | 'happy' | 'sad' | 'angry' | 'custom' | null>(null);
+  const [expressionCustomTagInput, setExpressionCustomTagInput] = useState('');
 
   const fetchCharactersList = async () => {
     if (!user?.email) return;
@@ -242,6 +246,38 @@ export default function CharactersPage() {
     });
   };
 
+  const handleExpressionFilesChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom',
+    customTag?: string
+  ) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newFiles: { file: File; preview: string; category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom'; customTag?: string }[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/')) {
+        newFiles.push({
+          file,
+          preview: URL.createObjectURL(file),
+          category,
+          customTag
+        });
+      }
+    }
+    setExpressionFiles(prev => [...prev, ...newFiles]);
+  };
+
+  const removeExpressionFile = (idx: number) => {
+    setExpressionFiles(prev => {
+      const item = prev[idx];
+      if (item && item.preview) {
+        URL.revokeObjectURL(item.preview);
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !code.trim() || !visualDesc.trim()) {
@@ -376,6 +412,12 @@ export default function CharactersPage() {
       formData.append('angles', item.angle);
     });
 
+    expressionFiles.forEach(item => {
+      formData.append('expression_images', item.file);
+      formData.append('expression_categories', item.category);
+      formData.append('expression_custom_tags', item.customTag || '');
+    });
+
     try {
       const res = await fetch('/api/characters/train-lora', {
         method: 'POST',
@@ -398,6 +440,8 @@ export default function CharactersPage() {
 
       alert('เริ่มส่งข้อมูลเทรนโมเดลตัวละครเรียบร้อยแล้ว! ระบบกำลังคำนวณเบื้องหลัง ใช้เวลาประมาณ 5-10 นาที โดยสถานะจะอัปเดตอัตโนมัติบนหน้านี้ครับ');
       setActiveLoraCharId(null);
+      setLoraFiles([]);
+      setExpressionFiles([]);
     } catch (err: any) {
       console.error('Submit LoRA Training failed:', err);
       alert(err.message || 'เกิดข้อผิดพลาดในการเริ่มต้นเทรนโมเดลตัวละคร');
@@ -840,6 +884,7 @@ export default function CharactersPage() {
                           setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
                           setLoraSteps(char.lora_steps || 1000);
                           setLoraFiles([]);
+                          setExpressionFiles([]);
                         }}
                         className="text-[10px] bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/10 text-text-primary transition-all font-thai"
                       >
@@ -876,6 +921,7 @@ export default function CharactersPage() {
                             setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
                             setLoraSteps(char.lora_steps || 1000);
                             setLoraFiles([]);
+                            setExpressionFiles([]);
                           }}
                           className="text-[10px] bg-accent-danger/10 hover:bg-accent-danger/20 px-2.5 py-1 rounded-lg text-accent-danger transition-all font-thai"
                         >
@@ -900,6 +946,7 @@ export default function CharactersPage() {
                           setLoraTriggerWord(char.lora_trigger_word || `ch_${char.code.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
                           setLoraSteps(1000);
                           setLoraFiles([]);
+                          setExpressionFiles([]);
                         }}
                         className="text-xs bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/30 text-[#D4AF37] px-3.5 py-2 rounded-xl transition-all font-thai"
                       >
@@ -917,7 +964,11 @@ export default function CharactersPage() {
                           ตั้งค่าการฝึกสอนปัญญาประดิษฐ์ (LoRA Training)
                         </span>
                         <button 
-                          onClick={() => setActiveLoraCharId(null)} 
+                          onClick={() => {
+                            setActiveLoraCharId(null);
+                            setLoraFiles([]);
+                            setExpressionFiles([]);
+                          }} 
                           className="text-text-muted hover:text-text-primary p-0.5 rounded-full hover:bg-white/5"
                         >
                           <X className="w-4 h-4" />
@@ -1074,6 +1125,95 @@ export default function CharactersPage() {
                                     title="ลบรูปภาพ"
                                   >
                                     <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Optional Expressions Section */}
+                      <div className="space-y-3 p-4 bg-[#1C1C1E]/50 border border-white/5 rounded-2xl">
+                        <div className="space-y-1">
+                          <label className="block text-[11px] font-bold text-[#D4AF37] font-thai">
+                            2. เพิ่มรูปภาพแสดงอารมณ์และสีหน้าเสริม (ทางเลือก - ไม่บังคับ)
+                          </label>
+                          <span className="text-[10px] text-text-muted font-thai block leading-normal">
+                            * อัปโหลดภาพตัวอย่างใบหน้าเพื่อฝึกอารมณ์/ท่าทางเฉพาะจุด (เพิ่มความแม่นยำตอนทำภาพและวิดีโอ)
+                          </span>
+                        </div>
+
+                        {/* Emotion grid selectors */}
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                          {[
+                            { id: 'shocked', label: '😮 ตกใจ / ช็อค', desc: 'Overreact' },
+                            { id: 'happy', label: '😊 ยิ้มแย้ม / หัวเราะ', desc: 'Happy' },
+                            { id: 'sad', label: '😢 ร้องไห้ / เศร้า', desc: 'Sad' },
+                            { id: 'angry', label: '😡 โกรธ / จริงจัง', desc: 'Angry' },
+                            { id: 'custom', label: '🎭 แท็กอื่น ๆ (ระบุเอง)', desc: 'Custom' }
+                          ].map(cat => (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => {
+                                if (cat.id === 'custom') {
+                                  const tagPrompt = prompt('กรอกข้อความภาษาอังกฤษเพื่อระบุสีหน้า/ท่าทาง เช่น "pointing at viewer" หรือ "winking":');
+                                  if (!tagPrompt || !tagPrompt.trim()) return;
+                                  setExpressionCustomTagInput(tagPrompt.trim());
+                                  setActiveExpressionCategory('custom');
+                                  setTimeout(() => expressionInputRef.current?.click(), 100);
+                                } else {
+                                  setActiveExpressionCategory(cat.id as any);
+                                  setTimeout(() => expressionInputRef.current?.click(), 100);
+                                }
+                              }}
+                              className="bg-surface-2 hover:bg-surface-1 border border-white/10 hover:border-[#D4AF37]/50 p-2 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-0.5 rounded-xl"
+                            >
+                              <span className="text-[10px] font-bold text-text-primary font-thai leading-tight">{cat.label}</span>
+                              <span className="text-[8px] text-text-muted font-mono leading-none">{cat.desc}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Hidden Input for Expression Uploads */}
+                        <input
+                          ref={expressionInputRef}
+                          type="file"
+                          multiple
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (!activeExpressionCategory) return;
+                            handleExpressionFilesChange(e, activeExpressionCategory, activeExpressionCategory === 'custom' ? expressionCustomTagInput : undefined);
+                          }}
+                        />
+
+                        {/* Expression thumbnails preview */}
+                        {expressionFiles.length > 0 && (
+                          <div className="space-y-2 font-thai pt-2 border-t border-white/5">
+                            <span className="text-xs font-bold text-text-secondary block">
+                              🖼️ รูปภาพเสริมแสดงอารมณ์ ({expressionFiles.length} รูป):
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-56 overflow-y-auto p-2 bg-surface-2 rounded-xl border border-white/5">
+                              {expressionFiles.map((item, idx) => (
+                                <div key={idx} className="bg-surface-3 p-2 rounded-xl border border-white/5 flex flex-col items-center gap-1 relative group">
+                                  <img src={item.preview} alt="" className="w-12 h-12 object-cover rounded-lg" />
+                                  <span className="text-[9px] text-text-muted truncate max-w-[80px]" title={item.file.name}>
+                                    {item.file.name}
+                                  </span>
+                                  
+                                  <span className="px-1 py-0.5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] text-[8px] rounded font-bold uppercase truncate max-w-[80px]">
+                                    {item.category === 'custom' ? item.customTag : item.category}
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => removeExpressionFile(idx)}
+                                    className="absolute -top-1.5 -right-1.5 p-1 bg-accent-danger text-white rounded-full transition-all shadow-md opacity-0 group-hover:opacity-100"
+                                    title="ลบรูปภาพ"
+                                  >
+                                    <X className="w-2.5 h-2.5" />
                                   </button>
                                 </div>
                               ))}

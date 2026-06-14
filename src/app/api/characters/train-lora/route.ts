@@ -78,6 +78,9 @@ export async function POST(req: NextRequest) {
     const steps = parseInt(formData.get('steps') as string || '1000', 10);
     const imageFiles = formData.getAll('images') as File[];
     const angles = formData.getAll('angles') as string[];
+    const expressionImages = formData.getAll('expression_images') as File[];
+    const expressionCategories = formData.getAll('expression_categories') as string[];
+    const expressionCustomTags = formData.getAll('expression_custom_tags') as string[];
 
     if (!characterId || !userEmail) {
       return NextResponse.json(
@@ -190,18 +193,68 @@ export async function POST(req: NextRequest) {
       })
     );
 
+    // Concurrently analyze expression images using Vision API and map categories
+    const mapCategoryToTags = (category: string, customTag?: string) => {
+      switch (category) {
+        case 'shocked':
+          return 'overreacting shocked face, mouth wide open in disbelief, eyes popped out';
+        case 'happy':
+          return 'smiling cheerfully, laughing happily, joyful expression';
+        case 'sad':
+          return 'sad face, crying expression, tears on cheeks';
+        case 'angry':
+          return 'angry expression, frowning face, annoyed look';
+        case 'custom':
+          return customTag || 'expressive face';
+        default:
+          return 'expressive face';
+      }
+    };
+
+    console.log(`[LoRA Train] Analyzing ${expressionImages.length} expression images...`);
+    const expressionResults = await Promise.all(
+      expressionImages.map(async (file, idx) => {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const mime = file.type || 'image/png';
+        const category = expressionCategories[idx] || 'custom';
+        const customTag = expressionCustomTags[idx] || '';
+        const emotionTags = mapCategoryToTags(category, customTag);
+        
+        // Analyze image details using Vision API
+        const visionResult = await analyzeImageWithVision(buffer, mime);
+        return { file, buffer, emotionTags, description: visionResult.description };
+      })
+    );
+
     // 1. Create ZIP in memory
     const zip = new JSZip();
+    let imgIndex = 1;
+
+    // Add core images
     for (let i = 0; i < analysisResults.length; i++) {
       const { file, buffer, analysis } = analysisResults[i];
       const ext = file.name.split('.').pop() || 'png';
-      const baseName = `image_${i + 1}`;
+      const baseName = `image_${imgIndex++}`;
       
       // Save image file
       zip.file(`${baseName}.${ext}`, buffer);
       
       // Save caption file (.txt)
       const caption = `a photo of ${triggerWord}, ${analysis.angle}, ${analysis.description}`;
+      zip.file(`${baseName}.txt`, caption);
+    }
+
+    // Add expression images
+    for (let i = 0; i < expressionResults.length; i++) {
+      const { file, buffer, emotionTags, description } = expressionResults[i];
+      const ext = file.name.split('.').pop() || 'png';
+      const baseName = `image_${imgIndex++}`;
+      
+      // Save image file
+      zip.file(`${baseName}.${ext}`, buffer);
+      
+      // Save caption file (.txt)
+      const caption = `a photo of ${triggerWord}, ${emotionTags}, ${description}`;
       zip.file(`${baseName}.txt`, caption);
     }
 
