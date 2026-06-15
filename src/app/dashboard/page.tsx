@@ -7,12 +7,13 @@ import Navbar from '@/components/Navbar';
 import Mode1Form from '@/components/Mode1Form';
 import Mode2Form from '@/components/Mode2Form';
 import ImageTabForm from '@/components/ImageTabForm';
-import { Film, Scan, Loader2, Lock, Image as ImageIcon } from 'lucide-react';
+import DialogueTabForm from '@/components/DialogueTabForm';
+import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare } from 'lucide-react';
 
 export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'mode2'>('mode1');
+  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'mode2'>('mode1');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -53,7 +54,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Mode Tabs */}
-        <div className="flex gap-1 p-1 rounded-2xl bg-white border border-gray-200 shadow-sm mb-8">
+        <div className="flex flex-wrap sm:flex-nowrap gap-1 p-1 rounded-2xl bg-white border border-gray-200 shadow-sm mb-8">
           <button
             onClick={() => setActiveTab('mode1')}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
@@ -76,6 +77,18 @@ export default function DashboardPage() {
           >
             <ImageIcon className="w-4 h-4" />
             <span className="font-thai">สร้างรูปภาพ (Image Gen)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('dialogue')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
+              activeTab === 'dialogue'
+                ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
+                : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span className="font-thai">สร้างบทสนทนา (Dialogue Gen)</span>
           </button>
 
           <button
@@ -117,6 +130,16 @@ export default function DashboardPage() {
                   สร้างภาพประกอบสื่อการสอนจากข้อความ แปลงสไตล์ภาพ แก้ไขจุดบกพร่อง และขยายขอบเฟรมด้วยโมเดล <span className="font-semibold text-[#D4AF37]">Flux.1 Dev</span> ที่มีความเที่ยงตรงสูง
                 </p>
               </>
+            ) : activeTab === 'dialogue' ? (
+              <>
+                <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5 text-[#D4AF37]" />
+                  ระบบสร้างวิดีโอบทสนทนาหลายตัวละคร (Dialogue Engine)
+                </h2>
+                <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
+                  สร้างวิดีโอบทสนทนาสลับกล้องระหว่างผู้สอนและผู้เรียนเสมือนจริง จัดการลำดับเสียงพากย์ สีหน้าอารมณ์ และต่อวิดีโอรวมเข้าด้วยกันอย่างสมบูรณ์
+                </p>
+              </>
             ) : (
               <>
                 <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
@@ -135,6 +158,8 @@ export default function DashboardPage() {
             <Mode1Form onVideoGenerated={handleVideoGenerated} />
           ) : activeTab === 'image' ? (
             <ImageTabForm onImageGenerated={handleVideoGenerated} />
+          ) : activeTab === 'dialogue' ? (
+            <DialogueTabForm />
           ) : isAdmin ? (
             <Mode2Form onVideoGenerated={handleVideoGenerated} />
           ) : (
