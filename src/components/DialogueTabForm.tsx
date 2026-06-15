@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { THAI_VOICES, ASPECT_RATIOS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
-import { getCharacters } from '@/lib/supabase-db';
+import { getCharacters, supabase } from '@/lib/supabase-db';
+import DialogueCanvasWorkspace, { type FaceTag } from './DialogueCanvasWorkspace';
 
 interface Character {
   id: string;
@@ -90,6 +91,28 @@ export default function DialogueTabForm() {
   // Audio preview helper
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Base Scene Image & Face tagging states
+  const [baseImageFile, setBaseImageFile] = useState<File | null>(null);
+  const [baseImagePreview, setBaseImagePreview] = useState<string | null>(null);
+  const [faceTags, setFaceTags] = useState<FaceTag[]>([]);
+
+  const handleBaseImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBaseImageFile(file);
+    setBaseImagePreview(URL.createObjectURL(file));
+    setFaceTags([]); // Clear previous tags when changing base image
+  };
+
+  const clearBaseImage = () => {
+    setBaseImageFile(null);
+    if (baseImagePreview) {
+      URL.revokeObjectURL(baseImagePreview);
+    }
+    setBaseImagePreview(null);
+    setFaceTags([]);
+  };
 
   // Load characters on mount
   useEffect(() => {
@@ -436,6 +459,34 @@ export default function DialogueTabForm() {
     const videoUrls = cards.map((c) => c.videoUrl as string);
 
     try {
+      // 1. Upload base image to Supabase if present
+      let uploadedBaseImageUrl = '';
+      if (baseImageFile && supabase) {
+        setMergeError('กำลังอัปโหลดรูปภาพฉากหลัง...');
+        const timestamp = Date.now();
+        const fileExt = baseImageFile.name.split('.').pop() || 'png';
+        const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${timestamp}_base.${fileExt}`;
+
+        const { data, error: uploadError } = await supabase.storage
+          .from('kruth-ai-assets')
+          .upload(storagePath, baseImageFile, {
+            upsert: true
+          });
+
+        if (uploadError) {
+          throw new Error(`อัปโหลดรูปภาพฉากหลังล้มเหลว: ${uploadError.message}`);
+        }
+
+        // Get public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('kruth-ai-assets')
+          .getPublicUrl(storagePath);
+        uploadedBaseImageUrl = publicUrl;
+      }
+
+      setMergeError(null);
+
+      // 2. Call merge API with baseImageUrl and faceTags metadata
       const response = await fetch('/api/merge-dialogue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -444,7 +495,9 @@ export default function DialogueTabForm() {
           videoUrls,
           user_email: user?.email || '',
           user_id: user?.id || '',
-          aspectRatio
+          aspectRatio,
+          baseImageUrl: uploadedBaseImageUrl || null,
+          faceTags: faceTags.length > 0 ? faceTags : null
         })
       });
 
@@ -526,6 +579,53 @@ export default function DialogueTabForm() {
               <option value="cosyvoice">🔥 SiliconFlow CosyVoice2</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Background Image Upload & Face Tagging Section */}
+      <div className="bg-[#FAF8F5] border border-gray-100 p-6 rounded-2xl space-y-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 font-thai flex items-center gap-2">
+          <Film className="w-4 h-4 text-[#D4AF37]" /> ฉากหลังตัวละครหลักและการติดแท็กใบหน้า (Base Scene & Face Tagging - ทางเลือก)
+        </h3>
+        
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+            {/* File Input */}
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-gray-600 mb-2 font-thai">
+                ภาพฉากหลังกลุ่มหลัก (สำหรับติดแท็กใบหน้าเพื่อให้ตัวละครพูดอยู่ร่วมเฟรมเดียวกัน)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleBaseImageChange}
+                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#1A1A1A] file:text-[#D4AF37] hover:file:opacity-90 font-thai cursor-pointer"
+              />
+            </div>
+            
+            {/* Reset Button */}
+            {baseImagePreview && (
+              <button
+                type="button"
+                onClick={clearBaseImage}
+                className="mt-6 text-xs text-red-500 hover:text-red-700 font-thai font-semibold border border-red-200 px-4 py-2 rounded-xl hover:bg-red-50 transition-all flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> ล้างรูปภาพและแท็ก
+              </button>
+            )}
+          </div>
+          
+          {/* Canvas Workspace Component */}
+          {baseImagePreview && characterList.length > 0 && (
+            <div className="bg-white border border-gray-150 rounded-2xl p-4 shadow-inner">
+              <DialogueCanvasWorkspace
+                imageUrl={baseImagePreview}
+                characters={characterList}
+                faceTags={faceTags}
+                onTagsChange={setFaceTags}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -636,9 +736,17 @@ export default function DialogueTabForm() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {/* Character Select */}
                           <div>
-                            <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider font-thai">
-                              ตัวละครผู้พูด
-                            </label>
+                            <div className="flex justify-between items-center mb-1.5">
+                              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider font-thai">
+                                ตัวละครผู้พูด
+                              </label>
+                              {/* Tagged Check Indicator */}
+                              {faceTags.some(tag => tag.characterId === card.characterId) && (
+                                <span className="text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded-md font-thai flex items-center gap-0.5 animate-pulse">
+                                  🎯 พิกัดเชื่อมโยงแล้ว
+                                </span>
+                              )}
+                            </div>
                             <select
                               value={card.characterId}
                               onChange={(e) => updateCard(card.id, { characterId: e.target.value })}

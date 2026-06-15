@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "@supabase/supabase-js": "^2.107.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/jszip": "^3.4.1",

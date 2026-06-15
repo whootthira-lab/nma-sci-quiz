@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { videoUrls, user_email, user_id, title, aspectRatio } = body;
+    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags } = body;
 
     // Validate payload
     if (!videoUrls || !Array.isArray(videoUrls) || videoUrls.length < 2) {
@@ -167,7 +167,9 @@ export async function POST(req: NextRequest) {
           video_urls: videoUrls,
           aspect_ratio: aspectRatio || '16:9',
           storage_path: storagePath,
-          duration_estimate: 0 // Will be determined by playback
+          duration_estimate: 0,
+          base_image_url: baseImageUrl || null,
+          face_tags: faceTags || null
         }
       });
 
