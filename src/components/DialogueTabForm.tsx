@@ -38,7 +38,6 @@ interface Character {
   lora_model_url?: string;
   lora_trigger_word?: string;
 }
-
 interface DialogueCardData {
   id: string;
   characterId: string;
@@ -51,7 +50,75 @@ interface DialogueCardData {
   progressPercent?: number;
   progressMessage?: string;
   videoUrl?: string;
+  cropX?: number;
+  cropY?: number;
+  cropW?: number;
+  cropH?: number;
 }
+
+const cropFaceImage = async (
+  imgUrl: string,
+  tag: FaceTag
+): Promise<{ file: File; cropX: number; cropY: number; cropW: number; cropH: number }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // Avoid CORS tainted canvas issues
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('ไม่สามารถสร้าง Context ของ Canvas ได้'));
+          return;
+        }
+        
+        const imgW = img.naturalWidth;
+        const imgH = img.naturalHeight;
+
+        // Golden Ratio layout: Expand box to capture head & shoulders naturally
+        const marginX = tag.boxWidth * 0.50; // expand 50% left/right
+        const marginYTop = tag.boxHeight * 0.40; // expand 40% up
+        const marginYBottom = tag.boxHeight * 1.20; // expand 120% down for neck/shoulders
+
+        const relativeX = Math.max(0, tag.boxX - marginX);
+        const relativeY = Math.max(0, tag.boxY - marginYTop);
+        const relativeW = Math.min(1 - relativeX, tag.boxWidth + 2 * marginX);
+        const relativeH = Math.min(1 - relativeY, tag.boxHeight + marginYTop + marginYBottom);
+
+        // Absolute pixel dimensions
+        const sourceX = Math.round(relativeX * imgW);
+        const sourceY = Math.round(relativeY * imgH);
+        const sourceWidth = Math.round(relativeW * imgW);
+        const sourceHeight = Math.round(relativeH * imgH);
+
+        canvas.width = sourceWidth;
+        canvas.height = sourceHeight;
+
+        // Draw cropped section
+        ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error('การประมวลผลครอปรูปภาพล้มเหลว'));
+            return;
+          }
+          const file = new File([blob], `cropped_${tag.characterId}.png`, { type: 'image/png' });
+          resolve({
+            file,
+            cropX: relativeX,
+            cropY: relativeY,
+            cropW: relativeW,
+            cropH: relativeH
+          });
+        }, 'image/png');
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('ดาวน์โหลดรูปฉากหลังเพื่อครอปไม่สำเร็จ'));
+    img.src = imgUrl;
+  });
+};
 
 export default function DialogueTabForm() {
   const { user } = useAuth();
@@ -333,13 +400,49 @@ export default function DialogueTabForm() {
       progressMessage: 'กำลังอัปโหลดข้อมูลคำขอ...'
     });
 
+    let cropX: number | undefined;
+    let cropY: number | undefined;
+    let cropW: number | undefined;
+    let cropH: number | undefined;
+
     try {
       const formData = new FormData();
       
-      // Starting avatar image
-      const avatarUrl = getAvatarUrl(char);
-      if (avatarUrl) {
-        formData.append('character_image_url', avatarUrl);
+      // Check if character is linked to a face on base image
+      const linkedTag = faceTags.find(t => t.characterId === card.characterId);
+      if (baseImagePreview && linkedTag) {
+        updateCard(cardId, {
+          status: 'generating',
+          progressMessage: 'กำลังครอปรูปภาพใบหน้า...'
+        });
+        const croppedResult = await cropFaceImage(baseImagePreview, linkedTag);
+        formData.append('image', croppedResult.file);
+        
+        cropX = croppedResult.cropX;
+        cropY = croppedResult.cropY;
+        cropW = croppedResult.cropW;
+        cropH = croppedResult.cropH;
+        
+        updateCard(cardId, {
+          cropX,
+          cropY,
+          cropW,
+          cropH
+        });
+        console.log(`[DialogueForm] Cropped face for card:`, cropX, cropY, cropW, cropH);
+      } else {
+        // Starting avatar image fallback
+        const avatarUrl = getAvatarUrl(char);
+        if (avatarUrl) {
+          formData.append('character_image_url', avatarUrl);
+        }
+        
+        updateCard(cardId, {
+          cropX: undefined,
+          cropY: undefined,
+          cropW: undefined,
+          cropH: undefined
+        });
       }
 
       formData.append('script_text', card.scriptText);
@@ -456,7 +559,13 @@ export default function DialogueTabForm() {
     setMergeError(null);
     setMergedVideoUrl(null);
 
-    const videoUrls = cards.map((c) => c.videoUrl as string);
+    const videoClips = cards.map((c) => ({
+      videoUrl: c.videoUrl as string,
+      cropX: c.cropX ?? null,
+      cropY: c.cropY ?? null,
+      cropW: c.cropW ?? null,
+      cropH: c.cropH ?? null
+    }));
 
     try {
       // 1. Upload base image to Supabase if present
@@ -486,13 +595,13 @@ export default function DialogueTabForm() {
 
       setMergeError(null);
 
-      // 2. Call merge API with baseImageUrl and faceTags metadata
+      // 2. Call merge API with videoClips, baseImageUrl and faceTags metadata
       const response = await fetch('/api/merge-dialogue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: projectTitle,
-          videoUrls,
+          videoClips,
           user_email: user?.email || '',
           user_id: user?.id || '',
           aspectRatio,
