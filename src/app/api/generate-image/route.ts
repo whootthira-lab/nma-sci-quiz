@@ -366,6 +366,7 @@ export async function POST(req: NextRequest) {
           metadata: {
             mode: `image-${imageMode}`, // registers as image mode: image-text_to_image, image-image_to_image, image-inpainting, image-outpainting
             model_name: modelType,
+            model_endpoint: modelEndpoint,
             aspect_ratio: aspectRatio,
             storage_path: outputImagePath,
             image_path: imagePath || null,

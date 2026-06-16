@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
+// Configure ffmpeg path
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 export const dynamic = 'force-dynamic';
 
@@ -40,26 +48,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ERROR', error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
     }
 
-    const isCinema = modelType === 'cinema';
-    const isMotionControl = modelType === 'motion-control';
-    const isGrok = modelType === 'grok-video';
-    const isFlux = modelType?.includes('flux') || modelType === 'fill';
-    const modelEndpoint = isCinema
-      ? 'fal-ai/wan-i2v'
-      : (isMotionControl 
-          ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-          : (isGrok 
-              ? 'xai/grok-imagine-video/v1.5/image-to-video' 
-              : (isFlux 
-                  ? 'fal-ai/flux/dev' 
-                  : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video'
-                )
-            )
-        );
-
-    // Fal.ai queue parent namespace is always the first two segments of the model path
-    const queueNamespace = modelEndpoint.split('/').slice(0, 2).join('/');
-
     // Supabase client initialization to check if lipsync is active
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -75,6 +63,32 @@ export async function POST(req: NextRequest) {
       genRow = dbGenRow;
     } catch (dbErr) {
       console.warn('[Supabase DB Read] Could not find or read generation metadata:', dbErr);
+    }
+
+    let modelEndpoint = genRow?.metadata?.model_endpoint || '';
+    if (!modelEndpoint) {
+      const isCinema = modelType === 'cinema';
+      const isMotionControl = modelType === 'motion-control';
+      const isGrok = modelType === 'grok-video';
+      const isFlux = modelType?.includes('flux') || modelType === 'fill';
+      modelEndpoint = isCinema
+        ? 'fal-ai/wan-i2v'
+        : (isMotionControl 
+            ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
+            : (isGrok 
+                ? 'xai/grok-imagine-video/v1.5/image-to-video' 
+                : (isFlux 
+                    ? 'fal-ai/flux/dev' 
+                    : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video'
+                  )
+              )
+          );
+    }
+
+    // Reconstruct queueNamespace: Kling uses parent category, others use exact model
+    let queueNamespace = modelEndpoint;
+    if (modelEndpoint.startsWith('fal-ai/kling-video')) {
+      queueNamespace = 'fal-ai/kling-video';
     }
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
@@ -265,54 +279,202 @@ export async function POST(req: NextRequest) {
       const fileTypeLabel = isImage ? 'รูปภาพ' : 'วิดีโอ';
       console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลด${fileTypeLabel}มาเก็บที่ ${finalStorageProvider}...`);
 
-      const videoRes = await fetch(tempUrl);
-      const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+      let finalVideoUrl = tempUrl;
+      const ambientPrompt = genRow?.metadata?.ambient_prompt;
+      let isMixed = false;
 
-      let publicUrl = '';
-      if (finalStorageProvider === 'firebase') {
-        publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, contentType);
-      } else {
-        // Upload to Supabase Storage
-        const { error: uploadError } = await supabase.storage
-          .from('kruth-ai-assets')
-          .upload(videoPath, videoBuffer, {
-            contentType,
-            upsert: true,
+      if (!isImage && ambientPrompt) {
+        console.log(`[Ambient Sound] Generating background audio for prompt: "${ambientPrompt}"`);
+        try {
+          const stableAudioRes = await fetch('https://fal.run/fal-ai/stable-audio', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              prompt: ambientPrompt,
+              seconds_total: 15
+            })
           });
 
-        if (uploadError) {
-          throw new Error(`อัปโหลด${fileTypeLabel}ขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
+          if (stableAudioRes.ok) {
+            const audioData = await stableAudioRes.json();
+            const ambientAudioUrl = audioData.audio?.url;
+            if (ambientAudioUrl) {
+              console.log(`[Ambient Sound] Generated audio URL: ${ambientAudioUrl}. Mixing with video...`);
+              
+              // We need a temp directory to run FFmpeg local mix
+              const tempDir = path.join(os.tmpdir(), `kruth-mix-${Date.now()}`);
+              await fs.promises.mkdir(tempDir, { recursive: true });
+
+              const localVideoPath = path.join(tempDir, 'input_video.mp4');
+              const localAudioPath = path.join(tempDir, 'ambient_audio.mp3');
+              const localOutputPath = path.join(tempDir, 'mixed_output.mp4');
+
+              // Download video and audio
+              const videoBuffer = Buffer.from(await (await fetch(tempUrl)).arrayBuffer());
+              await fs.promises.writeFile(localVideoPath, videoBuffer);
+
+              const audioBuffer = Buffer.from(await (await fetch(ambientAudioUrl)).arrayBuffer());
+              await fs.promises.writeFile(localAudioPath, audioBuffer);
+
+              // Check if lipsynced audio or TTS is present
+              const hasSpeechAudio = !!(genRow?.audio_prompt);
+
+              // Run FFmpeg to mix them together
+              await new Promise<void>((resolveMix, rejectMix) => {
+                let cmd = ffmpeg()
+                  .input(localVideoPath)
+                  .input(localAudioPath);
+
+                if (hasSpeechAudio) {
+                  // Mix speech and ambient audio (speech is 100%, ambient is 15%)
+                  cmd = cmd
+                    .complexFilter([
+                      '[1:a]volume=0.15[bg]',
+                      '[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]'
+                    ])
+                    .outputOptions([
+                      '-map 0:v',
+                      '-map [a]',
+                      '-c:v copy',
+                      '-c:a aac'
+                    ]);
+                } else {
+                  // Direct mapping of ambient audio (since no speech audio exists)
+                  cmd = cmd
+                    .outputOptions([
+                      '-map 0:v',
+                      '-map 1:a',
+                      '-c:v copy',
+                      '-c:a aac',
+                      '-shortest'
+                    ]);
+                }
+
+                cmd
+                  .save(localOutputPath)
+                  .on('end', () => {
+                    console.log('[Ambient Sound] Audio mixed successfully.');
+                    resolveMix();
+                  })
+                  .on('error', (err) => {
+                    console.error('[Ambient Sound] FFmpeg mix error:', err);
+                    rejectMix(err);
+                  });
+              });
+
+              // Read output file buffer
+              const mixedVideoBuffer = await fs.promises.readFile(localOutputPath);
+              
+              // Upload mixed video
+              let publicUrl = '';
+              if (finalStorageProvider === 'firebase') {
+                publicUrl = await uploadToFirebaseStorage(mixedVideoBuffer, videoPath, contentType);
+              } else {
+                const { error: uploadError } = await supabase.storage
+                  .from('kruth-ai-assets')
+                  .upload(videoPath, mixedVideoBuffer, {
+                    contentType,
+                    upsert: true,
+                  });
+
+                if (uploadError) throw uploadError;
+
+                const { data: { publicUrl: supabaseUrl } } = supabase.storage
+                  .from('kruth-ai-assets')
+                  .getPublicUrl(videoPath);
+                publicUrl = supabaseUrl;
+              }
+
+              // Clean up temp files
+              try {
+                await fs.promises.unlink(localVideoPath);
+                await fs.promises.unlink(localAudioPath);
+                await fs.promises.unlink(localOutputPath);
+                await fs.promises.rmdir(tempDir);
+              } catch (e) {
+                console.warn('[Ambient Sound] Clean up error:', e);
+              }
+
+              // Update generation row
+              await supabase
+                .from('generations')
+                .update({
+                  status: 'completed',
+                  video_url: publicUrl,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('fal_request_id', requestId);
+
+              isMixed = true;
+              return NextResponse.json({ 
+                status: 'COMPLETED', 
+                videoUrl: publicUrl,
+                progressPercent: 100,
+                progressMessage: '✅ เสร็จสมบูรณ์ (พร้อมเสียงบรรยากาศ)!'
+              });
+            }
+          } else {
+            console.error('[Ambient Sound] Stable Audio API failed:', await stableAudioRes.text());
+          }
+        } catch (mixErr) {
+          console.error('[Ambient Sound] Mixing failed, falling back to original video:', mixErr);
+        }
+      }
+
+      // Fallback path (normal behavior or if mixing failed/was skipped)
+      if (!isMixed) {
+        const videoRes = await fetch(tempUrl);
+        const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+
+        let publicUrl = '';
+        if (finalStorageProvider === 'firebase') {
+          publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, contentType);
+        } else {
+          // Upload to Supabase Storage
+          const { error: uploadError } = await supabase.storage
+            .from('kruth-ai-assets')
+            .upload(videoPath, videoBuffer, {
+              contentType,
+              upsert: true,
+            });
+
+          if (uploadError) {
+            throw new Error(`อัปโหลด${fileTypeLabel}ขึ้น Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
+          }
+
+          // Get Public URL
+          const { data: { publicUrl: supabaseUrl } } = supabase.storage
+            .from('kruth-ai-assets')
+            .getPublicUrl(videoPath);
+          publicUrl = supabaseUrl;
         }
 
-        // Get Public URL
-        const { data: { publicUrl: supabaseUrl } } = supabase.storage
-          .from('kruth-ai-assets')
-          .getPublicUrl(videoPath);
-        publicUrl = supabaseUrl;
+        console.log(`✅ [KRUTH Status] บันทึกวิดีโอลง ${finalStorageProvider} สำเร็จ! URL: ${publicUrl}`);
+
+        // Update generation status in Supabase
+        const { error: dbError } = await supabase
+          .from('generations')
+          .update({
+            status: 'completed',
+            video_url: publicUrl,
+            updated_at: new Date().toISOString()
+          })
+          .eq('fal_request_id', requestId);
+
+        if (dbError) {
+          console.error('Failed to update generation row in Supabase:', dbError);
+        }
+
+        return NextResponse.json({ 
+          status: 'COMPLETED', 
+          videoUrl: publicUrl,
+          progressPercent: 100,
+          progressMessage: '✅ เสร็จสมบูรณ์!'
+        });
       }
-
-      console.log(`✅ [KRUTH Status] บันทึกวิดีโอลง ${finalStorageProvider} สำเร็จ! URL: ${publicUrl}`);
-
-      // Update generation status in Supabase
-      const { error: dbError } = await supabase
-        .from('generations')
-        .update({
-          status: 'completed',
-          video_url: publicUrl,
-          updated_at: new Date().toISOString()
-        })
-        .eq('fal_request_id', requestId);
-
-      if (dbError) {
-        console.error('Failed to update generation row in Supabase:', dbError);
-      }
-
-      return NextResponse.json({ 
-        status: 'COMPLETED', 
-        videoUrl: publicUrl,
-        progressPercent: 100,
-        progressMessage: '✅ เสร็จสมบูรณ์!'
-      });
 
     } else if (currentStatus === 'FAILED') {
       console.error(`❌ [KRUTH Status] AI แจ้งเตือนข้อผิดพลาด:`, statusData.error);

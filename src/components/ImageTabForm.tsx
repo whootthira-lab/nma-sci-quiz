@@ -15,7 +15,8 @@ import {
   Move,
   Loader2,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Wand2
 } from 'lucide-react';
 
 interface ImageTabFormProps {
@@ -30,6 +31,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   
   // Parameters states
   const [prompt, setPrompt] = useState('');
+  const [enhancing, setEnhancing] = useState(false);
   const [modelType, setModelType] = useState('flux_dev'); // 'flux_dev' | 'flux_schnell'
   const [visualStyle, setVisualStyle] = useState('none');
   const [aspectRatio, setAspectRatio] = useState('1:1'); // '1:1' | '16:9' | '9:16'
@@ -678,6 +680,36 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     setCameraAngle('default');
   };
 
+  const enhancePromptWithAI = async () => {
+    if (enhancing) return;
+    setEnhancing(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const formData = new FormData();
+      formData.append('prompt', prompt);
+      formData.append('type', 'image');
+      if (uploadedImage) {
+        formData.append('image', uploadedImage);
+      }
+      const res = await fetch('/api/generate-prompt', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success && data.prompt) {
+        setPrompt(data.prompt);
+        setSuccessMsg('✨ ปรับแต่งรายละเอียดด้วย AI สำเร็จ!');
+      } else {
+        setErrorMsg(data.error || 'เขียน Prompt ด้วย AI ไม่สำเร็จ');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อระบบ AI');
+    } finally {
+      setEnhancing(false);
+    }
+  };
+
   // --- Submit & API Generation logic ---
   const generateImage = async () => {
     setErrorMsg('');
@@ -887,6 +919,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
       // Start Polling loop using video-status (since it's now updated to support images)
       let checkCount = 0;
+      let failCount = 0;
       const intervalId = setInterval(async () => {
         checkCount++;
         try {
@@ -902,9 +935,17 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
           });
 
           if (!statusRes.ok) {
-            console.warn('Status check failed');
+            failCount++;
+            console.warn(`Status check failed (${failCount}/5)`);
+            if (failCount >= 5) {
+              clearInterval(intervalId);
+              setErrorMsg('การเชื่อมต่อกับเซิร์ฟเวอร์ตรวจสถานะล้มเหลวติดต่อกัน กรุณาลองใหม่อีกครั้ง');
+              setLoading(false);
+            }
             return;
           }
+
+          failCount = 0;
 
           const statusData = await statusRes.json();
           const { status, progressMessage: msg, progressPercent: pct, videoUrl } = statusData;
@@ -1000,9 +1041,24 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         <div className="lg:col-span-7 space-y-5">
           {/* Prompt */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-semibold text-text-secondary uppercase">
-              ✍️ คำอธิบายรายละเอียดภาพ (Prompt) *
-            </label>
+            <div className="flex justify-between items-center mb-1.5">
+              <label className="block text-xs font-semibold text-text-secondary uppercase">
+                ✍️ คำอธิบายรายละเอียดภาพ (Prompt) *
+              </label>
+              <button
+                type="button"
+                onClick={enhancePromptWithAI}
+                disabled={enhancing}
+                className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold text-[#D4AF37] hover:text-[#D4AF37]/80 disabled:opacity-50 transition-colors cursor-pointer bg-transparent border-0 outline-none"
+              >
+                {enhancing ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-text-muted" />
+                ) : (
+                  <Wand2 className="w-3 h-3" />
+                )}
+                ให้ AI ช่วยเขียน Prompt
+              </button>
+            </div>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}

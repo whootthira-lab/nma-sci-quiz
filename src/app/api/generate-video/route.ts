@@ -364,6 +364,7 @@ export async function POST(req: NextRequest) {
     const motionAudioSource = formData.get('motion_audio_source') as string || 'video';
     const scriptText = formData.get('script_text') as string;
     const situationPrompt = formData.get('situation_prompt') as string;
+    const ambientPrompt = formData.get('ambient_prompt') as string || '';
     const endSituationPrompt = formData.get('end_situation_prompt') as string || '';
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
@@ -680,6 +681,7 @@ export async function POST(req: NextRequest) {
       (isCinema && activeProvider === 'siliconflow');
 
     let requestId = '';
+    let modelEndpoint = '';
 
     if (isSiliconFlow) {
       const sfKey = process.env.SILICONFLOW_API_KEY || process.env.NEXT_PUBLIC_SILICONFLOW_API_KEY || '';
@@ -696,6 +698,8 @@ export async function POST(req: NextRequest) {
         // Route standard Cinema mode to active Wan 2.2.
         sfModel = videoMode === 'text_to_video' ? 'Wan-AI/Wan2.2-T2V-A14B' : 'Wan-AI/Wan2.2-I2V-A14B';
       }
+
+      modelEndpoint = sfModel;
 
       const sfPayload: Record<string, any> = {
         model: sfModel,
@@ -742,7 +746,7 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      const modelEndpoint = isCinema
+      modelEndpoint = isCinema
           ? (videoMode === 'text_to_video' ? 'fal-ai/wan-t2v' : 'fal-ai/wan-i2v')
           : (isMotionControlModel 
               ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
@@ -911,6 +915,8 @@ export async function POST(req: NextRequest) {
             mode: isMotionControl ? 'motion-control' : videoMode,
             script_text: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : scriptText),
             situation_prompt: situationPrompt || '',
+            ambient_prompt: ambientPrompt || '',
+            model_endpoint: modelEndpoint,
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             visual_style: visualStyle,

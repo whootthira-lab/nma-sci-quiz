@@ -13,7 +13,8 @@ import {
   AlertCircle,
   X,
   Settings,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
@@ -41,6 +42,12 @@ interface Character {
   lora_steps?: number;
 }
 
+async function urlToFile(url: string, filename: string, mimeType: string): Promise<File> {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  return new File([buf], filename, { type: mimeType });
+}
+
 interface Mode1FormProps {
   onVideoGenerated: () => void;
 }
@@ -60,6 +67,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [scriptText, setScriptText] = useState('');
   const [situationPrompt, setSituationPrompt] = useState('');
   const [endSituationPrompt, setEndSituationPrompt] = useState('');
+  const [ambientPrompt, setAmbientPrompt] = useState('');
+  const [enhancingSituation, setEnhancingSituation] = useState(false);
+  const [enhancingAmbient, setEnhancingAmbient] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [videoMode, setVideoMode] = useState<'image_to_video' | 'text_to_video'>('image_to_video');
@@ -408,6 +418,98 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     setTempImageSrc(null);
   }, [croppingTarget]);
 
+  const enhanceSituationWithAI = async () => {
+    if (enhancingSituation) return;
+    setEnhancingSituation(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('prompt', situationPrompt);
+      formData.append('type', 'video');
+      
+      if (imageFile) {
+        formData.append('image', imageFile);
+      } else if (imagePreview && imagePreview.startsWith('http')) {
+        try {
+          const file = await urlToFile(imagePreview, 'ref_image.png', 'image/png');
+          formData.append('image', file);
+        } catch (e) {
+          console.warn('Failed to fetch imagePreview for multimodal prompt:', e);
+        }
+      } else if (imagePreview && imagePreview.startsWith('data:')) {
+        try {
+          const res = await fetch(imagePreview);
+          const blob = await res.blob();
+          const file = new File([blob], 'ref_image.png', { type: blob.type });
+          formData.append('image', file);
+        } catch (e) {
+          console.warn('Failed to convert base64 imagePreview:', e);
+        }
+      }
+
+      const res = await fetch('/api/generate-prompt', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success && data.prompt) {
+        setSituationPrompt(data.prompt);
+      } else {
+        setError(data.error || 'เขียน Prompt ด้วย AI ไม่สำเร็จ');
+      }
+    } catch (err: any) {
+      setError(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อระบบ AI');
+    } finally {
+      setEnhancingSituation(false);
+    }
+  };
+
+  const enhanceAmbientWithAI = async () => {
+    if (enhancingAmbient) return;
+    setEnhancingAmbient(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('prompt', ambientPrompt);
+      formData.append('type', 'ambient');
+      
+      if (imageFile) {
+        formData.append('image', imageFile);
+      } else if (imagePreview && imagePreview.startsWith('http')) {
+        try {
+          const file = await urlToFile(imagePreview, 'ref_image.png', 'image/png');
+          formData.append('image', file);
+        } catch (e) {
+          console.warn('Failed to fetch imagePreview for multimodal prompt:', e);
+        }
+      } else if (imagePreview && imagePreview.startsWith('data:')) {
+        try {
+          const res = await fetch(imagePreview);
+          const blob = await res.blob();
+          const file = new File([blob], 'ref_image.png', { type: blob.type });
+          formData.append('image', file);
+        } catch (e) {
+          console.warn('Failed to convert base64 imagePreview:', e);
+        }
+      }
+
+      const res = await fetch('/api/generate-prompt', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success && data.prompt) {
+        setAmbientPrompt(data.prompt);
+      } else {
+        setError(data.error || 'เขียน Ambient Prompt ด้วย AI ไม่สำเร็จ');
+      }
+    } catch (err: any) {
+      setError(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อระบบ AI');
+    } finally {
+      setEnhancingAmbient(false);
+    }
+  };
+
   // ฟังก์ชันทวงงาน (Polling)
   const pollStatus = async (requestId: string, videoPath: string, currentStorageProvider: 'supabase' | 'firebase') => {
     try {
@@ -520,6 +622,9 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         formData.append('character_emotion', finalEmotion);
       }
       formData.append('situation_prompt', situationPrompt);
+      if (ambientPrompt.trim()) {
+        formData.append('ambient_prompt', ambientPrompt);
+      }
       if (modelType === 'fast') {
         if (endImageFile) {
           formData.append('end_image', endImageFile);
@@ -1255,15 +1360,69 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
 
         {/* Situation Prompt */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-text-secondary font-thai">
-            <Wand2 className="inline w-4 h-4 mr-1.5 -mt-0.5" />
-            คำสั่งเพิ่มเติม (Optional Prompt)
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              <Wand2 className="inline w-4 h-4 mr-1.5 -mt-0.5" />
+              คำสั่งเพิ่มเติม (Optional Prompt)
+            </label>
+            <button
+              type="button"
+              onClick={enhanceSituationWithAI}
+              disabled={enhancingSituation}
+              className="text-xs bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 text-[#D4AF37] disabled:opacity-50 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors font-bold font-thai cursor-pointer"
+            >
+              {enhancingSituation ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>กำลังปรับแต่ง...</span>
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>AI ช่วยปรับแต่ง</span>
+                </>
+              )}
+            </button>
+          </div>
           <input
             type="text"
             value={situationPrompt}
             onChange={(e) => setSituationPrompt(e.target.value)}
             placeholder="เช่น smiling, professional tone, gentle head movements"
+            className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai transition-all"
+          />
+        </div>
+
+        {/* Ambient Sound Prompt */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-text-secondary font-thai">
+              🎵 เสียงบรรยากาศพื้นหลัง (Ambient Sound Prompt)
+            </label>
+            <button
+              type="button"
+              onClick={enhanceAmbientWithAI}
+              disabled={enhancingAmbient}
+              className="text-xs bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 text-[#D4AF37] disabled:opacity-50 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors font-bold font-thai cursor-pointer"
+            >
+              {enhancingAmbient ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>กำลังคิดเสียง...</span>
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>AI ช่วยคิดเสียง</span>
+                </>
+              )}
+            </button>
+          </div>
+          <input
+            type="text"
+            value={ambientPrompt}
+            onChange={(e) => setAmbientPrompt(e.target.value)}
+            placeholder="เช่น low hum of crowded pub conversation, clinking beer glasses, soft background acoustic music"
             className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai transition-all"
           />
         </div>
