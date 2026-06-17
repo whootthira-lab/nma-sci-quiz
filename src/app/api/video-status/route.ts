@@ -286,6 +286,12 @@ export async function POST(req: NextRequest) {
       if (!isImage && ambientPrompt) {
         console.log(`[Ambient Sound] Generating background audio for prompt: "${ambientPrompt}"`);
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            console.log('[Ambient Sound] Aborting stable-audio generation due to 10s timeout.');
+            controller.abort();
+          }, 10000);
+
           const stableAudioRes = await fetch('https://fal.run/fal-ai/stable-audio', {
             method: 'POST',
             headers: {
@@ -295,8 +301,10 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               prompt: ambientPrompt,
               seconds_total: 15
-            })
+            }),
+            signal: controller.signal
           });
+          clearTimeout(timeoutId);
 
           if (stableAudioRes.ok) {
             const audioData = await stableAudioRes.json();

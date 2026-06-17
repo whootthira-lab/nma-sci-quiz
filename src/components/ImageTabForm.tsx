@@ -947,6 +947,12 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
           failCount = 0;
 
+          const contentType = statusRes.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const errText = await statusRes.text().catch(() => '');
+            throw new Error(errText.substring(0, 100) || 'เซิร์ฟเวอร์ไม่ได้ส่งข้อมูลรูปแบบ JSON');
+          }
+
           const statusData = await statusRes.json();
           const { status, progressMessage: msg, progressPercent: pct, videoUrl } = statusData;
 

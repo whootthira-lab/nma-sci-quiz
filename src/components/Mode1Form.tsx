@@ -451,6 +451,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         method: 'POST',
         body: formData
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(errText.substring(0, 100) || 'เซิร์ฟเวอร์ไม่ได้ส่งข้อมูลรูปแบบ JSON');
+      }
       const data = await res.json();
       if (data.success && data.prompt) {
         setSituationPrompt(data.prompt);
@@ -497,6 +502,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         method: 'POST',
         body: formData
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(errText.substring(0, 100) || 'เซิร์ฟเวอร์ไม่ได้ส่งข้อมูลรูปแบบ JSON');
+      }
       const data = await res.json();
       if (data.success && data.prompt) {
         setAmbientPrompt(data.prompt);
@@ -518,7 +528,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId, videoPath, modelType, storageProvider: currentStorageProvider })
       });
-      
+      const contentType = statusRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const errText = await statusRes.text().catch(() => '');
+        throw new Error(errText.substring(0, 100) || 'เซิร์ฟเวอร์ไม่ได้ส่งข้อมูลรูปแบบ JSON');
+      }
       const statusData = await statusRes.json();
 
       if (statusData.status === 'COMPLETED') {
