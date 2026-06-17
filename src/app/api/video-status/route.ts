@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 
     if (isLipsyncPhase) {
       // 1. Fetch official queue status endpoint for Lipsync (always on Fal.ai)
-      const checkResponse = await fetch(`https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}/status`, {
+      const checkResponse = await fetch(`https://queue.fal.run/fal-ai/sync-lipsync/v3/requests/${lipsyncRequestId}/status`, {
         headers: {
           'Authorization': `Key ${falKey}`,
           'Accept': 'application/json'
@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
         tempUrl = statusData.results?.videos?.[0]?.url;
       } else {
         const detailUrl = statusData.response_url || (isLipsyncPhase
-          ? `https://queue.fal.run/fal-ai/sync-lipsync/requests/${lipsyncRequestId}`
+          ? `https://queue.fal.run/fal-ai/sync-lipsync/v3/requests/${lipsyncRequestId}`
           : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
 
         const detailResponse = await fetch(detailUrl, {
