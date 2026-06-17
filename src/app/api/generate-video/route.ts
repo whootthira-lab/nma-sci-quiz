@@ -856,6 +856,35 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ AI ไม่ได้ส่งคืน Request ID');
       }
     }
+
+    // 5.5. Submit ambient sound job to Fal.ai queue if ambient_prompt is present
+    let ambientRequestId = '';
+    if (ambientPrompt) {
+      console.log(`[Ambient Sound] Queueing stable-audio for prompt: "${ambientPrompt}"`);
+      try {
+        const ambientRes = await fetch('https://queue.fal.run/fal-ai/stable-audio', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Key ${falKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: ambientPrompt,
+            seconds_total: 15
+          })
+        });
+        if (ambientRes.ok) {
+          const ambientResult = await ambientRes.json();
+          ambientRequestId = ambientResult.request_id;
+          console.log(`[Ambient Sound] Queued successfully. Request ID: ${ambientRequestId}`);
+        } else {
+          console.error('[Ambient Sound] Queue failed:', await ambientRes.text());
+        }
+      } catch (err: any) {
+        console.error('[Ambient Sound] Queue submission error:', err.message || err);
+      }
+    }
+
     // Deduct credits from user whitelist (except Super Admin)
     if (!isSuperAdmin && whitelistUser) {
       const newCredits = Math.max(0, (whitelistUser.generation_limit || 0) - requiredCredits);
@@ -916,6 +945,7 @@ export async function POST(req: NextRequest) {
             script_text: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : scriptText),
             situation_prompt: situationPrompt || '',
             ambient_prompt: ambientPrompt || '',
+            ambient_request_id: ambientRequestId || '',
             model_endpoint: modelEndpoint,
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
