@@ -544,9 +544,10 @@ export async function POST(req: NextRequest) {
 
     const timestamp = Date.now();
 
-    // 0. Enhance prompt with GPT-4o-mini
-    console.log('[STEP 0.5] Enhancing prompt with gpt-4o-mini...');
-    const combinedPrompt = await enhancePromptWithGPT(
+    // Define parallel tasks to optimize response times and avoid Gateway Timeout (504)
+    console.log('[STEP 0.5] Starting parallel asset processing (GPT, Image, Video, End Image, and TTS)...');
+    
+    const promptTask = enhancePromptWithGPT(
       situationPrompt,
       scriptText,
       modelType === 'fast' ? endSituationPrompt : undefined,
@@ -557,119 +558,157 @@ export async function POST(req: NextRequest) {
       selectedDuration
     );
 
-    // 1. Upload/Generate reference image
-    let imageUrl = '';
-    let imagePath = '';
-
-    if (videoMode === 'image_to_video') {
-      if (useLoraModel && loraModelUrl && loraTriggerWord) {
-        console.log('[STEP 1] Generating reference image using Character LoRA model...');
-        const fluxPrompt = `photo of ${loraTriggerWord}, ${combinedPrompt}`;
-        console.log(`[LoRA Flux Prompt]: ${fluxPrompt}`);
-
-        let imageSize = 'landscape_16_9';
-        if (aspectRatio === '9:16') {
-          imageSize = 'portrait_16_9';
-        } else if (aspectRatio === '1:1') {
-          imageSize = 'square_hd';
+    const uploadImageTask = (async () => {
+      let imageUrl = '';
+      let imagePath = '';
+      if (videoMode === 'image_to_video') {
+        if (useLoraModel) {
+          // LoRA model generation depends on GPT-enhanced prompt, so we must defer it
+          return null;
+        } else if (imageFile) {
+          console.log('[STEP 1] Uploading reference image to Supabase...');
+          const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
+          imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
+          imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
+          console.log('[STEP 1] Image uploaded:', imageUrl);
+        } else if (characterImageUrl) {
+          console.log('[STEP 1] Using character library image URL:', characterImageUrl);
+          imageUrl = characterImageUrl;
         }
+      }
+      return { imageUrl, imagePath };
+    })();
 
-        const fluxResponse = await fetch('https://fal.run/fal-ai/flux-lora', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Key ${falKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            prompt: fluxPrompt,
-            loras: [
-              {
-                path: loraModelUrl,
-                scale: 1.0,
-              }
-            ],
-            image_size: imageSize,
-            num_inference_steps: 28,
-            enable_safety_checker: true,
-          }),
-        });
+    const uploadVideoTask = (async () => {
+      let videoUrl = '';
+      let refVideoPath = '';
+      if (isMotionControl && videoFile) {
+        console.log('[STEP 1.5] Uploading reference video to Supabase...');
+        const videoBuffer = Buffer.from(await videoFile.arrayBuffer());
+        refVideoPath = `references/${userEmail}/${timestamp}_ref_video.${videoFile.type.split('/')[1] || 'mp4'}`;
+        videoUrl = await uploadToSupabaseStorage(videoBuffer, refVideoPath, videoFile.type);
+        console.log('[STEP 1.5] Reference video uploaded:', videoUrl);
+      }
+      return { videoUrl, refVideoPath };
+    })();
 
-        if (!fluxResponse.ok) {
-          const errText = await fluxResponse.text();
-          console.error('[LoRA Flux Generation Error]', errText);
-          throw new Error('เจเนอเรตภาพเริ่มต้นด้วยโมเดลตัวละคร (LoRA) ไม่สำเร็จ');
+    const uploadEndImageTask = (async () => {
+      let endImageUrl = '';
+      let endImagePath = '';
+      if (videoMode === 'image_to_video' && modelType === 'fast' && endImageFile) {
+        console.log('[STEP 1.7] Uploading end reference image to Supabase...');
+        const endImageBuffer = Buffer.from(await endImageFile.arrayBuffer());
+        endImagePath = `references/${userEmail}/${timestamp}_end_ref.${endImageFile.type.split('/')[1] || 'png'}`;
+        endImageUrl = await uploadToSupabaseStorage(endImageBuffer, endImagePath, endImageFile.type);
+        console.log('[STEP 1.7] End image uploaded:', endImageUrl);
+      }
+      return { endImageUrl, endImagePath };
+    })();
+
+    const generateTTSTask = (async () => {
+      let audioUrl = '';
+      let audioPath = '';
+      const needTTS = !isNoSpeech && (!isMotionControl || (isMotionControl && (motionAudioSource === 'botnoi' || motionAudioSource === 'tts')));
+      
+      if (needTTS) {
+        if (customAudioFile) {
+          console.log('[STEP 2] Custom audio file uploaded. Saving to Supabase...');
+          const audioBuffer = Buffer.from(await customAudioFile.arrayBuffer());
+          audioPath = `audio/${userEmail}/${timestamp}_custom_tts.${customAudioFile.type.split('/')[1] || 'mp3'}`;
+          audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, customAudioFile.type);
+          console.log('[STEP 2] Custom audio uploaded:', audioUrl);
+        } else if (scriptText) {
+          console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId} with speed: ${speedFactor}...`);
+          let audioBuffer: Buffer;
+          if (ttsProvider === 'google') {
+            audioBuffer = await generateGoogleTTS(scriptText, voiceId, speedFactor);
+          } else if (ttsProvider === 'openai') {
+            audioBuffer = await generateOpenAITTS(scriptText, voiceId, speedFactor);
+          } else if (ttsProvider === 'cosyvoice') {
+            audioBuffer = await generateCosyVoiceTTS(scriptText, voiceId, speedFactor);
+          } else {
+            audioBuffer = await generateTTS(scriptText, voiceId, speedFactor);
+          }
+          audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
+          audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
+          console.log('[STEP 2] TTS audio uploaded:', audioUrl);
         }
+      }
+      return { audioUrl, audioPath };
+    })();
 
-        const fluxResult = await fluxResponse.json();
-        imageUrl = fluxResult.images?.[0]?.url;
-        console.log('[STEP 1] Generated image from LoRA model:', imageUrl);
+    // Await all independent tasks concurrently to minimize Vercel API Timeout risks
+    const [
+      combinedPrompt,
+      imgResult,
+      vidResult,
+      endImgResult,
+      ttsResult
+    ] = await Promise.all([
+      promptTask,
+      uploadImageTask,
+      uploadVideoTask,
+      uploadEndImageTask,
+      generateTTSTask
+    ]);
 
-        if (!imageUrl) {
-          throw new Error('ไม่พบ URL ภาพผลลัพธ์ที่เทรนด้วย LoRA');
-        }
-      } else if (imageFile) {
-        console.log('[STEP 1] Uploading reference image to Supabase...');
-        const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
-        imagePath = `references/${userEmail}/${timestamp}_ref.${imageFile.type.split('/')[1] || 'png'}`;
-        imageUrl = await uploadToSupabaseStorage(imageBuffer, imagePath, imageFile.type);
-        console.log('[STEP 1] Image uploaded:', imageUrl);
-      } else if (characterImageUrl) {
-        console.log('[STEP 1] Using character library image URL:', characterImageUrl);
-        imageUrl = characterImageUrl;
+    let imageUrl = imgResult?.imageUrl || '';
+    let imagePath = imgResult?.imagePath || '';
+
+    // Handle deferred LoRA image generation if useLoraModel is true
+    if (videoMode === 'image_to_video' && useLoraModel && !imageUrl) {
+      console.log('[STEP 1] Generating reference image using Character LoRA model...');
+      const fluxPrompt = `photo of ${loraTriggerWord}, ${combinedPrompt}`;
+      console.log(`[LoRA Flux Prompt]: ${fluxPrompt}`);
+
+      let imageSize = 'landscape_16_9';
+      if (aspectRatio === '9:16') {
+        imageSize = 'portrait_16_9';
+      } else if (aspectRatio === '1:1') {
+        imageSize = 'square_hd';
+      }
+
+      const fluxResponse = await fetch('https://fal.run/fal-ai/flux-lora', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Key ${falKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: fluxPrompt,
+          loras: [
+            {
+              path: loraModelUrl,
+              scale: 1.0,
+            }
+          ],
+          image_size: imageSize,
+          num_inference_steps: 28,
+          enable_safety_checker: true,
+        }),
+      });
+
+      if (!fluxResponse.ok) {
+        const errText = await fluxResponse.text();
+        console.error('[LoRA Flux Generation Error]', errText);
+        throw new Error('เจเนอเรตภาพเริ่มต้นด้วยโมเดลตัวละคร (LoRA) ไม่สำเร็จ');
+      }
+
+      const fluxResult = await fluxResponse.json();
+      imageUrl = fluxResult.images?.[0]?.url;
+      console.log('[STEP 1] Generated image from LoRA model:', imageUrl);
+
+      if (!imageUrl) {
+        throw new Error('ไม่พบ URL ภาพผลลัพธ์ที่เทรนด้วย LoRA');
       }
     }
 
-    // 1.5. Upload reference video for Motion Control
-    let videoUrl = '';
-    let refVideoPath = '';
-    if (isMotionControl && videoFile) {
-      console.log('[STEP 1.5] Uploading reference video to Supabase...');
-      const videoBuffer = Buffer.from(await videoFile.arrayBuffer());
-      refVideoPath = `references/${userEmail}/${timestamp}_ref_video.${videoFile.type.split('/')[1] || 'mp4'}`;
-      videoUrl = await uploadToSupabaseStorage(videoBuffer, refVideoPath, videoFile.type);
-      console.log('[STEP 1.5] Reference video uploaded:', videoUrl);
-    }
-
-    // 1.7. Upload end reference image if present (Kling 2.5 visual morphing)
-    let endImageUrl = '';
-    let endImagePath = '';
-    if (videoMode === 'image_to_video' && modelType === 'fast' && endImageFile) {
-      console.log('[STEP 1.7] Uploading end reference image to Supabase...');
-      const endImageBuffer = Buffer.from(await endImageFile.arrayBuffer());
-      endImagePath = `references/${userEmail}/${timestamp}_end_ref.${endImageFile.type.split('/')[1] || 'png'}`;
-      endImageUrl = await uploadToSupabaseStorage(endImageBuffer, endImagePath, endImageFile.type);
-      console.log('[STEP 1.7] End image uploaded:', endImageUrl);
-    }
-
-    // 2. Generate Thai TTS audio (only if needed)
-    let audioUrl = '';
-    let audioPath = '';
-    const needTTS = !isNoSpeech && (!isMotionControl || (isMotionControl && (motionAudioSource === 'botnoi' || motionAudioSource === 'tts')));
-    
-    if (needTTS) {
-      if (customAudioFile) {
-        console.log('[STEP 2] Custom audio file uploaded. Saving to Supabase...');
-        const audioBuffer = Buffer.from(await customAudioFile.arrayBuffer());
-        audioPath = `audio/${userEmail}/${timestamp}_custom_tts.${customAudioFile.type.split('/')[1] || 'mp3'}`;
-        audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, customAudioFile.type);
-        console.log('[STEP 2] Custom audio uploaded:', audioUrl);
-      } else if (scriptText) {
-        console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId} with speed: ${speedFactor}...`);
-        let audioBuffer: Buffer;
-        if (ttsProvider === 'google') {
-          audioBuffer = await generateGoogleTTS(scriptText, voiceId, speedFactor);
-        } else if (ttsProvider === 'openai') {
-          audioBuffer = await generateOpenAITTS(scriptText, voiceId, speedFactor);
-        } else if (ttsProvider === 'cosyvoice') {
-          audioBuffer = await generateCosyVoiceTTS(scriptText, voiceId, speedFactor);
-        } else {
-          audioBuffer = await generateTTS(scriptText, voiceId, speedFactor);
-        }
-        audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
-        audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
-        console.log('[STEP 2] TTS audio uploaded:', audioUrl);
-      }
-    }
+    const videoUrl = vidResult?.videoUrl || '';
+    const refVideoPath = vidResult?.refVideoPath || '';
+    const endImageUrl = endImgResult?.endImageUrl || '';
+    const endImagePath = endImgResult?.endImagePath || '';
+    const audioUrl = ttsResult?.audioUrl || '';
+    const audioPath = ttsResult?.audioPath || '';
 
     // 3. Configure endpoint
     const isCinema = modelType === 'cinema';
@@ -714,6 +753,9 @@ export async function POST(req: NextRequest) {
       console.log(`[STEP 3] Submitting request to SiliconFlow (${sfModel})...`);
       console.log('[SiliconFlow Request Payload]:', JSON.stringify(sfPayload, null, 2));
 
+      const sfController = new AbortController();
+      const sfTimeoutId = setTimeout(() => sfController.abort(), 20000); // 20s timeout
+
       const submitResponse = await fetch('https://api.siliconflow.com/v1/video/submit', {
         method: 'POST',
         headers: {
@@ -721,7 +763,9 @@ export async function POST(req: NextRequest) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(sfPayload),
+        signal: sfController.signal
       });
+      clearTimeout(sfTimeoutId);
 
       if (!submitResponse.ok) {
         const errText = await submitResponse.text();
@@ -833,6 +877,9 @@ export async function POST(req: NextRequest) {
       // 5. Submit job to Fal.ai queue
       console.log(`[STEP 3] Submitting queue request to Fal.ai (${modelEndpoint})...`);
       console.log('[Fal.ai Request Payload]:', JSON.stringify(requestBody, null, 2));
+      const falController = new AbortController();
+      const falTimeoutId = setTimeout(() => falController.abort(), 20000); // 20s timeout
+
       const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
         method: 'POST',
         headers: {
@@ -840,7 +887,9 @@ export async function POST(req: NextRequest) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
+        signal: falController.signal
       });
+      clearTimeout(falTimeoutId);
 
       if (!submitResponse.ok) {
         const errText = await submitResponse.text();
@@ -862,6 +911,9 @@ export async function POST(req: NextRequest) {
     if (ambientPrompt) {
       console.log(`[Ambient Sound] Queueing stable-audio for prompt: "${ambientPrompt}"`);
       try {
+        const audioController = new AbortController();
+        const audioTimeoutId = setTimeout(() => audioController.abort(), 5000); // 5s timeout
+
         const ambientRes = await fetch('https://queue.fal.run/fal-ai/stable-audio', {
           method: 'POST',
           headers: {
@@ -871,8 +923,10 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             prompt: ambientPrompt,
             seconds_total: 15
-          })
+          }),
+          signal: audioController.signal
         });
+        clearTimeout(audioTimeoutId);
         if (ambientRes.ok) {
           const ambientResult = await ambientRes.json();
           ambientRequestId = ambientResult.request_id;
