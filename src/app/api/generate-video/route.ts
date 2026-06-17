@@ -363,8 +363,7 @@ export async function POST(req: NextRequest) {
     const videoFile = formData.get('video') as File;
     const motionAudioSource = formData.get('motion_audio_source') as string || 'video';
     const scriptText = formData.get('script_text') as string;
-    const situationPrompt = formData.get('situation_prompt') as string;
-    const ambientPrompt = formData.get('ambient_prompt') as string || '';
+    const situationPrompt = formData.get('situation_prompt') as string || '';
     const endSituationPrompt = formData.get('end_situation_prompt') as string || '';
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
@@ -906,38 +905,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5.5. Submit ambient sound job to Fal.ai queue if ambient_prompt is present
-    let ambientRequestId = '';
-    if (ambientPrompt) {
-      console.log(`[Ambient Sound] Queueing stable-audio for prompt: "${ambientPrompt}"`);
-      try {
-        const audioController = new AbortController();
-        const audioTimeoutId = setTimeout(() => audioController.abort(), 5000); // 5s timeout
-
-        const ambientRes = await fetch('https://queue.fal.run/fal-ai/stable-audio', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Key ${falKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            prompt: ambientPrompt,
-            seconds_total: 15
-          }),
-          signal: audioController.signal
-        });
-        clearTimeout(audioTimeoutId);
-        if (ambientRes.ok) {
-          const ambientResult = await ambientRes.json();
-          ambientRequestId = ambientResult.request_id;
-          console.log(`[Ambient Sound] Queued successfully. Request ID: ${ambientRequestId}`);
-        } else {
-          console.error('[Ambient Sound] Queue failed:', await ambientRes.text());
-        }
-      } catch (err: any) {
-        console.error('[Ambient Sound] Queue submission error:', err.message || err);
-      }
-    }
 
     // Deduct credits from user whitelist (except Super Admin)
     if (!isSuperAdmin && whitelistUser) {
@@ -998,8 +965,6 @@ export async function POST(req: NextRequest) {
             mode: isMotionControl ? 'motion-control' : videoMode,
             script_text: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : scriptText),
             situation_prompt: situationPrompt || '',
-            ambient_prompt: ambientPrompt || '',
-            ambient_request_id: ambientRequestId || '',
             model_endpoint: modelEndpoint,
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
