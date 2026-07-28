@@ -913,15 +913,23 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         throw new Error(resJson.error || 'เกิดข้อผิดพลาดในการสั่งงานไปยังระบบคลาวด์');
       }
 
-      const { requestId, videoPath } = resJson;
+      const { requestId, videoPath, modelEndpoint } = resJson;
       setProgressMessage('กำลังต่อคิวรันภาพบนเซิร์ฟเวอร์ AI...');
       setProgressPercent(40);
 
       // Start Polling loop using video-status (since it's now updated to support images)
       let checkCount = 0;
       let failCount = 0;
+      // Hard cap so the spinner can never hang forever: 3s interval × 120 = 6 นาที
+      const MAX_CHECKS = 120;
       const intervalId = setInterval(async () => {
         checkCount++;
+        if (checkCount > MAX_CHECKS) {
+          clearInterval(intervalId);
+          setErrorMsg('หมดเวลารอผลลัพธ์ (เกิน 6 นาที) ระบบ AI อาจมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้ง');
+          setLoading(false);
+          return;
+        }
         try {
           const statusRes = await fetch('/api/video-status', {
             method: 'POST',
@@ -930,6 +938,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               requestId,
               videoPath,
               modelType: modelType.includes('flux') ? modelType : 'flux_dev',
+              modelEndpoint, // exact Fal endpoint from generate-image → correct queue namespace (fixes schnell/i2i hang)
               storageProvider: 'supabase'
             })
           });

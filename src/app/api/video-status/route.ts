@@ -41,7 +41,7 @@ async function uploadToFirebaseStorage(
 
 export async function POST(req: NextRequest) {
   try {
-    const { requestId, videoPath, modelType, storageProvider } = await req.json();
+    const { requestId, videoPath, modelType, storageProvider, modelEndpoint: clientModelEndpoint } = await req.json();
     const falKey = process.env.FAL_KEY || process.env.NEXT_PUBLIC_FAL_KEY || '';
 
     if (!requestId || !videoPath) {
@@ -65,30 +65,39 @@ export async function POST(req: NextRequest) {
       console.warn('[Supabase DB Read] Could not find or read generation metadata:', dbErr);
     }
 
-    let modelEndpoint = genRow?.metadata?.model_endpoint || '';
+    // Prefer the exact endpoint stored in DB, then the one the client passes (covers image
+    // sub-endpoints like image-to-image / fill that modelType alone can't distinguish),
+    // then fall back to inferring from modelType.
+    let modelEndpoint = genRow?.metadata?.model_endpoint || clientModelEndpoint || '';
     if (!modelEndpoint) {
       const isCinema = modelType === 'cinema';
       const isMotionControl = modelType === 'motion-control';
       const isGrok = modelType === 'grok-video';
+      const isFluxSchnell = modelType === 'flux_schnell';
       const isFlux = modelType?.includes('flux') || modelType === 'fill';
       modelEndpoint = isCinema
         ? 'fal-ai/wan-i2v'
-        : (isMotionControl 
-            ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
-            : (isGrok 
-                ? 'xai/grok-imagine-video/v1.5/image-to-video' 
-                : (isFlux 
-                    ? 'fal-ai/flux/dev' 
+        : (isMotionControl
+            ? 'fal-ai/kling-video/v2.6/standard/motion-control'
+            : (isGrok
+                ? 'xai/grok-imagine-video/v1.5/image-to-video'
+                : (isFlux
+                    ? (isFluxSchnell ? 'fal-ai/flux/schnell' : 'fal-ai/flux/dev')
                     : 'fal-ai/kling-video/v2.5-turbo/standard/image-to-video'
                   )
               )
           );
     }
 
-    // Reconstruct queueNamespace: Kling uses parent category, others use exact model
+    // Reconstruct queueNamespace: Fal's queue status/result endpoints live on the base
+    // application id, NOT the full submit path. e.g. submitting to `fal-ai/flux/schnell`
+    // means status is `fal-ai/flux/requests/{id}/status` — hitting the sub-path returns 405.
+    // Collapse multi-endpoint apps (kling-video, flux) to their base app id.
     let queueNamespace = modelEndpoint;
     if (modelEndpoint.startsWith('fal-ai/kling-video')) {
       queueNamespace = 'fal-ai/kling-video';
+    } else if (modelEndpoint.startsWith('fal-ai/flux')) {
+      queueNamespace = 'fal-ai/flux';
     }
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;

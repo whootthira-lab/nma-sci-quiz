@@ -280,9 +280,15 @@ export async function POST(req: NextRequest) {
       sync_mode: false
     };
 
-    // Add aspect ratio or custom sizing for non-fill endpoints
+    // Add aspect ratio or custom sizing for non-fill endpoints.
+    // Fal flux expects image_size as an object { width, height } (or one of its enum strings) —
+    // sending a "1024x1024" string fails validation with HTTP 422.
     if (imageMode !== 'inpainting' && imageMode !== 'outpainting') {
-      requestBody.image_size = aspectRatio === '16:9' ? '1280x720' : (aspectRatio === '9:16' ? '720x1280' : '1024x1024');
+      requestBody.image_size = aspectRatio === '16:9'
+        ? { width: 1280, height: 720 }
+        : (aspectRatio === '9:16'
+            ? { width: 720, height: 1280 }
+            : { width: 1024, height: 1024 });
     }
 
     // Attach reference image for I2I
@@ -383,6 +389,7 @@ export async function POST(req: NextRequest) {
       success: true,
       requestId,
       videoPath: outputImagePath, // Pass the outputImagePath in the videoPath slot since the generic status checker reads videoPath
+      modelEndpoint, // exact Fal endpoint so the status poller uses the correct queue namespace even when no DB row exists
     });
 
   } catch (error: any) {
