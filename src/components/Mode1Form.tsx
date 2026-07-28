@@ -818,6 +818,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               >
                 <option value="fast">⚡ KRUTH Standard (Kling 2.5 Turbo)</option>
                 <option value="cinema">🎬 KRUTH Master (Wan 2.5 / 2.2 Cinema)</option>
+                <option value="seedance">🌊 KRUTH Nova (Seedance 1.0 Pro)</option>
                 <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
               </select>
             </div>

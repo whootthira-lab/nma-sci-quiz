@@ -73,9 +73,12 @@ export async function POST(req: NextRequest) {
       const isCinema = modelType === 'cinema';
       const isMotionControl = modelType === 'motion-control';
       const isGrok = modelType === 'grok-video';
+      const isSeedance = modelType === 'seedance';
       const isFluxSchnell = modelType === 'flux_schnell';
       const isFlux = modelType?.includes('flux') || modelType === 'fill';
-      modelEndpoint = isCinema
+      modelEndpoint = isSeedance
+        ? 'fal-ai/bytedance/seedance/v1/pro/image-to-video'
+        : isCinema
         ? 'fal-ai/wan-i2v'
         : (isMotionControl
             ? 'fal-ai/kling-video/v2.6/standard/motion-control'
@@ -98,6 +101,8 @@ export async function POST(req: NextRequest) {
       queueNamespace = 'fal-ai/kling-video';
     } else if (modelEndpoint.startsWith('fal-ai/flux')) {
       queueNamespace = 'fal-ai/flux';
+    } else if (modelEndpoint.startsWith('fal-ai/bytedance')) {
+      queueNamespace = 'fal-ai/bytedance'; // Seedance status/result live on the base app id
     }
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;

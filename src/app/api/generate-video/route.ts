@@ -492,6 +492,7 @@ export async function POST(req: NextRequest) {
     let wanResolution = '720p';
     let klingResolution = '720p';
     let grokResolution = '720p';
+    let seedanceResolution = '720p';
     let klingAudioEnabled = false;
     try {
       const { data: settings } = await supabase
@@ -502,12 +503,14 @@ export async function POST(req: NextRequest) {
         const wanRes = settings.find((item: any) => item.key === 'wan_resolution');
         const klingRes = settings.find((item: any) => item.key === 'kling_resolution');
         const grokRes = settings.find((item: any) => item.key === 'grok_resolution');
+        const seedanceRes = settings.find((item: any) => item.key === 'seedance_resolution');
         const klingAudio = settings.find((item: any) => item.key === 'kling_audio_enabled');
         
         if (provider?.value) activeProvider = provider.value;
         if (wanRes?.value) wanResolution = wanRes.value;
         if (klingRes?.value) klingResolution = klingRes.value;
         if (grokRes?.value) grokResolution = grokRes.value;
+        if (seedanceRes?.value) seedanceResolution = seedanceRes.value;
         if (klingAudio?.value) klingAudioEnabled = klingAudio.value === 'true';
       }
     } catch (e) {
@@ -526,6 +529,8 @@ export async function POST(req: NextRequest) {
       } else {
         ratePerSecond = 3;
       }
+    } else if (modelType === 'seedance') {
+      ratePerSecond = seedanceResolution === '480p' ? 2 : (seedanceResolution === '1080p' ? 6 : 4);
     } else if (isMotionControl) {
       ratePerSecond = 4;
     }
@@ -573,7 +578,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const falKey = process.env.FAL_KEY;
+    const falKey = process.env.FAL_KEY || process.env.NEXT_PUBLIC_FAL_KEY;
     if (!falKey) throw new Error('ไม่พบ FAL_KEY ในระบบ');
 
     const timestamp = Date.now();
@@ -750,7 +755,8 @@ export async function POST(req: NextRequest) {
     const isCinema = modelType === 'cinema';
     const isMotionControlModel = modelType === 'motion-control';
     const isGrok = modelType === 'grok-video';
-    const isSiliconFlow = 
+    const isSeedance = modelType === 'seedance';
+    const isSiliconFlow =
       modelType === 'hunyuan' || 
       modelType === 'ltx-video' || 
       (isCinema && activeProvider === 'siliconflow');
@@ -826,7 +832,9 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      modelEndpoint = isCinema
+      modelEndpoint = isSeedance
+          ? (videoMode === 'text_to_video' ? 'fal-ai/bytedance/seedance/v1/pro/text-to-video' : 'fal-ai/bytedance/seedance/v1/pro/image-to-video')
+          : isCinema
           ? (videoMode === 'text_to_video' ? 'fal-ai/wan-t2v' : 'fal-ai/wan-i2v')
           : (isMotionControlModel 
               ? 'fal-ai/kling-video/v2.6/standard/motion-control' 
@@ -889,6 +897,19 @@ export async function POST(req: NextRequest) {
         }
         if (characterNegativePrompt) {
           requestBody.negative_prompt = characterNegativePrompt;
+        }
+      } else if (isSeedance) {
+        // Seedance v1 Pro (ByteDance): resolution + duration are strings; i2v derives ratio from the image.
+        requestBody = {
+          prompt: combinedPrompt,
+          resolution: seedanceResolution,
+          duration: String(selectedDuration <= 5 ? 5 : 10),
+          camera_fixed: false,
+        };
+        if (videoMode === 'image_to_video') {
+          requestBody.image_url = imageUrl;
+        } else {
+          requestBody.aspect_ratio = aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1';
         }
       } else {
         requestBody = {
@@ -1006,7 +1027,9 @@ export async function POST(req: NextRequest) {
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             visual_style: visualStyle,
-            model_name: modelType === 'hunyuan'
+            model_name: modelType === 'seedance'
+              ? 'seedance-1.0-pro'
+              : modelType === 'hunyuan'
               ? 'hunyuan-video'
               : (modelType === 'ltx-video'
                   ? 'ltx-video'
