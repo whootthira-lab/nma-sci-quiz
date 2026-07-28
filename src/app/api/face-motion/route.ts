@@ -132,7 +132,7 @@ async function runFaceMotion(
   if (!falKey) throw new Error('FAL_KEY not configured');
 
   const endpoints: Record<string, string> = {
-    liveportrait: 'fal-ai/liveportrait',
+    liveportrait: 'fal-ai/live-portrait', // Fal's app id uses a hyphen; 'fal-ai/liveportrait' 404s
     hallo: 'fal-ai/hallo',
   };
 
