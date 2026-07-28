@@ -37,31 +37,33 @@ export interface ThaiVoice {
   gender: 'male' | 'female';
   sample_url: string;
   provider: 'botnoi' | 'google' | 'openai' | 'cosyvoice';
+  // 'native' = ออกเสียงไทยได้ถูกต้องตามธรรมชาติ, 'foreign' = โมเดลไม่ได้เทรนภาษาไทยโดยตรง จะมีสำเนียงต่างชาติเมื่ออ่านไทย
+  accent?: 'native' | 'foreign';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
-  // Google Cloud TTS (Neural2, Standard, Chirp3)
-  { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: 'จี-เนอรัล C (หญิง, Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google' },
-  { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: 'จี-สแตนดาร์ด A (หญิง, คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google' },
-  { id: 'th-TH-Chirp3-HD-Algenib', name: 'G-Chirp-Algenib', label: 'จี-เชิร์ป Algenib (ชาย, HD)', gender: 'male', sample_url: '/samples/g-chirp-algenib.mp3', provider: 'google' },
+  // Google Cloud TTS (Neural2, Standard, Chirp3) — เสียงไทยแท้ (native th-TH)
+  { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: '🇹🇭 จี-เนอรัล C (หญิง, ไทยแท้ Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google', accent: 'native' },
+  { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: '🇹🇭 จี-สแตนดาร์ด A (หญิง, ไทยแท้ คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google', accent: 'native' },
+  { id: 'th-TH-Chirp3-HD-Algenib', name: 'G-Chirp-Algenib', label: '🇹🇭 จี-เชิร์ป Algenib (ชาย, ไทยแท้ HD)', gender: 'male', sample_url: '/samples/g-chirp-algenib.mp3', provider: 'google', accent: 'native' },
 
-  // OpenAI TTS
-  { id: 'alloy', name: 'Alloy', label: 'อัลลอย (กลาง, สากล)', gender: 'female', sample_url: '/samples/alloy.mp3', provider: 'openai' },
-  { id: 'nova', name: 'Nova', label: 'โนวา (หญิง, สดใส)', gender: 'female', sample_url: '/samples/nova.mp3', provider: 'openai' },
-  { id: 'shimmer', name: 'Shimmer', label: 'ชิมเมอร์ (หญิง, นุ่มนวล)', gender: 'female', sample_url: '/samples/shimmer.mp3', provider: 'openai' },
-  { id: 'echo', name: 'Echo', label: 'เอคโค่ (ชาย, อบอุ่น)', gender: 'male', sample_url: '/samples/echo.mp3', provider: 'openai' },
-  { id: 'onyx', name: 'Onyx', label: 'โอนิกส์ (ชาย, เข้ม)', gender: 'male', sample_url: '/samples/onyx.mp3', provider: 'openai' },
-  { id: 'fable', name: 'Fable', label: 'เฟเบิล (ชาย, บรรยาย)', gender: 'male', sample_url: '/samples/fable.mp3', provider: 'openai' },
+  // OpenAI TTS — โมเดล multilingual ไม่ได้เทรนไทยโดยตรง จะมีสำเนียงต่างชาติ
+  { id: 'alloy', name: 'Alloy', label: 'อัลลอย (กลาง) — ⚠️ สำเนียงต่างชาติ', gender: 'female', sample_url: '/samples/alloy.mp3', provider: 'openai', accent: 'foreign' },
+  { id: 'nova', name: 'Nova', label: 'โนวา (หญิง) — ⚠️ สำเนียงต่างชาติ', gender: 'female', sample_url: '/samples/nova.mp3', provider: 'openai', accent: 'foreign' },
+  { id: 'shimmer', name: 'Shimmer', label: 'ชิมเมอร์ (หญิง) — ⚠️ สำเนียงต่างชาติ', gender: 'female', sample_url: '/samples/shimmer.mp3', provider: 'openai', accent: 'foreign' },
+  { id: 'echo', name: 'Echo', label: 'เอคโค่ (ชาย) — ⚠️ สำเนียงต่างชาติ', gender: 'male', sample_url: '/samples/echo.mp3', provider: 'openai', accent: 'foreign' },
+  { id: 'onyx', name: 'Onyx', label: 'โอนิกส์ (ชาย) — ⚠️ สำเนียงต่างชาติ', gender: 'male', sample_url: '/samples/onyx.mp3', provider: 'openai', accent: 'foreign' },
+  { id: 'fable', name: 'Fable', label: 'เฟเบิล (ชาย) — ⚠️ สำเนียงต่างชาติ', gender: 'male', sample_url: '/samples/fable.mp3', provider: 'openai', accent: 'foreign' },
 
-  // Alibaba CosyVoice via SiliconFlow
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'Cosy-Anna', label: 'คอซี่-แอนนา (หญิง, สุภาพ)', gender: 'female', sample_url: '/samples/cosy-anna.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'Cosy-Claire', label: 'คอซี่-แคลร์ (หญิง, อ่อนโยน)', gender: 'female', sample_url: '/samples/cosy-claire.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:bella', name: 'Cosy-Bella', label: 'คอซี่-เบลล่า (หญิง, สดใส)', gender: 'female', sample_url: '/samples/cosy-bella.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:diana', name: 'Cosy-Diana', label: 'คอซี่-ไดอาน่า (หญิง, มั่นใจ)', gender: 'female', sample_url: '/samples/cosy-diana.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'Cosy-Alex', label: 'คอซี่-อเล็กซ์ (ชาย, สุขุม)', gender: 'male', sample_url: '/samples/cosy-alex.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'Cosy-Benjamin', label: 'คอซี่-เบนจามิน (ชาย, ทุ้ม)', gender: 'male', sample_url: '/samples/cosy-benjamin.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:charles', name: 'Cosy-Charles', label: 'คอซี่-ชาร์ลส์ (ชาย, สุภาพ)', gender: 'male', sample_url: '/samples/cosy-charles.mp3', provider: 'cosyvoice' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'Cosy-David', label: 'คอซี่-เดวิด (ชาย, ทรงพลัง)', gender: 'male', sample_url: '/samples/cosy-david.mp3', provider: 'cosyvoice' },
+  // Alibaba CosyVoice via SiliconFlow — โมเดลรองรับ จีน/อังกฤษ/ญี่ปุ่น/เกาหลี ไม่รองรับไทย จะเป็นสำเนียง "ฝรั่งพูดไทย"
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'Cosy-Anna', label: 'คอซี่-แอนนา (หญิง) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'female', sample_url: '/samples/cosy-anna.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'Cosy-Claire', label: 'คอซี่-แคลร์ (หญิง) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'female', sample_url: '/samples/cosy-claire.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:bella', name: 'Cosy-Bella', label: 'คอซี่-เบลล่า (หญิง) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'female', sample_url: '/samples/cosy-bella.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:diana', name: 'Cosy-Diana', label: 'คอซี่-ไดอาน่า (หญิง) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'female', sample_url: '/samples/cosy-diana.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'Cosy-Alex', label: 'คอซี่-อเล็กซ์ (ชาย) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'male', sample_url: '/samples/cosy-alex.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'Cosy-Benjamin', label: 'คอซี่-เบนจามิน (ชาย) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'male', sample_url: '/samples/cosy-benjamin.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:charles', name: 'Cosy-Charles', label: 'คอซี่-ชาร์ลส์ (ชาย) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'male', sample_url: '/samples/cosy-charles.mp3', provider: 'cosyvoice', accent: 'foreign' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'Cosy-David', label: 'คอซี่-เดวิด (ชาย) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'male', sample_url: '/samples/cosy-david.mp3', provider: 'cosyvoice', accent: 'foreign' },
 ];
 
 // ─── Aspect Ratio Options ───────────────────────────
