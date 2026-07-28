@@ -34,6 +34,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const [enhancing, setEnhancing] = useState(false);
   const [modelType, setModelType] = useState('flux_dev'); // 'flux_dev' | 'flux_schnell'
   const [visualStyle, setVisualStyle] = useState('none');
+  const [skipEnhance, setSkipEnhance] = useState(false); // skip the LLM prompt enhancer to save tokens
   const [aspectRatio, setAspectRatio] = useState('1:1'); // '1:1' | '16:9' | '9:16'
   const [strength, setStrength] = useState(0.65);
   const [characterId, setCharacterId] = useState('');
@@ -729,6 +730,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       formData.set('prompt', prompt);
       formData.set('image_mode', imageMode);
       formData.set('model_type', modelType);
+      formData.set('skip_enhance', String(skipEnhance));
       formData.set('visual_style', visualStyle);
       formData.set('camera_angle', cameraAngle);
       formData.set('camera_zoom', cameraZoom);
@@ -1088,6 +1090,17 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               className="w-full bg-[#1C1C1E] border border-white/10 p-3 rounded-xl text-sm text-white placeholder-gray-500 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
             />
           </div>
+
+          {/* Skip AI prompt enhancement — saves tokens for users who write their own detailed prompt */}
+          <label className="flex items-center gap-2 mb-4 cursor-pointer select-none text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              checked={skipEnhance}
+              onChange={(e) => setSkipEnhance(e.target.checked)}
+              className="accent-[#D4AF37] w-4 h-4"
+            />
+            ✍️ ใช้ Prompt ของฉันตรงๆ (ข้ามการปรับแต่งด้วย AI — ประหยัด Token)
+          </label>
 
           {/* Model & Ratio Parameters (Hidden for Paint/Uncrop) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

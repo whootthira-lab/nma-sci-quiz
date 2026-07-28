@@ -217,8 +217,9 @@ async function enhancePromptWithGPT(
   duration: number = 5
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-  if (!apiKey) {
-    console.warn('[GPT Enhance] Missing OPENAI_API_KEY. Using original prompt.');
+  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  if (!apiKey && !geminiKey) {
+    console.warn('[GPT Enhance] Missing both OpenAI and Gemini keys. Using original prompt.');
     return situationPrompt || '';
   }
 
@@ -281,6 +282,39 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
       userMessage += `\nVisual Style Constraint: Apply this aesthetic style: "${styleDesc}"`;
     }
   }
+
+  // Cost optimization: try Gemini 1.5 Flash first (≈2x cheaper than gpt-4o-mini + free tier),
+  // fall back to OpenAI below if it errors or is unavailable.
+  if (geminiKey) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `${systemMessage}\n\n${userMessage}` }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 250 },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (gRes.ok) {
+        const gJson = await gRes.json();
+        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (gText) {
+          console.log('[Gemini Enhance] Enhanced prompt via gemini-1.5-flash');
+          return gText;
+        }
+      } else {
+        console.warn(`[Gemini Enhance] status ${gRes.status}, falling back to OpenAI`);
+      }
+    } catch (err: any) {
+      console.warn('[Gemini Enhance] exception, falling back to OpenAI:', err?.message || err);
+    }
+  }
+
+  if (!apiKey) return situationPrompt || ''; // Gemini unavailable and no OpenAI key
 
   try {
     console.log('[GPT Enhance] Enhancing prompt with gpt-4o-mini...');
@@ -370,6 +404,7 @@ export async function POST(req: NextRequest) {
     const userEmail = formData.get('user_email') as string;
     const userId = formData.get('user_id') as string;
     const modelType = formData.get('model_type') as string || 'fast';
+    const skipEnhance = formData.get('skip_enhance') === 'true'; // opt out of the LLM prompt enhancer to save tokens
     const videoMode = formData.get('video_mode') as string || 'image_to_video';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
     const ttsProvider = formData.get('tts_provider') as string || 'google';
@@ -546,16 +581,18 @@ export async function POST(req: NextRequest) {
     // Define parallel tasks to optimize response times and avoid Gateway Timeout (504)
     console.log('[STEP 0.5] Starting parallel asset processing (GPT, Image, Video, End Image, and TTS)...');
     
-    const promptTask = enhancePromptWithGPT(
-      situationPrompt,
-      scriptText,
-      modelType === 'fast' ? endSituationPrompt : undefined,
-      isNoSpeech,
-      visualStyle,
-      characterDescription,
-      characterEmotion,
-      selectedDuration
-    );
+    const promptTask = skipEnhance
+      ? Promise.resolve(situationPrompt || '')
+      : enhancePromptWithGPT(
+          situationPrompt,
+          scriptText,
+          modelType === 'fast' ? endSituationPrompt : undefined,
+          isNoSpeech,
+          visualStyle,
+          characterDescription,
+          characterEmotion,
+          selectedDuration
+        );
 
     const uploadImageTask = (async () => {
       let imageUrl = '';

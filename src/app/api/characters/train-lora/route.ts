@@ -7,13 +7,44 @@ export const dynamic = 'force-dynamic';
 
 async function analyzeImageWithVision(imageBuffer: Buffer, mimeType: string): Promise<{ angle: string; description: string }> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY || '';
-  if (!apiKey) {
-    console.warn('[Vision Log] Missing OPENAI_API_KEY. Using fallback.');
+  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+  if (!apiKey && !geminiKey) {
+    console.warn('[Vision Log] Missing both OpenAI and Gemini keys. Using fallback.');
     return { angle: 'front view', description: 'person face portrait' };
   }
 
   const base64Image = imageBuffer.toString('base64');
   const dataUrl = `data:${mimeType};base64,${base64Image}`;
+  const visionInstruction = "Analyze this portrait image. You must classify the head pose angle and describe the visual appearance. Respond with a JSON object containing exactly two keys: 'angle' (must be one of: 'front view', 'three-quarter view', or 'side view') and 'description' (a short 1-sentence description of the person's expression, clothing, hair, and background). Do not add any backticks, markdown, or other text outside the JSON.";
+
+  // Cost optimization: try Gemini 1.5 Flash vision first (cheaper per image), fall back to OpenAI.
+  // Vision runs once per training image, so this is the biggest token saving in the app.
+  if (geminiKey) {
+    try {
+      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: visionInstruction }, { inlineData: { mimeType, data: base64Image } }] }],
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 150 },
+        }),
+      });
+      if (gRes.ok) {
+        const gJson = await gRes.json();
+        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (gText) {
+          const parsed = JSON.parse(gText);
+          return { angle: parsed.angle || 'front view', description: parsed.description || 'person face portrait' };
+        }
+      } else {
+        console.warn(`[Gemini Vision] status ${gRes.status}, falling back to OpenAI`);
+      }
+    } catch (err) {
+      console.warn('[Gemini Vision] exception, falling back to OpenAI:', err);
+    }
+  }
+
+  if (!apiKey) return { angle: 'front view', description: 'person face portrait' };
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

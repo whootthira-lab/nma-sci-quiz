@@ -13,8 +13,9 @@ async function enhanceImagePromptWithGPT(
   characterEmotion?: string
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-  if (!apiKey) {
-    console.warn('[GPT Image Enhance] Missing OpenAI API Key. Using original prompt.');
+  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  if (!apiKey && !geminiKey) {
+    console.warn('[Image Enhance] Missing both OpenAI and Gemini keys. Using original prompt.');
     return prompt;
   }
 
@@ -45,6 +46,36 @@ Guidelines:
   if (characterEmotion) {
     userMessage += `\nSubject's Emotion/Expression: "${characterEmotion}"`;
   }
+
+  // Cost optimization: try Gemini 1.5 Flash first (≈2x cheaper than gpt-4o-mini + free tier),
+  // fall back to OpenAI below if it errors or is unavailable.
+  if (geminiKey) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `${systemInstruction}\n\n${userMessage}` }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 250 },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (gRes.ok) {
+        const gJson = await gRes.json();
+        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (gText) return gText;
+      } else {
+        console.warn(`[Gemini Image Enhance] status ${gRes.status}, falling back to OpenAI`);
+      }
+    } catch (err: any) {
+      console.warn('[Gemini Image Enhance] exception, falling back to OpenAI:', err?.message || err);
+    }
+  }
+
+  if (!apiKey) return prompt; // Gemini unavailable and no OpenAI key → use original prompt
 
   try {
     const controller = new AbortController();
@@ -113,6 +144,7 @@ export async function POST(req: NextRequest) {
     const strength = parseFloat(formData.get('strength') as string || '0.65');
     const aspectRatio = formData.get('aspect_ratio') as string || '1:1';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
+    const skipEnhance = formData.get('skip_enhance') === 'true'; // power users who write their own prompt → skip the LLM enhancer (saves tokens)
 
     if (!prompt || !userEmail) {
       return NextResponse.json(
@@ -252,16 +284,21 @@ export async function POST(req: NextRequest) {
       combinedPrompt = `a photo of ${loraTriggerWord}, ${prompt}`;
     }
 
-    // 4. Enhance prompt using GPT-4o-mini
-    console.log('[IMAGE GEN API] Enhancing prompt with GPT-4o-mini...');
-    const enhancedPrompt = await enhanceImagePromptWithGPT(
-      combinedPrompt,
-      visualStyle,
-      cameraAngle,
-      cameraZoom,
-      characterDescription,
-      characterEmotion
-    );
+    // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
+    let enhancedPrompt = combinedPrompt;
+    if (skipEnhance) {
+      console.log('[IMAGE GEN API] skip_enhance=true → using original prompt (no LLM call)');
+    } else {
+      console.log('[IMAGE GEN API] Enhancing prompt (Gemini Flash → OpenAI fallback)...');
+      enhancedPrompt = await enhanceImagePromptWithGPT(
+        combinedPrompt,
+        visualStyle,
+        cameraAngle,
+        cameraZoom,
+        characterDescription,
+        characterEmotion
+      );
+    }
 
     // 5. Select Fal.ai model endpoint
     let modelEndpoint = 'fal-ai/flux/dev';
