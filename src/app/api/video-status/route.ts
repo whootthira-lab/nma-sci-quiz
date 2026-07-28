@@ -99,6 +99,8 @@ export async function POST(req: NextRequest) {
     let queueNamespace = modelEndpoint;
     if (modelEndpoint.startsWith('fal-ai/kling-video')) {
       queueNamespace = 'fal-ai/kling-video';
+    } else if (modelEndpoint.startsWith('fal-ai/flux-pro')) {
+      queueNamespace = 'fal-ai/flux-pro'; // Kontext — check before the flux prefix below
     } else if (modelEndpoint.startsWith('fal-ai/flux')) {
       queueNamespace = 'fal-ai/flux';
     } else if (modelEndpoint.startsWith('fal-ai/bytedance')) {

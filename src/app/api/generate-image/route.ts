@@ -286,8 +286,8 @@ export async function POST(req: NextRequest) {
 
     // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
     let enhancedPrompt = combinedPrompt;
-    if (skipEnhance) {
-      console.log('[IMAGE GEN API] skip_enhance=true → using original prompt (no LLM call)');
+    if (skipEnhance || imageMode === 'kontext') {
+      console.log('[IMAGE GEN API] Skipping enhancer (opt-out or Kontext edit instruction) → using original prompt');
     } else {
       console.log('[IMAGE GEN API] Enhancing prompt (Gemini Flash → OpenAI fallback)...');
       enhancedPrompt = await enhanceImagePromptWithGPT(
@@ -300,12 +300,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (imageMode === 'kontext' && !imageUrl) {
+      return NextResponse.json(
+        { success: false, error: 'โหมดแก้ภาพ (Kontext) ต้องอัปโหลดรูปต้นฉบับก่อน' },
+        { status: 400 }
+      );
+    }
+
     // 5. Select Fal.ai model endpoint
     let modelEndpoint = 'fal-ai/flux/dev';
     if (imageMode === 'image_to_image') {
       modelEndpoint = 'fal-ai/flux/dev/image-to-image';
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
       modelEndpoint = 'fal-ai/flux/dev/fill';
+    } else if (imageMode === 'kontext') {
+      modelEndpoint = 'fal-ai/flux-pro/kontext'; // reference/instruction image editing
     } else if (modelType === 'flux_schnell' && !loraModelUrl) {
       modelEndpoint = 'fal-ai/flux/schnell';
     }
@@ -320,12 +329,17 @@ export async function POST(req: NextRequest) {
     // Add aspect ratio or custom sizing for non-fill endpoints.
     // Fal flux expects image_size as an object { width, height } (or one of its enum strings) —
     // sending a "1024x1024" string fails validation with HTTP 422.
-    if (imageMode !== 'inpainting' && imageMode !== 'outpainting') {
+    if (imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'kontext') {
       requestBody.image_size = aspectRatio === '16:9'
         ? { width: 1280, height: 720 }
         : (aspectRatio === '9:16'
             ? { width: 720, height: 1280 }
             : { width: 1024, height: 1024 });
+    }
+
+    // Kontext edits the uploaded image directly (keeps its native dimensions)
+    if (imageMode === 'kontext') {
+      requestBody.image_url = imageUrl;
     }
 
     // Attach reference image for I2I

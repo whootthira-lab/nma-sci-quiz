@@ -27,7 +27,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const { user, whitelistData } = useAuth();
   
   // Tab states
-  const [imageMode, setImageMode] = useState<'text_to_image' | 'image_to_image' | 'inpainting' | 'outpainting'>('text_to_image');
+  const [imageMode, setImageMode] = useState<'text_to_image' | 'image_to_image' | 'inpainting' | 'outpainting' | 'kontext'>('text_to_image');
   
   // Parameters states
   const [prompt, setPrompt] = useState('');
@@ -1034,7 +1034,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
       {/* Mode Sub-Tabs */}
       <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#1A1A1D] rounded-xl border border-white/5 mb-6">
-        {(['text_to_image', 'image_to_image', 'inpainting', 'outpainting'] as const).map((mode) => (
+        {(['text_to_image', 'image_to_image', 'kontext', 'inpainting', 'outpainting'] as const).map((mode) => (
           <button
             key={mode}
             type="button"
@@ -1047,6 +1047,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
           >
             {mode === 'text_to_image' && '📝 วาดจากข้อความ'}
             {mode === 'image_to_image' && '🖼️ แปลงจากรูปภาพ'}
+            {mode === 'kontext' && '✨ แก้ภาพตามคำสั่ง'}
             {mode === 'inpainting' && '🖌️ แก้เฉพาะจุด'}
             {mode === 'outpainting' && '📐 เติมขยายเฟรม'}
           </button>
