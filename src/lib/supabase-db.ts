@@ -129,9 +129,13 @@ export async function getUserGenerations(email: string) {
     id: row.id,
     user_email: email,
     mode: row.metadata?.mode || 'text-to-video',
+    // The actual generation prompt: images store it in the top-level `prompt` column,
+    // videos in metadata.situation_prompt; fall back to the speech script.
+    prompt: row.prompt || row.metadata?.situation_prompt || row.metadata?.script_text || '',
     script_text: row.metadata?.script_text || '',
     situation_prompt: row.metadata?.situation_prompt || '',
     model_name: row.metadata?.model_name || '',
+    model_endpoint: row.metadata?.model_endpoint || '',
     voice_id: row.metadata?.voice_id || '',
     image_url: row.source_image_url,
     video_url: row.video_url,

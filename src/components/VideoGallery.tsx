@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2, Copy, Check, Cpu } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { getUserGenerations, deleteGeneration } from '@/lib/supabase-db';
 import type { GenerationDoc } from '@/types';
@@ -15,6 +15,27 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
   const [generations, setGenerations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCopyPrompt = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
+  };
+
+  const modeLabel = (mode: string) => {
+    if (!mode) return 'วิดีโอ';
+    if (mode.startsWith('image-') || mode === 'text_to_image') return 'รูปภาพ';
+    if (mode === 'text-to-video') return 'Text → Video';
+    if (mode === 'image_to_video') return 'Image → Video';
+    if (mode === 'motion-control' || mode === 'face-motion') return 'Face Motion';
+    return mode;
+  };
 
   const loadGenerations = async () => {
     if (!user?.email) return;
@@ -154,11 +175,11 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
             <div className="p-4 space-y-3">
               {/* Mode Badge + Date */}
               <div className="flex items-center justify-between">
-                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${gen.mode === 'text-to-video'
-                    ? 'bg-accent-primary/10 text-accent-primary'
-                    : 'bg-accent-warm/10 text-accent-warm'
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${(gen.mode || '').startsWith('image')
+                    ? 'bg-accent-warm/10 text-accent-warm'
+                    : 'bg-accent-primary/10 text-accent-primary'
                   }`}>
-                  {gen.mode === 'text-to-video' ? 'Text → Video' : 'Face Motion'}
+                  {modeLabel(gen.mode)}
                 </span>
                 <span className="text-[10px] text-text-muted flex items-center gap-1">
                   <Clock className="w-3 h-3" />
@@ -166,18 +187,41 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
                 </span>
               </div>
 
-              {/* Script Preview */}
-              {gen.script_text && (
-                <p className="text-sm text-text-secondary line-clamp-2 font-thai">
-                  {gen.script_text}
-                </p>
+              {/* Prompt (คำสั่งที่ใช้สร้าง) */}
+              {gen.prompt && (
+                <div className="space-y-1.5">
+                  <p className={`text-sm text-text-secondary font-thai whitespace-pre-wrap ${expandedId === gen.id ? '' : 'line-clamp-2'}`}>
+                    {gen.prompt}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    {gen.prompt.length > 90 && (
+                      <button
+                        onClick={() => setExpandedId(expandedId === gen.id ? null : gen.id)}
+                        className="text-[10px] text-accent-primary hover:underline"
+                      >
+                        {expandedId === gen.id ? 'ย่อ' : 'ดู Prompt เต็ม'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleCopyPrompt(gen.id, gen.prompt)}
+                      className="text-[10px] text-text-muted hover:text-text-secondary flex items-center gap-1"
+                    >
+                      {copiedId === gen.id ? <Check className="w-3 h-3 text-accent-primary" /> : <Copy className="w-3 h-3" />}
+                      {copiedId === gen.id ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {/* Meta */}
-              <p className="text-[10px] text-text-muted">
-                {formatDate(gen.created_at)}
-                {gen.model_name && ` · ${gen.model_name}`}
-              </p>
+              {/* Meta: โมเดลที่ใช้ + วันที่ */}
+              <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                {gen.model_name && (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-white/5 text-text-secondary border border-white/10 flex items-center gap-1">
+                    <Cpu className="w-3 h-3" /> {gen.model_name}
+                  </span>
+                )}
+                <span className="text-[10px] text-text-muted">{formatDate(gen.created_at)}</span>
+              </div>
 
               {/* Actions */}
               <div className="flex items-center gap-2 pt-1">
