@@ -28,15 +28,17 @@ if (!sfKey) {
   process.exit(1);
 }
 
+// Thai sample lines so the preview reflects how each voice actually reads Thai
+// (CosyVoice is not trained on Thai, so these previews expose its foreign accent honestly).
 const voices = [
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'cosy-anna.mp3', text: 'Hello, my name is Anna. I am a polite female voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'cosy-claire.mp3', text: 'Hello, my name is Claire. I am a gentle female voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:bella', name: 'cosy-bella.mp3', text: 'Hello, my name is Bella. I am a cheerful female voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:diana', name: 'cosy-diana.mp3', text: 'Hello, my name is Diana. I am a confident female voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'cosy-alex.mp3', text: 'Hello, my name is Alex. I am a mature male voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'cosy-benjamin.mp3', text: 'Hello, my name is Benjamin. I am a warm male voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:charles', name: 'cosy-charles.mp3', text: 'Hello, my name is Charles. I am a polite male voice.' },
-  { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'cosy-david.mp3', text: 'Hello, my name is David. I am a powerful male voice.' }
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:anna', name: 'cosy-anna.mp3', text: 'สวัสดีค่ะ ดิฉันชื่อแอนนา นี่คือตัวอย่างเสียงพากย์ภาษาไทยค่ะ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:claire', name: 'cosy-claire.mp3', text: 'สวัสดีค่ะ ดิฉันชื่อแคลร์ นี่คือตัวอย่างเสียงพากย์ภาษาไทยค่ะ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:bella', name: 'cosy-bella.mp3', text: 'สวัสดีค่ะ ดิฉันชื่อเบลล่า นี่คือตัวอย่างเสียงพากย์ภาษาไทยค่ะ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:diana', name: 'cosy-diana.mp3', text: 'สวัสดีค่ะ ดิฉันชื่อไดอาน่า นี่คือตัวอย่างเสียงพากย์ภาษาไทยค่ะ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:alex', name: 'cosy-alex.mp3', text: 'สวัสดีครับ ผมชื่ออเล็กซ์ นี่คือตัวอย่างเสียงพากย์ภาษาไทยครับ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:benjamin', name: 'cosy-benjamin.mp3', text: 'สวัสดีครับ ผมชื่อเบนจามิน นี่คือตัวอย่างเสียงพากย์ภาษาไทยครับ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:charles', name: 'cosy-charles.mp3', text: 'สวัสดีครับ ผมชื่อชาร์ลส์ นี่คือตัวอย่างเสียงพากย์ภาษาไทยครับ' },
+  { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'cosy-david.mp3', text: 'สวัสดีครับ ผมชื่อเดวิด นี่คือตัวอย่างเสียงพากย์ภาษาไทยครับ' }
 ];
 
 const samplesDir = path.join(__dirname, '..', 'public', 'samples');
