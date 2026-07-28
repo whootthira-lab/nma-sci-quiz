@@ -13,7 +13,10 @@ function initFirebaseAdmin() {
   }
 
   try {
-    const serviceAccountKey = process.env.NEXT_PUBLIC_FIREBASE_SERVICE_ACCOUNT_KEY;
+    // Prefer a server-only var name; keep the NEXT_PUBLIC_ name only as a migration fallback.
+    // The service account is a SECRET and must never be exposed to the client — set
+    // FIREBASE_SERVICE_ACCOUNT_KEY (no NEXT_PUBLIC_ prefix) in the environment.
+    const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.NEXT_PUBLIC_FIREBASE_SERVICE_ACCOUNT_KEY;
     if (serviceAccountKey) {
       console.log('[Firebase] Initializing with service account key...');
       const cleanKey = serviceAccountKey.startsWith("'") && serviceAccountKey.endsWith("'")
