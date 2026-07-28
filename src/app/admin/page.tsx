@@ -33,6 +33,7 @@ export default function AdminPage() {
   const [wanResolution, setWanResolution] = useState('720p');
   const [klingResolution, setKlingResolution] = useState('720p');
   const [grokResolution, setGrokResolution] = useState('720p');
+  const [seedanceResolution, setSeedanceResolution] = useState('720p');
   const [klingAudioEnabled, setKlingAudioEnabled] = useState(false);
   const [stats, setStats] = useState({
     totalGenerations: 0,
@@ -87,6 +88,7 @@ export default function AdminPage() {
         const wanRes = data.find((item: any) => item.key === 'wan_resolution');
         const klingRes = data.find((item: any) => item.key === 'kling_resolution');
         const grokRes = data.find((item: any) => item.key === 'grok_resolution');
+        const seedanceRes = data.find((item: any) => item.key === 'seedance_resolution');
         const klingAudio = data.find((item: any) => item.key === 'kling_audio_enabled');
         
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
@@ -96,6 +98,7 @@ export default function AdminPage() {
         setWanResolution(wanRes ? wanRes.value : '720p');
         setKlingResolution(klingRes ? klingRes.value : '720p');
         setGrokResolution(grokRes ? grokRes.value : '720p');
+        setSeedanceResolution(seedanceRes ? seedanceRes.value : '720p');
         setKlingAudioEnabled(klingAudio ? klingAudio.value === 'true' : false);
       }
     } catch (err) {
@@ -184,6 +187,23 @@ export default function AdminPage() {
       if (error) throw error;
     } catch (err) {
       console.error('Failed to save grok resolution:', err);
+    }
+  };
+
+  const saveSeedanceResolution = async (value: string) => {
+    try {
+      setSeedanceResolution(value);
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'seedance_resolution',
+          value,
+          description: 'Resolution for Seedance (480p, 720p or 1080p)',
+          updated_at: new Date().toISOString()
+        });
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save seedance resolution:', err);
     }
   };
 
@@ -723,6 +743,36 @@ export default function AdminPage() {
                 >
                   720p (ปกติ)
                 </button>
+              </div>
+            </div>
+
+            {/* Seedance Resolution Settings */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Film className="w-5 h-5 text-accent-success" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    ความละเอียดของโมเดล Seedance (KRUTH Nova)
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    เลือกคุณภาพของผลลัพธ์วิดีโอ Seedance 1.0 Pro
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 bg-[#1A1A1A] p-1 rounded-xl border border-white/5">
+                {['480p', '720p', '1080p'].map((res) => (
+                  <button
+                    key={res}
+                    onClick={() => saveSeedanceResolution(res)}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all font-thai ${
+                      seedanceResolution === res
+                        ? 'bg-[#D4AF37] text-black shadow-md'
+                        : 'text-text-muted hover:text-white'
+                    }`}
+                  >
+                    {res === '480p' ? '480p (ประหยัด)' : res === '720p' ? '720p (ปกติ)' : '1080p (คมชัด)'}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
