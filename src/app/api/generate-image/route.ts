@@ -286,8 +286,8 @@ export async function POST(req: NextRequest) {
 
     // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
     let enhancedPrompt = combinedPrompt;
-    if (skipEnhance || imageMode === 'kontext') {
-      console.log('[IMAGE GEN API] Skipping enhancer (opt-out or Kontext edit instruction) → using original prompt');
+    if (skipEnhance || imageMode === 'kontext' || imageMode === 'relight' || imageMode === 'colorgrade') {
+      console.log('[IMAGE GEN API] Skipping enhancer (opt-out or edit-mode instruction) → using original prompt');
     } else {
       console.log('[IMAGE GEN API] Enhancing prompt (Gemini Flash → OpenAI fallback)...');
       enhancedPrompt = await enhanceImagePromptWithGPT(
@@ -307,6 +307,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if ((imageMode === 'relight' || imageMode === 'colorgrade') && !imageUrl) {
+      return NextResponse.json(
+        { success: false, error: 'โหมดนี้ต้องอัปโหลดรูปต้นฉบับก่อน' },
+        { status: 400 }
+      );
+    }
+
     // 5. Select Fal.ai model endpoint
     let modelEndpoint = 'fal-ai/flux/dev';
     if (imageMode === 'image_to_image') {
@@ -315,6 +322,10 @@ export async function POST(req: NextRequest) {
       modelEndpoint = 'fal-ai/flux/dev/fill';
     } else if (imageMode === 'kontext') {
       modelEndpoint = 'fal-ai/flux-pro/kontext'; // reference/instruction image editing
+    } else if (imageMode === 'relight') {
+      modelEndpoint = 'fal-ai/iclight-v2'; // relighting from a lighting-description prompt
+    } else if (imageMode === 'colorgrade') {
+      modelEndpoint = 'fal-ai/image-editing/color-correction'; // color/tone correction
     } else if (modelType === 'flux_schnell' && !loraModelUrl) {
       modelEndpoint = 'fal-ai/flux/schnell';
     }
@@ -329,7 +340,8 @@ export async function POST(req: NextRequest) {
     // Add aspect ratio or custom sizing for non-fill endpoints.
     // Fal flux expects image_size as an object { width, height } (or one of its enum strings) —
     // sending a "1024x1024" string fails validation with HTTP 422.
-    if (imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'kontext') {
+    if (imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'kontext'
+        && imageMode !== 'relight' && imageMode !== 'colorgrade') {
       requestBody.image_size = aspectRatio === '16:9'
         ? { width: 1280, height: 720 }
         : (aspectRatio === '9:16'
@@ -337,8 +349,8 @@ export async function POST(req: NextRequest) {
             : { width: 1024, height: 1024 });
     }
 
-    // Kontext edits the uploaded image directly (keeps its native dimensions)
-    if (imageMode === 'kontext') {
+    // Edit modes operate on the uploaded image directly (keep its native dimensions)
+    if (imageMode === 'kontext' || imageMode === 'relight' || imageMode === 'colorgrade') {
       requestBody.image_url = imageUrl;
     }
 

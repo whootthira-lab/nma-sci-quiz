@@ -109,6 +109,8 @@ export async function POST(req: NextRequest) {
       queueNamespace = 'fal-ai/veo3'; // Veo 3 status/result on the base app id
     } else if (modelEndpoint.startsWith('fal-ai/sora-2')) {
       queueNamespace = 'fal-ai/sora-2'; // Sora 2 status/result on the base app id
+    } else if (modelEndpoint.startsWith('fal-ai/image-editing')) {
+      queueNamespace = 'fal-ai/image-editing'; // color-correction etc. live on the base app id
     }
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
@@ -223,7 +225,7 @@ export async function POST(req: NextRequest) {
         }
 
         const detailData = await detailResponse.json();
-        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url;
+        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url || detailData.image?.url;
       }
 
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
