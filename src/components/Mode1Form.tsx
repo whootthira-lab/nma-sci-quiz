@@ -57,6 +57,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const { user, isAdmin, whitelistData } = useAuth(); 
 
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [extraImages, setExtraImages] = useState<File[]>([]); // extra reference images for Kling Elements montage (up to 3)
   // สถานะการทำงาน
   const [processing, setProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState('');
@@ -549,6 +550,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         }
       }
 
+      // Kling Elements: extra reference images (montage from up to 4 images)
+      if (modelType === 'elements') {
+        extraImages.slice(0, 3).forEach((f) => formData.append('extra_images', f));
+      }
+
       if (modelType === 'motion-control') {
         formData.append('video', videoFile!);
         formData.append('motion_audio_source', motionAudioSource);
@@ -823,6 +829,51 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
               </select>
             </div>
+          </div>
+        )}
+
+        {/* Kling Elements: extra reference images for the montage */}
+        {modelType === 'elements' && (
+          <div className="space-y-3 p-4 bg-[#D4AF37]/5 border border-[#D4AF37]/25 rounded-xl mb-4 font-thai">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#1A1A1A]">
+              🎞️ <span>ภาพอ้างอิงสำหรับมอนทาจ</span>
+              <span className="text-xs font-normal text-gray-500">— ภาพหลัก 1 + เพิ่มได้อีกสูงสุด 3</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {extraImages.map((f, i) => (
+                <div key={i} className="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-200 group">
+                  <img src={URL.createObjectURL(f)} alt={`extra-${i}`} className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setExtraImages((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="ลบภาพนี้"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+              {extraImages.length < 3 && (
+                <label className="w-20 h-20 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:border-[#D4AF37] hover:text-[#D4AF37] cursor-pointer text-[10px] gap-1 transition-colors">
+                  <ImagePlus className="w-4 h-4" />
+                  เพิ่มภาพ
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      setExtraImages((prev) => [...prev, ...files].slice(0, 3));
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-500">
+              อัปโหลด &quot;ภาพหลัก&quot; ที่ช่องรูปด้านล่างตามปกติ แล้วเพิ่มภาพอื่นที่นี่ — ระบบจะรวมทั้งหมดเป็นคลิปมอนทาจเดียว
+            </p>
           </div>
         )}
 
