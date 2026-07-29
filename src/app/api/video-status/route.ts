@@ -105,6 +105,10 @@ export async function POST(req: NextRequest) {
       queueNamespace = 'fal-ai/flux';
     } else if (modelEndpoint.startsWith('fal-ai/bytedance')) {
       queueNamespace = 'fal-ai/bytedance'; // Seedance status/result live on the base app id
+    } else if (modelEndpoint.startsWith('fal-ai/veo3')) {
+      queueNamespace = 'fal-ai/veo3'; // Veo 3 status/result on the base app id
+    } else if (modelEndpoint.startsWith('fal-ai/sora-2')) {
+      queueNamespace = 'fal-ai/sora-2'; // Sora 2 status/result on the base app id
     }
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;

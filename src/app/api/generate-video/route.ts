@@ -533,6 +533,10 @@ export async function POST(req: NextRequest) {
       ratePerSecond = seedanceResolution === '480p' ? 2 : (seedanceResolution === '1080p' ? 6 : 4);
     } else if (modelType === 'elements') {
       ratePerSecond = 5;
+    } else if (modelType === 'veo3') {
+      ratePerSecond = 20; // premium — Veo 3 is costly; admin can tune
+    } else if (modelType === 'sora2') {
+      ratePerSecond = 18; // premium — Sora 2
     } else if (isMotionControl) {
       ratePerSecond = 4;
     }
@@ -774,6 +778,8 @@ export async function POST(req: NextRequest) {
     const isGrok = modelType === 'grok-video';
     const isSeedance = modelType === 'seedance';
     const isElements = modelType === 'elements';
+    const isVeo = modelType === 'veo3';
+    const isSora = modelType === 'sora2';
     const isSiliconFlow =
       modelType === 'hunyuan' || 
       modelType === 'ltx-video' || 
@@ -850,7 +856,11 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      modelEndpoint = isElements
+      modelEndpoint = isVeo
+          ? (videoMode === 'text_to_video' ? 'fal-ai/veo3/fast' : 'fal-ai/veo3/image-to-video')
+          : isSora
+          ? (videoMode === 'text_to_video' ? 'fal-ai/sora-2/text-to-video' : 'fal-ai/sora-2/image-to-video')
+          : isElements
           ? 'fal-ai/kling-video/v1.6/pro/elements'
           : isSeedance
           ? (videoMode === 'text_to_video' ? 'fal-ai/bytedance/seedance/v1/pro/text-to-video' : 'fal-ai/bytedance/seedance/v1/pro/image-to-video')
@@ -917,6 +927,26 @@ export async function POST(req: NextRequest) {
         }
         if (characterNegativePrompt) {
           requestBody.negative_prompt = characterNegativePrompt;
+        }
+      } else if (isVeo) {
+        // Google Veo 3 Fast: prompt (+ image for i2v), aspect ratio; app does its own audio so keep generate_audio off.
+        requestBody = {
+          prompt: combinedPrompt,
+          aspect_ratio: aspectRatio === '9:16' ? '9:16' : '16:9',
+          duration: '8s',
+          generate_audio: false,
+        };
+        if (videoMode !== 'text_to_video' && imageUrl) {
+          requestBody.image_url = imageUrl;
+        }
+      } else if (isSora) {
+        // OpenAI Sora 2: prompt (+ image for i2v), aspect ratio.
+        requestBody = {
+          prompt: combinedPrompt,
+          aspect_ratio: aspectRatio === '9:16' ? '9:16' : '16:9',
+        };
+        if (videoMode !== 'text_to_video' && imageUrl) {
+          requestBody.image_url = imageUrl;
         }
       } else if (isElements) {
         // Kling 1.6 Elements: multiple reference images → one video montage.
@@ -1058,7 +1088,11 @@ export async function POST(req: NextRequest) {
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             visual_style: visualStyle,
-            model_name: modelType === 'elements'
+            model_name: modelType === 'veo3'
+              ? 'veo-3-fast'
+              : modelType === 'sora2'
+              ? 'sora-2'
+              : modelType === 'elements'
               ? 'kling-1.6-elements'
               : modelType === 'seedance'
               ? 'seedance-1.0-pro'
