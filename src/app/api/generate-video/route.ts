@@ -531,6 +531,8 @@ export async function POST(req: NextRequest) {
       }
     } else if (modelType === 'seedance') {
       ratePerSecond = seedanceResolution === '480p' ? 2 : (seedanceResolution === '1080p' ? 6 : 4);
+    } else if (modelType === 'elements') {
+      ratePerSecond = 5;
     } else if (isMotionControl) {
       ratePerSecond = 4;
     }
@@ -633,6 +635,19 @@ export async function POST(req: NextRequest) {
       return { videoUrl, refVideoPath };
     })();
 
+    // Extra reference images (for multi-image "Elements" montage; up to 3 more beyond the primary = 4 total)
+    const extraImageFiles = formData.getAll('extra_images').filter((f): f is File => f instanceof File && f.size > 0).slice(0, 3);
+    const uploadExtraImagesTask = (async () => {
+      const urls: string[] = [];
+      for (let i = 0; i < extraImageFiles.length; i++) {
+        const f = extraImageFiles[i];
+        const buf = Buffer.from(await f.arrayBuffer());
+        const p = `references/${userEmail}/${timestamp}_ref_extra${i + 1}.${f.type.split('/')[1] || 'png'}`;
+        urls.push(await uploadToSupabaseStorage(buf, p, f.type));
+      }
+      return urls;
+    })();
+
     const uploadEndImageTask = (async () => {
       let endImageUrl = '';
       let endImagePath = '';
@@ -684,13 +699,15 @@ export async function POST(req: NextRequest) {
       imgResult,
       vidResult,
       endImgResult,
-      ttsResult
+      ttsResult,
+      extraImageUrls
     ] = await Promise.all([
       promptTask,
       uploadImageTask,
       uploadVideoTask,
       uploadEndImageTask,
-      generateTTSTask
+      generateTTSTask,
+      uploadExtraImagesTask
     ]);
 
     let imageUrl = imgResult?.imageUrl || '';
@@ -756,6 +773,7 @@ export async function POST(req: NextRequest) {
     const isMotionControlModel = modelType === 'motion-control';
     const isGrok = modelType === 'grok-video';
     const isSeedance = modelType === 'seedance';
+    const isElements = modelType === 'elements';
     const isSiliconFlow =
       modelType === 'hunyuan' || 
       modelType === 'ltx-video' || 
@@ -832,7 +850,9 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      modelEndpoint = isSeedance
+      modelEndpoint = isElements
+          ? 'fal-ai/kling-video/v1.6/pro/elements'
+          : isSeedance
           ? (videoMode === 'text_to_video' ? 'fal-ai/bytedance/seedance/v1/pro/text-to-video' : 'fal-ai/bytedance/seedance/v1/pro/image-to-video')
           : isCinema
           ? (videoMode === 'text_to_video' ? 'fal-ai/wan-t2v' : 'fal-ai/wan-i2v')
@@ -895,6 +915,17 @@ export async function POST(req: NextRequest) {
         if (videoMode === 'image_to_video') {
           requestBody.image_url = imageUrl;
         }
+        if (characterNegativePrompt) {
+          requestBody.negative_prompt = characterNegativePrompt;
+        }
+      } else if (isElements) {
+        // Kling 1.6 Elements: multiple reference images → one video montage.
+        requestBody = {
+          prompt: combinedPrompt,
+          input_image_urls: [imageUrl, ...(extraImageUrls || [])].filter(Boolean).slice(0, 4),
+          duration: String(selectedDuration <= 5 ? 5 : 10),
+          aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
+        };
         if (characterNegativePrompt) {
           requestBody.negative_prompt = characterNegativePrompt;
         }
@@ -1027,7 +1058,9 @@ export async function POST(req: NextRequest) {
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             visual_style: visualStyle,
-            model_name: modelType === 'seedance'
+            model_name: modelType === 'elements'
+              ? 'kling-1.6-elements'
+              : modelType === 'seedance'
               ? 'seedance-1.0-pro'
               : modelType === 'hunyuan'
               ? 'hunyuan-video'
