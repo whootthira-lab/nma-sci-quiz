@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Video,
   CheckCircle2,
-  HelpCircle
+  HelpCircle,
+  Upload
 } from 'lucide-react';
 import { THAI_VOICES, ASPECT_RATIOS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
@@ -42,6 +43,9 @@ interface DialogueCardData {
   id: string;
   characterId: string;
   voiceId: string;
+  ttsProvider: 'google' | 'openai' | 'cosyvoice'; // per-card voice provider (overrides the global default)
+  audioFile?: File | null; // optional uploaded audio → used instead of TTS for this line
+  audioName?: string;
   scriptText: string;
   speedFactor: number;
   emotion: 'normal' | 'shocked' | 'happy' | 'sad' | 'angry' | 'custom';
@@ -138,6 +142,8 @@ export default function DialogueTabForm() {
       id: 'initial-1',
       characterId: '',
       voiceId: '',
+      ttsProvider: 'google',
+      audioFile: null,
       scriptText: '',
       speedFactor: 1.0,
       emotion: 'normal',
@@ -204,16 +210,16 @@ export default function DialogueTabForm() {
     }
   }, [user?.email]);
 
-  // Handle setting default voice when ttsProvider changes
+  // The global provider select acts as a "apply to all cards" bulk control:
+  // set every card's provider (and fix its voice) when it changes. Per-card selects still override.
   useEffect(() => {
     const providerVoices = THAI_VOICES.filter((v) => v.provider === ttsProvider);
     if (providerVoices.length > 0) {
       const defaultVoice = providerVoices[0].id;
       setCards((prev) =>
         prev.map((c) => {
-          // If the current voice is not in the new provider's list, reset it
           const voiceExists = providerVoices.some((v) => v.id === c.voiceId);
-          return voiceExists ? c : { ...c, voiceId: defaultVoice };
+          return { ...c, ttsProvider, voiceId: voiceExists ? c.voiceId : defaultVoice };
         })
       );
     }
@@ -254,6 +260,8 @@ export default function DialogueTabForm() {
         id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         characterId: defaultCharId,
         voiceId: defaultVoice,
+        ttsProvider: ttsProvider, // inherit the current global default at creation time
+        audioFile: null,
         scriptText: '',
         speedFactor: 1.0,
         emotion: 'normal',
@@ -470,8 +478,13 @@ export default function DialogueTabForm() {
 
       formData.append('visual_style', 'cinematic');
       formData.append('is_no_speech', 'false');
-      formData.append('tts_provider', ttsProvider);
-      formData.append('voice_id', card.voiceId);
+      // If the card has an uploaded audio file, use it instead of TTS (backend reads `custom_audio`)
+      if (card.audioFile) {
+        formData.append('custom_audio', card.audioFile);
+      } else {
+        formData.append('tts_provider', card.ttsProvider);
+        formData.append('voice_id', card.voiceId);
+      }
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || '');
       formData.append('user_id', user?.id || '');
@@ -673,10 +686,10 @@ export default function DialogueTabForm() {
             </select>
           </div>
 
-          {/* TTS Provider */}
+          {/* TTS Provider (bulk default — applies to every card; each card can override) */}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-2 font-thai">
-              ผู้ให้บริการเสียงสังเคราะห์ (TTS Provider)
+              ผู้ให้บริการเสียง (ตั้งให้ทุกการ์ด — ปรับรายตัวได้ในแต่ละการ์ด)
             </label>
             <select
               value={ttsProvider}
@@ -765,7 +778,7 @@ export default function DialogueTabForm() {
             {cards.map((card, index) => {
               const char = characterList.find((c) => c.id === card.characterId);
               const avatar = getAvatarUrl(char);
-              const providerVoices = THAI_VOICES.filter((v) => v.provider === ttsProvider);
+              const providerVoices = THAI_VOICES.filter((v) => v.provider === card.ttsProvider);
               
               // Resolve default voice value if none selected
               const activeVoiceId = card.voiceId || (providerVoices.length > 0 ? providerVoices[0].id : '');
@@ -869,42 +882,90 @@ export default function DialogueTabForm() {
                             </select>
                           </div>
 
-                          {/* Voice Select */}
+                          {/* Voice: provider + voice, or attached audio file */}
                           <div>
                             <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider font-thai">
                               เสียงพูด
                             </label>
-                            <div className="flex gap-2">
-                              <select
-                                value={activeVoiceId}
-                                onChange={(e) => updateCard(card.id, { voiceId: e.target.value })}
-                                className="flex-1 px-3 py-2 border border-gray-200 text-sm rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai bg-white"
-                              >
-                                {providerVoices.map((v) => (
-                                  <option key={v.id} value={v.id}>
-                                    {v.label}
-                                  </option>
-                                ))}
-                              </select>
-                              {activeVoiceId && (
+
+                            {card.audioFile ? (
+                              <div className="flex items-center gap-2 px-3 py-2 border border-amber-300 bg-amber-50 rounded-xl text-xs text-amber-800 font-thai">
+                                <span className="truncate flex-1">🎧 {card.audioName || 'ไฟล์เสียงที่แนบ'}</span>
                                 <button
                                   type="button"
-                                  onClick={() => handleVoicePreview(activeVoiceId)}
-                                  className={`p-2 rounded-xl border transition-all ${
-                                    playingVoice === activeVoiceId
-                                      ? 'bg-amber-100 text-amber-700 border-amber-300'
-                                      : 'bg-gray-50 hover:bg-gray-150 border-gray-200 text-gray-500'
-                                  }`}
-                                  title="ทดลองฟังเสียง"
+                                  onClick={() => updateCard(card.id, { audioFile: null, audioName: undefined })}
+                                  className="text-red-500 hover:text-red-700 shrink-0"
+                                  title="เอาไฟล์เสียงออก แล้วกลับไปใช้ TTS"
                                 >
-                                  {playingVoice === activeVoiceId ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Volume2 className="w-4 h-4" />
-                                  )}
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
-                              )}
-                            </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {/* Per-card TTS provider */}
+                                <select
+                                  value={card.ttsProvider}
+                                  onChange={(e) => {
+                                    const p = e.target.value as 'google' | 'openai' | 'cosyvoice';
+                                    const first = THAI_VOICES.find((v) => v.provider === p);
+                                    updateCard(card.id, { ttsProvider: p, voiceId: first ? first.id : '' });
+                                  }}
+                                  className="w-full px-3 py-2 border border-gray-200 text-xs rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai bg-white"
+                                >
+                                  <option value="google">🌐 Google (ไทยแท้)</option>
+                                  <option value="cosyvoice">🔥 CosyVoice</option>
+                                  <option value="openai">🧠 OpenAI</option>
+                                </select>
+                                <div className="flex gap-2">
+                                  <select
+                                    value={activeVoiceId}
+                                    onChange={(e) => updateCard(card.id, { voiceId: e.target.value })}
+                                    className="flex-1 px-3 py-2 border border-gray-200 text-sm rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai bg-white"
+                                  >
+                                    {providerVoices.map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        {v.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {activeVoiceId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVoicePreview(activeVoiceId)}
+                                      className={`p-2 rounded-xl border transition-all ${
+                                        playingVoice === activeVoiceId
+                                          ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                          : 'bg-gray-50 hover:bg-gray-150 border-gray-200 text-gray-500'
+                                      }`}
+                                      title="ทดลองฟังเสียง"
+                                    >
+                                      {playingVoice === activeVoiceId ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Volume2 className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Attach own audio (overrides TTS for this line) */}
+                            {!card.audioFile && (
+                              <label className="mt-2 inline-flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-[#D4AF37] cursor-pointer font-thai">
+                                <Upload className="w-3 h-3" /> แนบไฟล์เสียงเอง (ใช้แทน TTS)
+                                <input
+                                  type="file"
+                                  accept="audio/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) updateCard(card.id, { audioFile: f, audioName: f.name });
+                                    e.target.value = '';
+                                  }}
+                                />
+                              </label>
+                            )}
                           </div>
                         </div>
 
