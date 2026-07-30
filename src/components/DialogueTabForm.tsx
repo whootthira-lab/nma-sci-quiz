@@ -43,8 +43,19 @@ interface Character {
   default_voice_id?: string;
   default_tts_provider?: 'google' | 'openai' | 'cosyvoice';
 }
+// A scene owns its own background image and face tags, so a project can change location.
+// Clips within a scene are composited onto that scene's image; scenes are then joined.
+interface SceneData {
+  id: string;
+  name: string;
+  imageFile: File | null;
+  imagePreview: string | null;
+  faceTags: FaceTag[];
+}
+
 interface DialogueCardData {
   id: string;
+  sceneId: string;
   characterId: string;
   voiceId: string;
   ttsProvider: 'google' | 'openai' | 'cosyvoice'; // per-card voice provider (overrides the global default)
@@ -144,6 +155,7 @@ export default function DialogueTabForm() {
   const [cards, setCards] = useState<DialogueCardData[]>([
     {
       id: 'initial-1',
+      sceneId: 'scene-1',
       characterId: '',
       voiceId: '',
       ttsProvider: 'google',
@@ -176,26 +188,80 @@ export default function DialogueTabForm() {
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Base Scene Image & Face tagging states
-  const [baseImageFile, setBaseImageFile] = useState<File | null>(null);
-  const [baseImagePreview, setBaseImagePreview] = useState<string | null>(null);
-  const [faceTags, setFaceTags] = useState<FaceTag[]>([]);
+  // Scenes: each one carries its own background image and face tags
+  const [scenes, setScenes] = useState<SceneData[]>([
+    { id: 'scene-1', name: 'ฉากที่ 1', imageFile: null, imagePreview: null, faceTags: [] }
+  ]);
 
-  const handleBaseImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setBaseImageFile(file);
-    setBaseImagePreview(URL.createObjectURL(file));
-    setFaceTags([]); // Clear previous tags when changing base image
+  const updateScene = (sceneId: string, updates: Partial<SceneData>) => {
+    setScenes((prev) => prev.map((s) => (s.id === sceneId ? { ...s, ...updates } : s)));
   };
 
-  const clearBaseImage = () => {
-    setBaseImageFile(null);
-    if (baseImagePreview) {
-      URL.revokeObjectURL(baseImagePreview);
-    }
-    setBaseImagePreview(null);
-    setFaceTags([]);
+  const sceneOf = (card: DialogueCardData) =>
+    scenes.find((s) => s.id === card.sceneId) || scenes[0];
+
+  const handleSceneImageChange = (sceneId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const prev = scenes.find((s) => s.id === sceneId);
+    if (prev?.imagePreview) URL.revokeObjectURL(prev.imagePreview);
+    // Tags are coordinates on the old image, so they can't carry over
+    updateScene(sceneId, { imageFile: file, imagePreview: URL.createObjectURL(file), faceTags: [] });
+  };
+
+  const clearSceneImage = (sceneId: string) => {
+    const prev = scenes.find((s) => s.id === sceneId);
+    if (prev?.imagePreview) URL.revokeObjectURL(prev.imagePreview);
+    updateScene(sceneId, { imageFile: null, imagePreview: null, faceTags: [] });
+  };
+
+  const addScene = () => {
+    const id = `scene-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    setScenes((prev) => [...prev, { id, name: `ฉากที่ ${prev.length + 1}`, imageFile: null, imagePreview: null, faceTags: [] }]);
+    // Start the new scene with one line so it is never empty
+    const defaultCharId = characterList.length > 0 ? characterList[0].id : '';
+    const providerVoices = THAI_VOICES.filter((v) => v.provider === ttsProvider);
+    setCards((prev) => [
+      ...prev,
+      {
+        id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sceneId: id,
+        characterId: defaultCharId,
+        voiceId: providerVoices.length > 0 ? providerVoices[0].id : '',
+        ttsProvider,
+        audioFile: null,
+        scriptText: '',
+        speedFactor: 1.0,
+        emotion: 'normal',
+        customEmotionText: '',
+        status: 'idle'
+      }
+    ]);
+  };
+
+  const deleteScene = (sceneId: string) => {
+    if (scenes.length === 1) return;
+    const prev = scenes.find((s) => s.id === sceneId);
+    if (prev?.imagePreview) URL.revokeObjectURL(prev.imagePreview);
+    setScenes((s) => s.filter((x) => x.id !== sceneId));
+    setCards((prev) => prev.filter((c) => c.sceneId !== sceneId));
+  };
+
+  // Set the voice for one tagged person inside a scene: applies to every line
+  // that character speaks in that scene.
+  const setSceneCharacterVoice = (
+    sceneId: string,
+    characterId: string,
+    voiceId: string,
+    provider: DialogueCardData['ttsProvider']
+  ) => {
+    setCards((prev) =>
+      prev.map((c) =>
+        c.sceneId === sceneId && c.characterId === characterId
+          ? { ...c, voiceId, ttsProvider: provider }
+          : c
+      )
+    );
   };
 
   // Load characters on mount
@@ -363,8 +429,8 @@ export default function DialogueTabForm() {
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
   };
 
-  // Add card
-  const addCard = () => {
+  // Add card (appended at the end of the given scene)
+  const addCard = (sceneId: string) => {
     const providerVoices = THAI_VOICES.filter((v) => v.provider === ttsProvider);
     const defaultVoice = providerVoices.length > 0 ? providerVoices[0].id : '';
     const defaultCharId = characterList.length > 0 ? characterList[0].id : '';
@@ -373,6 +439,7 @@ export default function DialogueTabForm() {
       ...prev,
       {
         id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        sceneId,
         characterId: defaultCharId,
         voiceId: defaultVoice,
         ttsProvider: ttsProvider, // inherit the current global default at creation time
@@ -531,14 +598,15 @@ export default function DialogueTabForm() {
     try {
       const formData = new FormData();
       
-      // Check if character is linked to a face on base image
-      const linkedTag = faceTags.find(t => t.characterId === card.characterId);
-      if (baseImagePreview && linkedTag) {
+      // Is this character tagged on this card's own scene image?
+      const cardScene = sceneOf(card);
+      const linkedTag = cardScene?.faceTags.find(t => t.characterId === card.characterId);
+      if (cardScene?.imagePreview && linkedTag) {
         updateCard(cardId, {
           status: 'generating',
           progressMessage: 'กำลังครอปรูปภาพใบหน้า...'
         });
-        const croppedResult = await cropFaceImage(baseImagePreview, linkedTag);
+        const croppedResult = await cropFaceImage(cardScene.imagePreview, linkedTag);
         formData.append('image', croppedResult.file);
         
         cropX = croppedResult.cropX;
@@ -675,7 +743,7 @@ export default function DialogueTabForm() {
   const callMergeApi = async (
     clips: any[],
     baseImageUrl: string | null,
-    withOverlay: boolean,
+    tags: FaceTag[] | null,
     label: string,
     normalize = false
   ): Promise<string> => {
@@ -688,8 +756,8 @@ export default function DialogueTabForm() {
         user_email: user?.email || '',
         user_id: user?.id || '',
         aspectRatio,
-        baseImageUrl: withOverlay ? baseImageUrl : null,
-        faceTags: withOverlay && faceTags.length > 0 ? faceTags : null,
+        baseImageUrl,
+        faceTags: tags && tags.length > 0 ? tags : null,
         normalize
       })
     });
@@ -700,41 +768,78 @@ export default function DialogueTabForm() {
     return result.videoUrl as string;
   };
 
-  // Merge many clips without blowing the per-request time limit: stitch groups of MERGE_CHUNK
-  // first, then stitch those results. Face/base compositing happens in the first pass only.
+  const toClip = (c: DialogueCardData) => ({
+    videoUrl: c.videoUrl as string,
+    cropX: c.cropX ?? null,
+    cropY: c.cropY ?? null,
+    cropW: c.cropW ?? null,
+    cropH: c.cropH ?? null
+  });
+  const toPlainClip = (url: string) => ({
+    videoUrl: url,
+    cropX: null,
+    cropY: null,
+    cropW: null,
+    cropH: null
+  });
+
+  const uploadSceneImage = async (scene: SceneData): Promise<string | null> => {
+    if (!scene.imageFile || !supabase) return null;
+    const fileExt = scene.imageFile.name.split('.').pop() || 'png';
+    const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${Date.now()}_${scene.id}.${fileExt}`;
+    const { error } = await supabase.storage
+      .from('kruth-ai-assets')
+      .upload(storagePath, scene.imageFile, { upsert: true });
+    if (error) throw new Error(`อัปโหลดรูปภาพฉากหลังล้มเหลว: ${error.message}`);
+    const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
+    return publicUrl;
+  };
+
+  // Merge one scene: its clips are composited onto that scene's background.
+  // Long scenes are stitched in groups so no single request nears the 300s limit.
   const MERGE_CHUNK = 8;
-  const mergeClipsChunked = async (clips: any[], baseImageUrl: string | null): Promise<string> => {
+  const mergeScene = async (scene: SceneData, sceneCards: DialogueCardData[]): Promise<string> => {
+    const baseUrl = await uploadSceneImage(scene);
+    const clips = sceneCards.map(toClip);
+
+    // Nothing to composite and nothing to join → the clip is already the scene
+    if (clips.length === 1 && !baseUrl) return clips[0].videoUrl;
+
     if (clips.length <= MERGE_CHUNK) {
-      return callMergeApi(clips, baseImageUrl, true, projectTitle);
+      return callMergeApi(clips, baseUrl, scene.faceTags, scene.name);
     }
 
-    const chunks: any[][] = [];
+    const parts: string[] = [];
     for (let i = 0; i < clips.length; i += MERGE_CHUNK) {
-      chunks.push(clips.slice(i, i + MERGE_CHUNK));
+      const groupNo = Math.floor(i / MERGE_CHUNK) + 1;
+      setAutoStage(`${scene.name}: กำลังต่อคลิป ช่วงที่ ${groupNo}...`);
+      parts.push(
+        await callMergeApi(clips.slice(i, i + MERGE_CHUNK), baseUrl, scene.faceTags, `${scene.name} (ช่วง ${groupNo})`)
+      );
+    }
+    return callMergeApi(parts.map(toPlainClip), null, null, scene.name, true);
+  };
+
+  // Merge the whole project: each scene first, then the scenes together (normalized,
+  // because different scenes can have differently sized backgrounds).
+  const mergeProject = async (allCards: DialogueCardData[]): Promise<string> => {
+    const sceneOutputs: string[] = [];
+    for (const scene of scenes) {
+      const sceneCards = allCards.filter((c) => c.sceneId === scene.id);
+      if (sceneCards.length === 0) continue;
+      setAutoStage(`กำลังประกอบ ${scene.name}...`);
+      sceneOutputs.push(await mergeScene(scene, sceneCards));
     }
 
-    const partUrls: string[] = [];
-    for (let i = 0; i < chunks.length; i++) {
-      setAutoStage(`กำลังต่อคลิป ช่วงที่ ${i + 1}/${chunks.length}...`);
-      partUrls.push(await callMergeApi(chunks[i], baseImageUrl, true, `${projectTitle} (ช่วง ${i + 1})`));
-    }
+    if (sceneOutputs.length === 0) throw new Error('ไม่พบคลิปสำหรับรวม');
+    if (sceneOutputs.length === 1) return sceneOutputs[0];
 
-    setAutoStage('กำลังรวมทุกช่วงเป็นคลิปเดียว...');
-    const partClips = partUrls.map((url) => ({
-      videoUrl: url,
-      cropX: null,
-      cropY: null,
-      cropW: null,
-      cropH: null
-    }));
-    // Final pass normalizes every part to the project frame, so parts that were built from
-    // different backgrounds (future per-scene images) still concatenate cleanly.
-    return callMergeApi(partClips, null, false, projectTitle, true);
+    setAutoStage('กำลังรวมทุกฉากเป็นคลิปเดียว...');
+    return callMergeApi(sceneOutputs.map(toPlainClip), null, null, projectTitle, true);
   };
 
   // Merge finished clips together
   const mergeFinalVideo = async () => {
-    // Validate that all cards are generated
     const hasUncompleted = cards.some((c) => !c.videoUrl || c.status !== 'completed');
     if (hasUncompleted) {
       setMergeError('ไม่สามารถรวมวิดีโอได้: กรุณาสร้างคลิปย่อยของการ์ดบทสนทนาทุกใบให้เสร็จก่อน');
@@ -750,55 +855,17 @@ export default function DialogueTabForm() {
     setMergeError(null);
     setMergedVideoUrl(null);
 
-    const videoClips = cards.map((c) => ({
-      videoUrl: c.videoUrl as string,
-      cropX: c.cropX ?? null,
-      cropY: c.cropY ?? null,
-      cropW: c.cropW ?? null,
-      cropH: c.cropH ?? null
-    }));
-
     try {
-      // 1. Upload base image to Supabase if present
-      let uploadedBaseImageUrl = '';
-      if (baseImageFile && supabase) {
-        setMergeError('กำลังอัปโหลดรูปภาพฉากหลัง...');
-        const timestamp = Date.now();
-        const fileExt = baseImageFile.name.split('.').pop() || 'png';
-        const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${timestamp}_base.${fileExt}`;
-
-        const { data, error: uploadError } = await supabase.storage
-          .from('kruth-ai-assets')
-          .upload(storagePath, baseImageFile, {
-            upsert: true
-          });
-
-        if (uploadError) {
-          throw new Error(`อัปโหลดรูปภาพฉากหลังล้มเหลว: ${uploadError.message}`);
-        }
-
-        // Get public URL
-        const { data: { publicUrl } } = supabase.storage
-          .from('kruth-ai-assets')
-          .getPublicUrl(storagePath);
-        uploadedBaseImageUrl = publicUrl;
-      }
-
-      setMergeError(null);
-
-      // 2. Merge in chunks so each request stays inside the 300s serverless limit,
-      //    then merge the chunk outputs together (already composited, so no overlay on the final pass).
-      const finalUrl = await mergeClipsChunked(videoClips, uploadedBaseImageUrl || null);
-
+      const finalUrl = await mergeProject(cards);
       setMergedVideoUrl(finalUrl);
-      // Scroll to video output smooth
+      setAutoStage('');
       setTimeout(() => {
-        const el = document.getElementById('merged-video-result');
-        el?.scrollIntoView({ behavior: 'smooth' });
+        document.getElementById('merged-video-result')?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     } catch (err: any) {
       console.error('[Merge Video Error]', err);
       setMergeError(err.message || 'รวมวิดีโอล้มเหลว');
+      setAutoStage('');
     } finally {
       setMerging(false);
     }
@@ -843,32 +910,7 @@ export default function DialogueTabForm() {
       }
 
       setAutoStage('กำลังเตรียมไฟล์สำหรับต่อคลิป...');
-      let uploadedBaseImageUrl = '';
-      if (baseImageFile && supabase) {
-        const timestamp = Date.now();
-        const fileExt = baseImageFile.name.split('.').pop() || 'png';
-        const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${timestamp}_base.${fileExt}`;
-        const { error: uploadError } = await supabase.storage
-          .from('kruth-ai-assets')
-          .upload(storagePath, baseImageFile, { upsert: true });
-        if (uploadError) {
-          throw new Error(`อัปโหลดรูปภาพฉากหลังล้มเหลว: ${uploadError.message}`);
-        }
-        const { data: { publicUrl } } = supabase.storage
-          .from('kruth-ai-assets')
-          .getPublicUrl(storagePath);
-        uploadedBaseImageUrl = publicUrl;
-      }
-
-      const videoClips = latest.map((c) => ({
-        videoUrl: c.videoUrl as string,
-        cropX: c.cropX ?? null,
-        cropY: c.cropY ?? null,
-        cropW: c.cropW ?? null,
-        cropH: c.cropH ?? null
-      }));
-
-      const finalUrl = await mergeClipsChunked(videoClips, uploadedBaseImageUrl || null);
+      const finalUrl = await mergeProject(latest);
       setMergedVideoUrl(finalUrl);
       setAutoStage('');
       setTimeout(() => {
@@ -945,53 +987,6 @@ export default function DialogueTabForm() {
         </div>
       </div>
 
-      {/* Background Image Upload & Face Tagging Section */}
-      <div className="bg-[#FAF8F5] border border-gray-100 p-6 rounded-2xl space-y-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 font-thai flex items-center gap-2">
-          <Film className="w-4 h-4 text-[#D4AF37]" /> ฉากหลังตัวละครหลักและการติดแท็กใบหน้า (Base Scene & Face Tagging - ทางเลือก)
-        </h3>
-        
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-            {/* File Input */}
-            <div className="flex-1">
-              <label className="block text-xs font-semibold text-gray-600 mb-2 font-thai">
-                ภาพฉากหลังกลุ่มหลัก (สำหรับติดแท็กใบหน้าเพื่อให้ตัวละครพูดอยู่ร่วมเฟรมเดียวกัน)
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleBaseImageChange}
-                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#1A1A1A] file:text-[#D4AF37] hover:file:opacity-90 font-thai cursor-pointer"
-              />
-            </div>
-            
-            {/* Reset Button */}
-            {baseImagePreview && (
-              <button
-                type="button"
-                onClick={clearBaseImage}
-                className="mt-6 text-xs text-red-500 hover:text-red-700 font-thai font-semibold border border-red-200 px-4 py-2 rounded-xl hover:bg-red-50 transition-all flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> ล้างรูปภาพและแท็ก
-              </button>
-            )}
-          </div>
-          
-          {/* Canvas Workspace Component */}
-          {baseImagePreview && characterList.length > 0 && (
-            <div className="bg-white border border-gray-150 rounded-2xl p-4 shadow-inner">
-              <DialogueCanvasWorkspace
-                imageUrl={baseImagePreview}
-                characters={characterList}
-                faceTags={faceTags}
-                onTagsChange={setFaceTags}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Loading characters state */}
       {loadingCharacters ? (
         <div className="flex flex-col items-center py-12">
@@ -1014,9 +1009,129 @@ export default function DialogueTabForm() {
         </div>
       ) : (
         <div className="space-y-6">
+          {scenes.map((scene) => {
+          const sceneCards = cards.filter((c) => c.sceneId === scene.id);
+          // Characters that are tagged on this scene's image, for the per-person voice controls
+          const taggedInScene = scene.faceTags
+            .map((t) => characterList.find((c) => c.id === t.characterId))
+            .filter((c): c is Character => !!c);
+
+          return (
+          <div key={scene.id} className="rounded-3xl border border-gray-200 bg-white/60 p-5 space-y-5">
+            {/* ── Scene header: name, background image, face tags, per-person voice ── */}
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="px-2.5 py-1 rounded-lg bg-[#1A1A1A] text-[#D4AF37] text-[11px] font-bold font-thai">ฉาก</span>
+                <input
+                  value={scene.name}
+                  onChange={(e) => updateScene(scene.id, { name: e.target.value })}
+                  className="flex-1 min-w-[140px] px-3 py-1.5 border border-gray-200 rounded-xl text-sm font-semibold font-thai focus:outline-none focus:ring-1 focus:ring-[#D4AF37]"
+                  placeholder="ชื่อฉาก เช่น ในห้องเรียน"
+                />
+                <span className="text-[11px] text-gray-500 font-thai">{sceneCards.length} บท</span>
+                {scenes.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => deleteScene(scene.id)}
+                    disabled={autoRunning || batchGenerating || merging}
+                    className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
+                    title="ลบฉากนี้ (พร้อมบทในฉาก)"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-[#FAF8F5] border border-gray-100 p-4 rounded-2xl space-y-3">
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                  <div className="flex-1">
+                    <label className="block text-[11px] font-semibold text-gray-600 mb-1.5 font-thai">
+                      ภาพฉากนี้ (ทางเลือก — ใส่เพื่อให้ตัวละครพูดอยู่ร่วมเฟรมเดียวกัน)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleSceneImageChange(scene.id, e)}
+                      className="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-[#1A1A1A] file:text-[#D4AF37] hover:file:opacity-90 font-thai cursor-pointer"
+                    />
+                  </div>
+                  {scene.imagePreview && (
+                    <button
+                      type="button"
+                      onClick={() => clearSceneImage(scene.id)}
+                      className="text-[11px] text-red-500 hover:text-red-700 font-thai font-semibold border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 flex items-center gap-1.5 self-start sm:self-auto"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> ล้างรูปและแท็ก
+                    </button>
+                  )}
+                </div>
+
+                {scene.imagePreview && characterList.length > 0 && (
+                  <div className="bg-white border border-gray-150 rounded-2xl p-4 shadow-inner">
+                    <DialogueCanvasWorkspace
+                      imageUrl={scene.imagePreview}
+                      characters={characterList}
+                      faceTags={scene.faceTags}
+                      onTagsChange={(tags) => updateScene(scene.id, { faceTags: tags })}
+                    />
+                  </div>
+                )}
+
+                {/* Voice per tagged person in this scene */}
+                {taggedInScene.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold text-gray-600 font-thai">เสียงของแต่ละคนในฉากนี้</p>
+                    {taggedInScene.map((ch) => {
+                      const sample = sceneCards.find((c) => c.characterId === ch.id);
+                      const curProvider = sample?.ttsProvider || 'google';
+                      const curVoice = sample?.voiceId || '';
+                      return (
+                        <div key={ch.id} className="flex flex-wrap items-center gap-2 bg-white border border-gray-150 rounded-xl px-3 py-2">
+                          <span className="text-xs font-semibold text-[#1A1A1A] font-thai min-w-[90px]">👤 {ch.name}</span>
+                          <select
+                            value={curProvider}
+                            onChange={(e) => {
+                              const p = e.target.value as DialogueCardData['ttsProvider'];
+                              const first = THAI_VOICES.find((v) => v.provider === p);
+                              setSceneCharacterVoice(scene.id, ch.id, first ? first.id : '', p);
+                            }}
+                            className="px-2 py-1 border border-gray-200 rounded-lg text-[11px] font-thai bg-white"
+                          >
+                            <option value="google">🌐 Google</option>
+                            <option value="cosyvoice">🔥 CosyVoice</option>
+                            <option value="openai">🧠 OpenAI</option>
+                          </select>
+                          <select
+                            value={curVoice}
+                            onChange={(e) => setSceneCharacterVoice(scene.id, ch.id, e.target.value, curProvider)}
+                            className="flex-1 min-w-[150px] px-2 py-1 border border-gray-200 rounded-lg text-xs font-thai bg-white"
+                          >
+                            {THAI_VOICES.filter((v) => v.provider === curProvider).map((v) => (
+                              <option key={v.id} value={v.id}>{v.label}</option>
+                            ))}
+                          </select>
+                          {curVoice && (
+                            <button
+                              type="button"
+                              onClick={() => handleVoicePreview(curVoice)}
+                              className="p-1.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100"
+                              title="ทดลองฟังเสียง"
+                            >
+                              {playingVoice === curVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Volume2 className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
           {/* Vertical Timeline wrapper */}
           <div className="relative pl-6 sm:pl-10 space-y-8 before:absolute before:left-3 sm:before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:bg-gradient-to-b before:from-[#D4AF37] before:to-gray-200">
-            {cards.map((card, index) => {
+            {sceneCards.map((card) => {
+              const index = cards.findIndex((c) => c.id === card.id);
               const char = characterList.find((c) => c.id === card.characterId);
               const avatar = getAvatarUrl(char);
               const providerVoices = THAI_VOICES.filter((v) => v.provider === card.ttsProvider);
@@ -1104,7 +1219,7 @@ export default function DialogueTabForm() {
                                 ตัวละครผู้พูด
                               </label>
                               {/* Tagged Check Indicator */}
-                              {faceTags.some(tag => tag.characterId === card.characterId) && (
+                              {scene.faceTags.some(tag => tag.characterId === card.characterId) && (
                                 <span className="text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded-md font-thai flex items-center gap-0.5 animate-pulse">
                                   🎯 พิกัดเชื่อมโยงแล้ว
                                 </span>
@@ -1392,14 +1507,28 @@ export default function DialogueTabForm() {
             })}
           </div>
 
-          {/* Add Dialogue Row Button */}
+          {/* Add Dialogue Row Button (within this scene) */}
           <div className="flex justify-start pl-6 sm:pl-10">
             <button
-              onClick={addCard}
-              disabled={batchGenerating || merging}
-              className="flex items-center gap-2 px-5 py-3 border-2 border-dashed border-gray-300 rounded-2xl text-sm font-semibold text-gray-500 hover:text-[#D4AF37] hover:border-[#D4AF37] hover:bg-[#D4AF37]/5 transition-all font-thai"
+              onClick={() => addCard(scene.id)}
+              disabled={autoRunning || batchGenerating || merging}
+              className="flex items-center gap-2 px-5 py-3 border-2 border-dashed border-gray-300 rounded-2xl text-sm font-semibold text-gray-500 hover:text-[#D4AF37] hover:border-[#D4AF37] hover:bg-[#D4AF37]/5 transition-all font-thai disabled:opacity-40"
             >
-              <Plus className="w-4 h-4" /> เพิ่มบทสนทนาถัดไป (Add Sentence)
+              <Plus className="w-4 h-4" /> เพิ่มบทสนทนาในฉากนี้
+            </button>
+          </div>
+          </div>
+          );
+          })}
+
+          {/* Add Scene */}
+          <div className="flex justify-center">
+            <button
+              onClick={addScene}
+              disabled={autoRunning || batchGenerating || merging}
+              className="flex items-center gap-2 px-6 py-3 rounded-2xl border-2 border-dashed border-[#D4AF37]/50 text-sm font-bold text-[#D4AF37] hover:bg-[#D4AF37]/10 transition-all font-thai disabled:opacity-40"
+            >
+              <Plus className="w-4 h-4" /> เพิ่มฉากใหม่ (เปลี่ยนสถานที่/พื้นหลัง)
             </button>
           </div>
 

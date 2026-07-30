@@ -116,9 +116,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate payload
-    if (!videoClips || !Array.isArray(videoClips) || videoClips.length < 2) {
+    // One clip is allowed: a scene can hold a single line and still need compositing
+    // onto its background image before scenes are joined.
+    if (!videoClips || !Array.isArray(videoClips) || videoClips.length < 1) {
       return NextResponse.json(
-        { success: false, error: 'กรุณาส่งรายการคลิปวิดีโอเพื่อทำการรวมอย่างน้อย 2 รายการ' },
+        { success: false, error: 'กรุณาส่งรายการคลิปวิดีโออย่างน้อย 1 รายการ' },
         { status: 400 }
       );
     }
