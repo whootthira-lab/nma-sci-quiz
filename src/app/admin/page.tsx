@@ -35,6 +35,9 @@ export default function AdminPage() {
   const [grokResolution, setGrokResolution] = useState('720p');
   const [seedanceResolution, setSeedanceResolution] = useState('720p');
   const [klingAudioEnabled, setKlingAudioEnabled] = useState(false);
+  // Allow premium engines (Veo 3 / Sora 2) inside the automated long-video mode. Off by default: a
+  // 2-minute auto video is ~15 clips, which costs roughly 6-9x more on premium engines.
+  const [automationPremiumEnabled, setAutomationPremiumEnabled] = useState(false);
   const [stats, setStats] = useState({
     totalGenerations: 0,
     mode1Count: 0,
@@ -90,7 +93,8 @@ export default function AdminPage() {
         const grokRes = data.find((item: any) => item.key === 'grok_resolution');
         const seedanceRes = data.find((item: any) => item.key === 'seedance_resolution');
         const klingAudio = data.find((item: any) => item.key === 'kling_audio_enabled');
-        
+        const autoPremium = data.find((item: any) => item.key === 'automation_premium_enabled');
+
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
         setMode2Enabled(mode2 ? mode2.value === 'true' : true);
         setProviderSetting(provider ? provider.value : 'siliconflow');
@@ -100,6 +104,7 @@ export default function AdminPage() {
         setGrokResolution(grokRes ? grokRes.value : '720p');
         setSeedanceResolution(seedanceRes ? seedanceRes.value : '720p');
         setKlingAudioEnabled(klingAudio ? klingAudio.value === 'true' : false);
+        setAutomationPremiumEnabled(autoPremium ? autoPremium.value === 'true' : false);
       }
     } catch (err) {
       console.error('Failed to load config:', err);
@@ -494,6 +499,34 @@ export default function AdminPage() {
                 className="text-2xl"
               >
                 {mode1Enabled ? (
+                  <ToggleRight className="w-10 h-10 text-accent-success" />
+                ) : (
+                  <ToggleLeft className="w-10 h-10 text-text-muted" />
+                )}
+              </button>
+            </div>
+
+            {/* Automation: premium engines toggle */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Film className="w-5 h-5 text-[#D4AF37]" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    โหมดอัตโนมัติ: อนุญาตโมเดลพรีเมียม (Veo 3 / Sora 2)
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    ปิดไว้เพื่อความประหยัด — คลิปยาว 2 นาทีด้วยโมเดลพรีเมียมมีค่าใช้จ่ายสูงกว่าราว 6–9 เท่า
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setAutomationPremiumEnabled(!automationPremiumEnabled);
+                  saveConfig('automation_premium_enabled', !automationPremiumEnabled);
+                }}
+                className="text-2xl"
+              >
+                {automationPremiumEnabled ? (
                   <ToggleRight className="w-10 h-10 text-accent-success" />
                 ) : (
                   <ToggleLeft className="w-10 h-10 text-text-muted" />

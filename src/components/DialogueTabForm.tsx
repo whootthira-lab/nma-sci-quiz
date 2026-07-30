@@ -156,6 +156,13 @@ export default function DialogueTabForm() {
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [currentGeneratingIndex, setCurrentGeneratingIndex] = useState<number | null>(null);
 
+  // Automation (one-click: generate every clip, then stitch into one long video)
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStage, setAutoStage] = useState<string>('');
+  const [videoModel, setVideoModel] = useState<'fast' | 'seedance' | 'veo3' | 'sora2'>('fast');
+  // Premium engines are gated by an admin switch (system_settings.automation_premium_enabled)
+  const [premiumAllowed, setPremiumAllowed] = useState(false);
+
   // Merging state
   const [merging, setMerging] = useState(false);
   const [mergedVideoUrl, setMergedVideoUrl] = useState<string | null>(null);
@@ -209,6 +216,35 @@ export default function DialogueTabForm() {
         });
     }
   }, [user?.email]);
+
+  // Read the admin switch that allows premium engines in automation mode
+  useEffect(() => {
+    if (!supabase) return;
+    supabase
+      .from('system_settings')
+      .select('key, value')
+      .eq('key', 'automation_premium_enabled')
+      .maybeSingle()
+      .then(({ data }: any) => {
+        const allowed = data ? data.value === 'true' : false;
+        setPremiumAllowed(allowed);
+        // If premium got switched off while a premium engine was selected, fall back to the cheap one
+        if (!allowed) {
+          setVideoModel((m) => (m === 'veo3' || m === 'sora2' ? 'fast' : m));
+        }
+      });
+  }, []);
+
+  // Per-card clip length, mirroring the rule used when generating (15 chars ≈ 1s, +2s padding)
+  const estimateCardDuration = (card: DialogueCardData) => {
+    const cleanChars = card.scriptText.replace(/\s+/g, '').length;
+    const speechDuration = Math.max(1, Math.ceil((cleanChars / 15) / card.speedFactor));
+    return speechDuration + 2 <= 5 ? 5 : 10;
+  };
+
+  const MAX_TOTAL_SECONDS = 120; // hard cap for the automated long video
+  const totalEstimatedSeconds = cards.reduce((sum, c) => sum + estimateCardDuration(c), 0);
+  const overDurationCap = totalEstimatedSeconds > MAX_TOTAL_SECONDS;
 
   // The global provider select acts as a "apply to all cards" bulk control:
   // set every card's provider (and fix its voice) when it changes. Per-card selects still override.
@@ -488,7 +524,9 @@ export default function DialogueTabForm() {
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || '');
       formData.append('user_id', user?.id || '');
-      formData.append('model_type', 'fast');
+      // Premium engines are only reachable when the admin switch allows them
+      const effectiveModel = (videoModel === 'veo3' || videoModel === 'sora2') && !premiumAllowed ? 'fast' : videoModel;
+      formData.append('model_type', effectiveModel);
       formData.append('video_mode', 'image_to_video');
       formData.append('storage_provider', 'supabase');
 
@@ -554,6 +592,63 @@ export default function DialogueTabForm() {
     }
   };
 
+  // One merge request. Returns the merged clip URL.
+  const callMergeApi = async (
+    clips: any[],
+    baseImageUrl: string | null,
+    withOverlay: boolean,
+    label: string
+  ): Promise<string> => {
+    const response = await fetch('/api/merge-dialogue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: label,
+        videoClips: clips,
+        user_email: user?.email || '',
+        user_id: user?.id || '',
+        aspectRatio,
+        baseImageUrl: withOverlay ? baseImageUrl : null,
+        faceTags: withOverlay && faceTags.length > 0 ? faceTags : null
+      })
+    });
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || 'เกิดข้อผิดพลาดทางเทคนิคในการรวมคลิป');
+    }
+    return result.videoUrl as string;
+  };
+
+  // Merge many clips without blowing the per-request time limit: stitch groups of MERGE_CHUNK
+  // first, then stitch those results. Face/base compositing happens in the first pass only.
+  const MERGE_CHUNK = 8;
+  const mergeClipsChunked = async (clips: any[], baseImageUrl: string | null): Promise<string> => {
+    if (clips.length <= MERGE_CHUNK) {
+      return callMergeApi(clips, baseImageUrl, true, projectTitle);
+    }
+
+    const chunks: any[][] = [];
+    for (let i = 0; i < clips.length; i += MERGE_CHUNK) {
+      chunks.push(clips.slice(i, i + MERGE_CHUNK));
+    }
+
+    const partUrls: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      setAutoStage(`กำลังต่อคลิป ช่วงที่ ${i + 1}/${chunks.length}...`);
+      partUrls.push(await callMergeApi(chunks[i], baseImageUrl, true, `${projectTitle} (ช่วง ${i + 1})`));
+    }
+
+    setAutoStage('กำลังรวมทุกช่วงเป็นคลิปเดียว...');
+    const partClips = partUrls.map((url) => ({
+      videoUrl: url,
+      cropX: null,
+      cropY: null,
+      cropW: null,
+      cropH: null
+    }));
+    return callMergeApi(partClips, null, false, projectTitle);
+  };
+
   // Merge finished clips together
   const mergeFinalVideo = async () => {
     // Validate that all cards are generated
@@ -608,27 +703,11 @@ export default function DialogueTabForm() {
 
       setMergeError(null);
 
-      // 2. Call merge API with videoClips, baseImageUrl and faceTags metadata
-      const response = await fetch('/api/merge-dialogue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: projectTitle,
-          videoClips,
-          user_email: user?.email || '',
-          user_id: user?.id || '',
-          aspectRatio,
-          baseImageUrl: uploadedBaseImageUrl || null,
-          faceTags: faceTags.length > 0 ? faceTags : null
-        })
-      });
+      // 2. Merge in chunks so each request stays inside the 300s serverless limit,
+      //    then merge the chunk outputs together (already composited, so no overlay on the final pass).
+      const finalUrl = await mergeClipsChunked(videoClips, uploadedBaseImageUrl || null);
 
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.error || 'เกิดข้อผิดพลาดทางเทคนิคในการรวมคลิป');
-      }
-
-      setMergedVideoUrl(result.videoUrl);
+      setMergedVideoUrl(finalUrl);
       // Scroll to video output smooth
       setTimeout(() => {
         const el = document.getElementById('merged-video-result');
@@ -639,6 +718,85 @@ export default function DialogueTabForm() {
       setMergeError(err.message || 'รวมวิดีโอล้มเหลว');
     } finally {
       setMerging(false);
+    }
+  };
+
+  // Automation reads the freshest cards through a ref: after awaiting generation the
+  // `cards` value captured in this closure is stale and has no videoUrls yet.
+  const cardsRef = useRef<DialogueCardData[]>(cards);
+  useEffect(() => {
+    cardsRef.current = cards;
+  }, [cards]);
+
+  // One click: generate every clip in order, then stitch them into a single long video.
+  const runAutomation = async () => {
+    if (autoRunning || batchGenerating || merging) return;
+
+    if (cards.length < 2) {
+      setMergeError('โหมดอัตโนมัติต้องมีบทสนทนาอย่างน้อย 2 ประโยค');
+      return;
+    }
+    if (overDurationCap) {
+      setMergeError(
+        `เนื้อหารวมยาวประมาณ ${totalEstimatedSeconds} วินาที ซึ่งเกินเพดาน ${MAX_TOTAL_SECONDS} วินาที (2 นาที) กรุณาลดจำนวนประโยคหรือย่อบทพูดลง`
+      );
+      return;
+    }
+
+    setAutoRunning(true);
+    setMergeError(null);
+    setMergedVideoUrl(null);
+
+    try {
+      setAutoStage('กำลังสร้างคลิปย่อยทีละฉาก...');
+      await generateAllClips();
+
+      const latest = cardsRef.current;
+      const failed = latest.filter((c) => c.status !== 'completed' || !c.videoUrl);
+      if (failed.length > 0) {
+        throw new Error(
+          `มี ${failed.length} ฉากที่สร้างไม่สำเร็จ กรุณากดสร้างใหม่เฉพาะฉากนั้น แล้วกดรวมคลิปอีกครั้ง`
+        );
+      }
+
+      setAutoStage('กำลังเตรียมไฟล์สำหรับต่อคลิป...');
+      let uploadedBaseImageUrl = '';
+      if (baseImageFile && supabase) {
+        const timestamp = Date.now();
+        const fileExt = baseImageFile.name.split('.').pop() || 'png';
+        const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${timestamp}_base.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from('kruth-ai-assets')
+          .upload(storagePath, baseImageFile, { upsert: true });
+        if (uploadError) {
+          throw new Error(`อัปโหลดรูปภาพฉากหลังล้มเหลว: ${uploadError.message}`);
+        }
+        const { data: { publicUrl } } = supabase.storage
+          .from('kruth-ai-assets')
+          .getPublicUrl(storagePath);
+        uploadedBaseImageUrl = publicUrl;
+      }
+
+      const videoClips = latest.map((c) => ({
+        videoUrl: c.videoUrl as string,
+        cropX: c.cropX ?? null,
+        cropY: c.cropY ?? null,
+        cropW: c.cropW ?? null,
+        cropH: c.cropH ?? null
+      }));
+
+      const finalUrl = await mergeClipsChunked(videoClips, uploadedBaseImageUrl || null);
+      setMergedVideoUrl(finalUrl);
+      setAutoStage('');
+      setTimeout(() => {
+        document.getElementById('merged-video-result')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch (err: any) {
+      console.error('[Automation Error]', err);
+      setMergeError(err.message || 'โหมดอัตโนมัติทำงานไม่สำเร็จ');
+      setAutoStage('');
+    } finally {
+      setAutoRunning(false);
     }
   };
 
@@ -1138,11 +1296,94 @@ export default function DialogueTabForm() {
 
           {/* Action Zone: Batch Generate & Concatenate */}
           <div className="border-t border-gray-150 pt-8 mt-10 space-y-6">
+
+            {/* Automation panel: one click from script to a single long video */}
+            <div className="rounded-2xl border border-[#D4AF37]/30 bg-[#D4AF37]/5 p-5 space-y-4 font-thai">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#D4AF37]" />
+                <h3 className="text-sm font-bold text-[#1A1A1A]">โหมดอัตโนมัติ — สร้างคลิปยาวจากบททั้งหมด</h3>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Engine picker */}
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">
+                    เครื่องยนต์วิดีโอ
+                  </label>
+                  <select
+                    value={videoModel}
+                    onChange={(e) => setVideoModel(e.target.value as typeof videoModel)}
+                    disabled={autoRunning || batchGenerating || merging}
+                    className="w-full px-3 py-2 border border-gray-200 text-sm rounded-xl bg-white focus:outline-none focus:ring-1 focus:ring-[#D4AF37] disabled:opacity-60"
+                  >
+                    <option value="fast">⚡ KRUTH Standard (ประหยัด — แนะนำ)</option>
+                    <option value="seedance">🌊 KRUTH Nova (Seedance)</option>
+                    {premiumAllowed && <option value="veo3">🎥 KRUTH Prism (Veo 3 — ราคาสูง)</option>}
+                    {premiumAllowed && <option value="sora2">🌀 KRUTH Orbit (Sora 2 — ราคาสูง)</option>}
+                  </select>
+                  <p className="text-[10px] text-gray-500 mt-1.5">
+                    {premiumAllowed
+                      ? '⚠️ โมเดลพรีเมียมมีค่าใช้จ่ายสูงกว่าราว 6–9 เท่าเมื่อสร้างคลิปยาว'
+                      : 'ผู้ดูแลระบบปิดการใช้โมเดลพรีเมียม (Veo 3 / Sora 2) สำหรับโหมดนี้ไว้'}
+                  </p>
+                </div>
+
+                {/* Duration budget */}
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">
+                    ความยาวรวมโดยประมาณ
+                  </label>
+                  <div className="flex items-baseline justify-between text-sm">
+                    <span className={overDurationCap ? 'text-red-600 font-bold' : 'text-[#1A1A1A] font-semibold'}>
+                      {totalEstimatedSeconds} วินาที
+                    </span>
+                    <span className="text-[11px] text-gray-500">เพดาน {MAX_TOTAL_SECONDS} วิ (2 นาที)</span>
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${overDurationCap ? 'bg-red-500' : 'bg-[#D4AF37]'}`}
+                      style={{ width: `${Math.min(100, (totalEstimatedSeconds / MAX_TOTAL_SECONDS) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-1.5">
+                    {cards.length} ฉาก · {overDurationCap ? 'เกินเพดาน กรุณาลดบทพูดลง' : 'อยู่ในเกณฑ์'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={runAutomation}
+                disabled={autoRunning || batchGenerating || merging || cards.length < 2 || overDurationCap}
+                className={`w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-bold text-sm transition-all shadow-md ${
+                  !autoRunning && !batchGenerating && !merging && cards.length >= 2 && !overDurationCap
+                    ? 'bg-gradient-to-r from-[#D4AF37] to-amber-600 text-black hover:from-amber-500 hover:to-amber-700 active:scale-[0.99]'
+                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none'
+                }`}
+              >
+                {autoRunning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>
+                      {autoStage || 'กำลังทำงาน...'}
+                      {batchGenerating && currentGeneratingIndex !== null
+                        ? ` (${currentGeneratingIndex + 1}/${cards.length})`
+                        : ''}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Video className="w-4 h-4" />
+                    <span>▶︎ สร้างทั้งเรื่องอัตโนมัติ (สร้างทุกฉาก + ต่อเป็นคลิปเดียว)</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             <div className="flex flex-col sm:flex-row justify-between gap-4">
               {/* Batch Action */}
               <button
                 onClick={generateAllClips}
-                disabled={batchGenerating || merging || cards.every((c) => c.status === 'completed')}
+                disabled={autoRunning || batchGenerating || merging || cards.every((c) => c.status === 'completed')}
                 className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-semibold text-sm transition-all shadow-sm ${
                   batchGenerating
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -1165,7 +1406,7 @@ export default function DialogueTabForm() {
               {/* Merge Action */}
               <button
                 onClick={mergeFinalVideo}
-                disabled={!canMerge || batchGenerating || merging}
+                disabled={!canMerge || autoRunning || batchGenerating || merging}
                 className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-8 py-4 rounded-2xl font-bold text-sm transition-all shadow-md ${
                   canMerge && !merging && !batchGenerating
                     ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white hover:from-amber-600 hover:to-amber-700 active:scale-[0.99] border-t border-amber-300'
