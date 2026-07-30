@@ -38,6 +38,10 @@ interface Character {
   lora_status?: string;
   lora_model_url?: string;
   lora_trigger_word?: string;
+  // Optional columns: when present, a character always speaks with the same voice.
+  // Absent on older databases — the UI falls back to reusing the voice from other cards.
+  default_voice_id?: string;
+  default_tts_provider?: 'google' | 'openai' | 'cosyvoice';
 }
 interface DialogueCardData {
   id: string;
@@ -234,6 +238,81 @@ export default function DialogueTabForm() {
         }
       });
   }, []);
+
+  // A character should sound the same everywhere. Resolve their voice in order:
+  // saved default on the character → voice already used by another card for them → unchanged.
+  const resolveVoiceForCharacter = (characterId: string, fallback: { voiceId: string; ttsProvider: DialogueCardData['ttsProvider'] }) => {
+    const char = characterList.find((c) => c.id === characterId);
+    if (char?.default_voice_id) {
+      const known = THAI_VOICES.find((v) => v.id === char.default_voice_id);
+      return {
+        voiceId: char.default_voice_id,
+        ttsProvider: (char.default_tts_provider || known?.provider || fallback.ttsProvider) as DialogueCardData['ttsProvider']
+      };
+    }
+    const sibling = cards.find((c) => c.characterId === characterId && c.voiceId);
+    if (sibling) {
+      return { voiceId: sibling.voiceId, ttsProvider: sibling.ttsProvider };
+    }
+    return fallback;
+  };
+
+  const handleCardCharacterChange = (cardId: string, characterId: string) => {
+    const card = cards.find((c) => c.id === cardId);
+    const resolved = resolveVoiceForCharacter(characterId, {
+      voiceId: card?.voiceId || '',
+      ttsProvider: card?.ttsProvider || 'google'
+    });
+    updateCard(cardId, { characterId, ...resolved });
+  };
+
+  // Persist the current voice as this character's default (needs the optional columns).
+  const [savingVoiceFor, setSavingVoiceFor] = useState<string | null>(null);
+  const saveDefaultVoice = async (card: DialogueCardData) => {
+    if (!card.characterId || !card.voiceId || !supabase) return;
+    setSavingVoiceFor(card.id);
+    try {
+      const { error } = await supabase
+        .from('characters')
+        .update({ default_voice_id: card.voiceId, default_tts_provider: card.ttsProvider })
+        .eq('id', card.characterId);
+      if (error) throw error;
+
+      setCharacterList((prev) =>
+        prev.map((c) =>
+          c.id === card.characterId
+            ? { ...c, default_voice_id: card.voiceId, default_tts_provider: card.ttsProvider }
+            : c
+        )
+      );
+      // Apply to every other card using this character so the whole script stays consistent
+      setCards((prev) =>
+        prev.map((c) =>
+          c.characterId === card.characterId
+            ? { ...c, voiceId: card.voiceId, ttsProvider: card.ttsProvider }
+            : c
+        )
+      );
+    } catch (err: any) {
+      console.error('[Default Voice] save failed:', err);
+      setMergeError(
+        'ยังบันทึกเสียงประจำตัวไม่ได้ — ฐานข้อมูลยังไม่มีคอลัมน์ default_voice_id (ดูคำแนะนำการเพิ่มคอลัมน์) แต่เสียงจะยังใช้ตรงกันภายในบทนี้'
+      );
+    } finally {
+      setSavingVoiceFor(null);
+    }
+  };
+
+  // Characters that ended up with more than one voice across the script
+  const inconsistentCharacterIds = (() => {
+    const map = new Map<string, Set<string>>();
+    cards.forEach((c) => {
+      if (!c.characterId || !c.voiceId) return;
+      if (!map.has(c.characterId)) map.set(c.characterId, new Set());
+      map.get(c.characterId)!.add(c.voiceId);
+    });
+    return new Set(Array.from(map.entries()).filter(([, v]) => v.size > 1).map(([k]) => k));
+  })();
 
   // Per-card clip length, mirroring the rule used when generating (15 chars ≈ 1s, +2s padding)
   const estimateCardDuration = (card: DialogueCardData) => {
@@ -597,7 +676,8 @@ export default function DialogueTabForm() {
     clips: any[],
     baseImageUrl: string | null,
     withOverlay: boolean,
-    label: string
+    label: string,
+    normalize = false
   ): Promise<string> => {
     const response = await fetch('/api/merge-dialogue', {
       method: 'POST',
@@ -609,7 +689,8 @@ export default function DialogueTabForm() {
         user_id: user?.id || '',
         aspectRatio,
         baseImageUrl: withOverlay ? baseImageUrl : null,
-        faceTags: withOverlay && faceTags.length > 0 ? faceTags : null
+        faceTags: withOverlay && faceTags.length > 0 ? faceTags : null,
+        normalize
       })
     });
     const result = await response.json();
@@ -646,7 +727,9 @@ export default function DialogueTabForm() {
       cropW: null,
       cropH: null
     }));
-    return callMergeApi(partClips, null, false, projectTitle);
+    // Final pass normalizes every part to the project frame, so parts that were built from
+    // different backgrounds (future per-scene images) still concatenate cleanly.
+    return callMergeApi(partClips, null, false, projectTitle, true);
   };
 
   // Merge finished clips together
@@ -1029,7 +1112,7 @@ export default function DialogueTabForm() {
                             </div>
                             <select
                               value={card.characterId}
-                              onChange={(e) => updateCard(card.id, { characterId: e.target.value })}
+                              onChange={(e) => handleCardCharacterChange(card.id, e.target.value)}
                               className="w-full px-3 py-2 border border-gray-200 text-sm rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai bg-white"
                             >
                               {characterList.map((c) => (
@@ -1105,6 +1188,32 @@ export default function DialogueTabForm() {
                                     </button>
                                   )}
                                 </div>
+                              </div>
+                            )}
+
+                            {/* Voice consistency: save as this character's default / warn on mismatch */}
+                            {!card.audioFile && card.characterId && card.voiceId && (
+                              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <button
+                                  type="button"
+                                  onClick={() => saveDefaultVoice(card)}
+                                  disabled={savingVoiceFor === card.id}
+                                  className="inline-flex items-center gap-1 text-[10px] text-gray-500 hover:text-[#D4AF37] disabled:opacity-50"
+                                  title="ใช้เสียงนี้กับตัวละครนี้ทุกครั้ง"
+                                >
+                                  {savingVoiceFor === card.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="w-3 h-3" />
+                                  )}
+                                  ตั้งเป็นเสียงประจำตัวละครนี้
+                                </button>
+                                {inconsistentCharacterIds.has(card.characterId) && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-300 rounded-md px-1.5 py-0.5">
+                                    <AlertCircle className="w-3 h-3" />
+                                    ตัวละครนี้ใช้เสียงไม่ตรงกันในบทอื่น
+                                  </span>
+                                )}
                               </div>
                             )}
 

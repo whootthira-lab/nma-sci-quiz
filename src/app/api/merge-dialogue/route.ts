@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags } = body;
+    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize } = body;
     let videoClips = body.videoClips;
 
     // Backward compatibility with Phase 1 payload
@@ -181,8 +181,44 @@ export async function POST(req: NextRequest) {
 
       // If no base image, or clip does not have coordinates, we don't overlay
       if (!baseImageUrl) {
-        // Direct Phase 1 concatenation: use downloaded clip directly
-        localVideoPaths.push(localClipPath);
+        if (!normalize) {
+          // Direct Phase 1 concatenation: use downloaded clip directly
+          localVideoPaths.push(localClipPath);
+          continue;
+        }
+
+        // Normalized concatenation: sources may differ in size (e.g. joining scenes that each
+        // used their own background). The concat demuxer needs identical streams, so fit every
+        // clip into the project frame, padding with black instead of distorting it.
+        const [normW, normH] = aspectRatio === '9:16'
+          ? [720, 1280]
+          : aspectRatio === '1:1'
+            ? [1024, 1024]
+            : [1280, 720];
+        console.log(`[Merge API] Normalizing clip ${i} to ${normW}x${normH} before concat`);
+        await new Promise<void>((resolve, reject) => {
+          ffmpeg()
+            .input(localClipPath)
+            .complexFilter([
+              `[0:v]scale=${normW}:${normH}:force_original_aspect_ratio=decrease,pad=${normW}:${normH}:(ow-iw)/2:(oh-ih)/2,setsar=1[out]`
+            ])
+            .outputOptions([
+              '-map [out]',
+              '-map 0:a?',
+              '-c:v libx264',
+              '-preset veryfast',
+              '-pix_fmt yuv420p',
+              '-r 25',
+              '-c:a aac',
+              '-ar 44100',
+              '-ac 2'
+            ])
+            .on('end', () => resolve())
+            .on('error', (err) => reject(err))
+            .save(segmentPath);
+        });
+        localVideoPaths.push(segmentPath);
+        tempFiles.push(segmentPath);
         continue;
       }
 
