@@ -380,12 +380,137 @@ export default function DialogueTabForm() {
     return new Set(Array.from(map.entries()).filter(([, v]) => v.size > 1).map(([k]) => k));
   })();
 
-  // Per-card clip length, mirroring the rule used when generating (15 chars ≈ 1s, +2s padding)
-  const estimateCardDuration = (card: DialogueCardData) => {
-    const cleanChars = card.scriptText.replace(/\s+/g, '').length;
-    const speechDuration = Math.max(1, Math.ceil((cleanChars / 15) / card.speedFactor));
-    return speechDuration + 2 <= 5 ? 5 : 10;
+  // ── Speech length & auto-splitting ────────────────────────────────────────
+  // Thai TTS runs at roughly 15 characters per second.
+  const CHARS_PER_SECOND = 15;
+  const speechSecondsOf = (text: string, speed: number) =>
+    Math.max(1, Math.ceil((text.replace(/\s+/g, '').length / CHARS_PER_SECOND) / speed));
+
+  // Each engine renders a clip of a fixed menu of lengths, and lip-sync trims audio to the
+  // video (cut_off). A line must therefore speak for less than the clip it will be given.
+  const maxSpeechSecondsFor = (model: typeof videoModel) =>
+    model === 'veo3' || model === 'sora2' ? 6 : 8;
+  const maxSpeechSeconds = maxSpeechSecondsFor(videoModel);
+
+  // Split a script so every piece fits the limit, preferring natural breaks:
+  // sentence punctuation first, then spaces, and only then a hard character cut.
+  const splitScript = (text: string, maxSeconds: number, speed: number): string[] => {
+    const maxChars = Math.max(20, Math.floor(maxSeconds * CHARS_PER_SECOND * speed));
+    const lenOf = (s: string) => s.replace(/\s+/g, '').length;
+
+    const packed: string[] = [];
+    const pack = (pieces: string[], joiner: string) => {
+      let cur = '';
+      for (const piece of pieces) {
+        const candidate = cur ? cur + joiner + piece : piece;
+        if (cur && lenOf(candidate) > maxChars) {
+          packed.push(cur);
+          cur = piece;
+        } else {
+          cur = candidate;
+        }
+      }
+      if (cur) packed.push(cur);
+    };
+
+    // 1) sentence-ish units
+    const sentences = text
+      .split(/(?<=[.!?…ฯ])\s*/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    pack(sentences.length ? sentences : [text.trim()], ' ');
+
+    // 2) any unit still too long → split on spaces, then hard-cut
+    const result: string[] = [];
+    for (const chunk of packed) {
+      if (lenOf(chunk) <= maxChars) {
+        result.push(chunk);
+        continue;
+      }
+      const words = chunk.split(/\s+/).filter(Boolean);
+      let cur = '';
+      const flush = () => {
+        if (cur) {
+          result.push(cur);
+          cur = '';
+        }
+      };
+      for (const w of words) {
+        if (lenOf(w) > maxChars) {
+          flush();
+          // Thai often has no spaces, so a "word" can be a whole sentence. Break after a
+          // polite ending particle or before a connective — far more natural than cutting
+          // mid-syllable, which is the last resort below.
+          const units = w
+            .split(/(?<=(?:ครับ|ค่ะ|คะ|นะคะ|นะครับ|จ้ะ|ค่า))|(?=(?:และ|แต่|เมื่อ|ซึ่ง|แล้ว|จึง|เพราะ|หรือ|ถ้า|ดังนั้น))/g)
+            .filter(Boolean);
+          let sub = '';
+          for (const u of units) {
+            if (lenOf(u) > maxChars) {
+              if (sub) { result.push(sub); sub = ''; }
+              for (let i = 0; i < u.length; i += maxChars) result.push(u.slice(i, i + maxChars));
+              continue;
+            }
+            const cand = sub + u;
+            if (sub && lenOf(cand) > maxChars) {
+              result.push(sub);
+              sub = u;
+            } else {
+              sub = cand;
+            }
+          }
+          if (sub) result.push(sub);
+          continue;
+        }
+        const candidate = cur ? cur + ' ' + w : w;
+        if (cur && lenOf(candidate) > maxChars) {
+          flush();
+          cur = w;
+        } else {
+          cur = candidate;
+        }
+      }
+      flush();
+    }
+
+    return result.length ? result : [text];
   };
+
+  const isCardTooLong = (card: DialogueCardData) =>
+    !!card.scriptText.trim() && speechSecondsOf(card.scriptText, card.speedFactor) > maxSpeechSeconds;
+  const tooLongCards = cards.filter(isCardTooLong);
+
+  // Replace a long card with several cards in place, keeping character, voice and emotion.
+  const splitCard = (cardId: string) => {
+    setCards((prev) => {
+      const idx = prev.findIndex((c) => c.id === cardId);
+      if (idx === -1) return prev;
+      const card = prev[idx];
+      const pieces = splitScript(card.scriptText, maxSpeechSeconds, card.speedFactor);
+      if (pieces.length <= 1) return prev;
+      const made = pieces.map((text, i) => ({
+        ...card,
+        id: i === 0 ? card.id : `card-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+        scriptText: text,
+        // Splitting invalidates any clip already rendered for the original line
+        status: 'idle' as const,
+        videoUrl: undefined,
+        progressPercent: undefined,
+        progressMessage: undefined,
+        audioFile: null,
+        audioName: undefined
+      }));
+      return [...prev.slice(0, idx), ...made, ...prev.slice(idx + 1)];
+    });
+  };
+
+  const splitAllLongCards = () => {
+    tooLongCards.forEach((c) => splitCard(c.id));
+  };
+
+  // Per-card clip length, mirroring the rule used when generating (15 chars ≈ 1s, +2s padding)
+  const estimateCardDuration = (card: DialogueCardData) =>
+    speechSecondsOf(card.scriptText, card.speedFactor) + 2 <= 5 ? 5 : 10;
 
   const MAX_TOTAL_SECONDS = 120; // hard cap for the automated long video
   const totalEstimatedSeconds = cards.reduce((sum, c) => sum + estimateCardDuration(c), 0);
@@ -886,6 +1011,12 @@ export default function DialogueTabForm() {
       setMergeError('โหมดอัตโนมัติต้องมีบทสนทนาอย่างน้อย 2 ประโยค');
       return;
     }
+    if (tooLongCards.length > 0) {
+      setMergeError(
+        `มี ${tooLongCards.length} บทที่พูดยาวเกิน ${maxSpeechSeconds} วินาที ซึ่งเกินความยาวคลิปที่โมเดลนี้สร้างได้ กรุณากด "หั่นบททั้งหมดอัตโนมัติ" ก่อนเริ่ม`
+      );
+      return;
+    }
     if (overDurationCap) {
       setMergeError(
         `เนื้อหารวมยาวประมาณ ${totalEstimatedSeconds} วินาที ซึ่งเกินเพดาน ${MAX_TOTAL_SECONDS} วินาที (2 นาที) กรุณาลดจำนวนประโยคหรือย่อบทพูดลง`
@@ -1363,6 +1494,22 @@ export default function DialogueTabForm() {
                             rows={2}
                             placeholder="พิมพ์บทพากย์ที่ต้องการให้ตัวละครนี้พูดที่นี่..."
                           />
+                          {isCardTooLong(card) && (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5">
+                              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                              <span className="font-thai">
+                                บทนี้พูดยาว ~{speechSecondsOf(card.scriptText, card.speedFactor)} วิ เกินคลิปที่โมเดลสร้างได้ ({maxSpeechSeconds} วิ) เสียงจะถูกตัด
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => splitCard(card.id)}
+                                disabled={autoRunning || batchGenerating || merging}
+                                className="ml-auto font-bold text-[#1A1A1A] underline hover:text-[#D4AF37] disabled:opacity-40 font-thai"
+                              >
+                                ✂️ หั่นบทนี้อัตโนมัติ
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1561,7 +1708,7 @@ export default function DialogueTabForm() {
                   </select>
                   <p className="text-[10px] text-gray-500 mt-1.5">
                     {premiumAllowed
-                      ? '⚠️ โมเดลพรีเมียมมีค่าใช้จ่ายสูงกว่าราว 6–9 เท่าเมื่อสร้างคลิปยาว'
+                      ? `⚠️ โมเดลพรีเมียมแพงกว่าราว 6–9 เท่า และรับบทได้ท่อนละไม่เกิน ~${maxSpeechSeconds} วิ`
                       : 'ผู้ดูแลระบบปิดการใช้โมเดลพรีเมียม (Veo 3 / Sora 2) สำหรับโหมดนี้ไว้'}
                   </p>
                 </div>
@@ -1589,11 +1736,28 @@ export default function DialogueTabForm() {
                 </div>
               </div>
 
+              {tooLongCards.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>
+                    มี {tooLongCards.length} บทที่ยาวเกิน {maxSpeechSeconds} วินาที — เสียงจะถูกตัดถ้าไม่หั่นก่อน
+                  </span>
+                  <button
+                    type="button"
+                    onClick={splitAllLongCards}
+                    disabled={autoRunning || batchGenerating || merging}
+                    className="ml-auto font-bold text-[#1A1A1A] underline hover:text-[#D4AF37] disabled:opacity-40"
+                  >
+                    ✂️ หั่นบททั้งหมดอัตโนมัติ
+                  </button>
+                </div>
+              )}
+
               <button
                 onClick={runAutomation}
-                disabled={autoRunning || batchGenerating || merging || cards.length < 2 || overDurationCap}
+                disabled={autoRunning || batchGenerating || merging || cards.length < 2 || overDurationCap || tooLongCards.length > 0}
                 className={`w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-bold text-sm transition-all shadow-md ${
-                  !autoRunning && !batchGenerating && !merging && cards.length >= 2 && !overDurationCap
+                  !autoRunning && !batchGenerating && !merging && cards.length >= 2 && !overDurationCap && tooLongCards.length === 0
                     ? 'bg-gradient-to-r from-[#D4AF37] to-amber-600 text-black hover:from-amber-500 hover:to-amber-700 active:scale-[0.99]'
                     : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed shadow-none'
                 }`}
