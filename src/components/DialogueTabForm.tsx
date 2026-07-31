@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   HelpCircle,
   Upload,
-  Download
+  Download,
+  RefreshCw
 } from 'lucide-react';
 import { THAI_VOICES, ASPECT_RATIOS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
@@ -51,6 +52,9 @@ interface SceneData {
   name: string;
   imageFile: File | null;
   imagePreview: string | null;
+  /** Set once the background has been stored; lets the scene survive a reload and
+   *  spares the merge step from uploading the same image again. */
+  imageUrl?: string;
   faceTags: FaceTag[];
 }
 
@@ -214,19 +218,40 @@ export default function DialogueTabForm() {
   const sceneOf = (card: DialogueCardData) =>
     scenes.find((s) => s.id === card.sceneId) || scenes[0];
 
-  const handleSceneImageChange = (sceneId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSceneImageChange = async (sceneId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const prev = scenes.find((s) => s.id === sceneId);
-    if (prev?.imagePreview) URL.revokeObjectURL(prev.imagePreview);
-    // Tags are coordinates on the old image, so they can't carry over
-    updateScene(sceneId, { imageFile: file, imagePreview: URL.createObjectURL(file), faceTags: [] });
+    if (prev?.imagePreview?.startsWith('blob:')) URL.revokeObjectURL(prev.imagePreview);
+    // Show it straight away; tags are coordinates on the old image so they can't carry over
+    updateScene(sceneId, {
+      imageFile: file,
+      imagePreview: URL.createObjectURL(file),
+      imageUrl: undefined,
+      faceTags: []
+    });
+
+    // Store it so the scene can be restored after a reload
+    if (!supabase) return;
+    try {
+      const ext = file.name.split('.').pop() || 'png';
+      const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${Date.now()}_${sceneId}.${ext}`;
+      const { error } = await supabase.storage
+        .from('kruth-ai-assets')
+        .upload(storagePath, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
+      updateScene(sceneId, { imageUrl: publicUrl });
+    } catch (err) {
+      // Not fatal: the merge step can still upload the file it holds in memory
+      console.warn('[Scene image] upload failed, will upload at merge time:', err);
+    }
   };
 
   const clearSceneImage = (sceneId: string) => {
     const prev = scenes.find((s) => s.id === sceneId);
-    if (prev?.imagePreview) URL.revokeObjectURL(prev.imagePreview);
-    updateScene(sceneId, { imageFile: null, imagePreview: null, faceTags: [] });
+    if (prev?.imagePreview?.startsWith('blob:')) URL.revokeObjectURL(prev.imagePreview);
+    updateScene(sceneId, { imageFile: null, imagePreview: null, imageUrl: undefined, faceTags: [] });
   };
 
   const addScene = () => {
@@ -1136,6 +1161,7 @@ export default function DialogueTabForm() {
   });
 
   const uploadSceneImage = async (scene: SceneData): Promise<string | null> => {
+    if (scene.imageUrl) return scene.imageUrl; // already stored when it was attached
     if (!scene.imageFile || !supabase) return null;
     const fileExt = scene.imageFile.name.split('.').pop() || 'png';
     const storagePath = `dialogue_bases/${user?.email || 'unknown'}/${Date.now()}_${scene.id}.${fileExt}`;
@@ -1221,6 +1247,95 @@ export default function DialogueTabForm() {
     } finally {
       setMerging(false);
     }
+  };
+
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  // An automated run takes many minutes and spends credits per clip, so losing the
+  // tab must not lose the clips already produced. The project is mirrored to local
+  // storage and offered back on return; File handles cannot be stored, which is why
+  // scene images are uploaded when attached and restored by URL.
+  const DRAFT_VERSION = 1;
+  const draftKey = user?.email ? `kruth-dialogue-draft:${user.email}` : '';
+  const [pendingDraft, setPendingDraft] = useState<any>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  const projectHasContent =
+    cards.some((c) => c.scriptText.trim() || c.videoUrl) || scenes.some((s) => s.imageUrl);
+
+  useEffect(() => {
+    if (!draftKey || draftLoaded) return;
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.version === DRAFT_VERSION && parsed.cards?.length) setPendingDraft(parsed);
+      }
+    } catch (err) {
+      console.warn('[Draft] could not read saved work:', err);
+    }
+    setDraftLoaded(true);
+  }, [draftKey, draftLoaded]);
+
+  useEffect(() => {
+    // Don't overwrite a draft that hasn't been offered to the user yet
+    if (!draftKey || !draftLoaded || pendingDraft || !projectHasContent) return;
+    const timer = setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            version: DRAFT_VERSION,
+            savedAt: Date.now(),
+            projectTitle,
+            aspectRatio,
+            ttsProvider,
+            videoModel,
+            continuityEnabled,
+            mergedVideoUrl,
+            scenes: scenes.map((s) => ({
+              id: s.id,
+              name: s.name,
+              imageUrl: s.imageUrl || null,
+              faceTags: s.faceTags
+            })),
+            cards: cards.map((c) => ({ ...c, audioFile: null }))
+          })
+        );
+      } catch (err) {
+        console.warn('[Draft] could not save work:', err);
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [
+    draftKey, draftLoaded, pendingDraft, projectHasContent, projectTitle, aspectRatio,
+    ttsProvider, videoModel, continuityEnabled, mergedVideoUrl, scenes, cards
+  ]);
+
+  const restoreDraft = () => {
+    if (!pendingDraft) return;
+    setProjectTitle(pendingDraft.projectTitle || 'บทสนทนาของฉัน');
+    setAspectRatio(pendingDraft.aspectRatio || '16:9');
+    setTtsProvider(pendingDraft.ttsProvider || 'google');
+    setVideoModel(pendingDraft.videoModel || 'fast');
+    setContinuityEnabled(!!pendingDraft.continuityEnabled);
+    setMergedVideoUrl(pendingDraft.mergedVideoUrl || null);
+    setScenes(
+      (pendingDraft.scenes || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        imageFile: null, // the stored copy is used instead
+        imagePreview: s.imageUrl || null,
+        imageUrl: s.imageUrl || undefined,
+        faceTags: s.faceTags || []
+      }))
+    );
+    setCards((pendingDraft.cards || []).map((c: any) => ({ ...c, audioFile: null })));
+    setPendingDraft(null);
+  };
+
+  const discardDraft = () => {
+    if (draftKey) window.localStorage.removeItem(draftKey);
+    setPendingDraft(null);
   };
 
   // Automation reads the freshest cards through a ref: after awaiting generation the
@@ -1344,6 +1459,40 @@ export default function DialogueTabForm() {
           </div>
         </div>
       </div>
+
+      {/* Unfinished work found from a previous visit */}
+      {pendingDraft && (
+        <div className="border border-[#D4AF37]/50 bg-[#D4AF37]/10 rounded-2xl p-4 flex flex-wrap items-center gap-3 font-thai">
+          <RefreshCw className="w-4 h-4 text-[#D4AF37] shrink-0" />
+          <div className="flex-1 min-w-[220px]">
+            <p className="text-xs font-bold text-[#1A1A1A]">พบงานที่ค้างไว้</p>
+            <p className="text-[11px] text-gray-600">
+              {pendingDraft.cards?.length || 0} บท
+              {(() => {
+                const done = (pendingDraft.cards || []).filter((c: any) => c.videoUrl).length;
+                return done > 0 ? ` · สร้างคลิปไว้แล้ว ${done} บท (กู้คืนแล้วไม่ต้องสร้างซ้ำ)` : '';
+              })()}
+              {pendingDraft.savedAt
+                ? ` · บันทึกเมื่อ ${new Intl.DateTimeFormat('th-TH', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(pendingDraft.savedAt))}`
+                : ''}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={restoreDraft}
+            className="px-4 py-2 rounded-xl bg-[#D4AF37] text-black text-xs font-bold hover:bg-amber-500"
+          >
+            กู้คืนงาน
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            className="px-4 py-2 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-white"
+          >
+            เริ่มใหม่
+          </button>
+        </div>
+      )}
 
       {/* Spreadsheet round-trip: edit the script outside the app and bring it back */}
       <div className="bg-white border border-gray-150 rounded-2xl p-5 space-y-3">
