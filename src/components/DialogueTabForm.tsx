@@ -178,6 +178,8 @@ export default function DialogueTabForm() {
   const [videoModel, setVideoModel] = useState<'fast' | 'seedance' | 'veo3' | 'sora2'>('fast');
   // Premium engines are gated by an admin switch (system_settings.automation_premium_enabled)
   const [premiumAllowed, setPremiumAllowed] = useState(false);
+  // Carry the last frame of each line into the next one so poses don't jump between clips
+  const [continuityEnabled, setContinuityEnabled] = useState(false);
 
   // Merging state
   const [merging, setMerging] = useState(false);
@@ -726,7 +728,47 @@ export default function DialogueTabForm() {
       // Is this character tagged on this card's own scene image?
       const cardScene = sceneOf(card);
       const linkedTag = cardScene?.faceTags.find(t => t.characterId === card.characterId);
-      if (cardScene?.imagePreview && linkedTag) {
+
+      // Continuity: seed this clip with the last frame of the previous line in the same scene,
+      // so the character's pose carries over instead of resetting. Only within a scene —
+      // a change of scene is meant to be a cut. Falls back silently if the frame can't be read.
+      let continuityImageUrl = '';
+      if (continuityEnabled) {
+        const sceneCards = cards.filter((c) => c.sceneId === card.sceneId);
+        const myIdx = sceneCards.findIndex((c) => c.id === cardId);
+        const prev = myIdx > 0 ? sceneCards[myIdx - 1] : null;
+        if (prev?.videoUrl && prev.characterId === card.characterId) {
+          try {
+            updateCard(cardId, { status: 'generating', progressMessage: 'กำลังต่อภาพจากบทก่อนหน้า...' });
+            const fr = await fetch('/api/extract-frame', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ videoUrl: prev.videoUrl, user_email: user?.email || '' })
+            });
+            const frJson = await fr.json();
+            if (frJson.success && frJson.imageUrl) continuityImageUrl = frJson.imageUrl;
+          } catch (e) {
+            console.warn('[Continuity] falling back to the scene image:', e);
+          }
+        }
+      }
+
+      if (continuityImageUrl) {
+        formData.append('character_image_url', continuityImageUrl);
+        // Keep the previous line's placement so compositing still lands in the same spot
+        cropX = linkedTag ? card.cropX ?? undefined : undefined;
+        cropY = linkedTag ? card.cropY ?? undefined : undefined;
+        cropW = linkedTag ? card.cropW ?? undefined : undefined;
+        cropH = linkedTag ? card.cropH ?? undefined : undefined;
+        if (linkedTag && cropX === undefined) {
+          const prevCard = cards.find((c) => c.sceneId === card.sceneId && c.characterId === card.characterId && c.cropX !== undefined);
+          cropX = prevCard?.cropX;
+          cropY = prevCard?.cropY;
+          cropW = prevCard?.cropW;
+          cropH = prevCard?.cropH;
+        }
+        updateCard(cardId, { cropX, cropY, cropW, cropH });
+      } else if (cardScene?.imagePreview && linkedTag) {
         updateCard(cardId, {
           status: 'generating',
           progressMessage: 'กำลังครอปรูปภาพใบหน้า...'
@@ -1737,6 +1779,20 @@ export default function DialogueTabForm() {
                   </p>
                 </div>
               </div>
+
+              <label className="flex items-start gap-2.5 cursor-pointer bg-white border border-gray-150 rounded-xl px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={continuityEnabled}
+                  onChange={(e) => setContinuityEnabled(e.target.checked)}
+                  disabled={autoRunning || batchGenerating || merging}
+                  className="mt-0.5 accent-[#D4AF37]"
+                />
+                <span className="text-[11px] leading-relaxed">
+                  <b className="text-[#1A1A1A]">ภาพต่อเนื่องระหว่างบท</b> — ใช้เฟรมสุดท้ายของบทก่อนหน้าเป็นภาพตั้งต้นของบทถัดไป
+                  ท่าทางจะไม่กระโดด (ใช้ภายในฉากเดียวกันและตัวละครเดิมเท่านั้น เปลี่ยนฉากยังตัดภาพตามปกติ)
+                </span>
+              </label>
 
               {tooLongCards.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2">
