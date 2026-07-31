@@ -870,7 +870,8 @@ export default function DialogueTabForm() {
     baseImageUrl: string | null,
     tags: FaceTag[] | null,
     label: string,
-    normalize = false
+    normalize = false,
+    trimSilence = false
   ): Promise<string> => {
     const response = await fetch('/api/merge-dialogue', {
       method: 'POST',
@@ -883,7 +884,8 @@ export default function DialogueTabForm() {
         aspectRatio,
         baseImageUrl,
         faceTags: tags && tags.length > 0 ? tags : null,
-        normalize
+        normalize,
+        trimSilence
       })
     });
     const result = await response.json();
@@ -931,7 +933,7 @@ export default function DialogueTabForm() {
     if (clips.length === 1 && !baseUrl) return clips[0].videoUrl;
 
     if (clips.length <= MERGE_CHUNK) {
-      return callMergeApi(clips, baseUrl, scene.faceTags, scene.name);
+      return callMergeApi(clips, baseUrl, scene.faceTags, scene.name, false, true);
     }
 
     const parts: string[] = [];
@@ -939,7 +941,7 @@ export default function DialogueTabForm() {
       const groupNo = Math.floor(i / MERGE_CHUNK) + 1;
       setAutoStage(`${scene.name}: กำลังต่อคลิป ช่วงที่ ${groupNo}...`);
       parts.push(
-        await callMergeApi(clips.slice(i, i + MERGE_CHUNK), baseUrl, scene.faceTags, `${scene.name} (ช่วง ${groupNo})`)
+        await callMergeApi(clips.slice(i, i + MERGE_CHUNK), baseUrl, scene.faceTags, `${scene.name} (ช่วง ${groupNo})`, false, true)
       );
     }
     return callMergeApi(parts.map(toPlainClip), null, null, scene.name, true);

@@ -5,6 +5,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execFile } from 'child_process';
 
 // Configure ffmpeg binary path
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -101,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize } = body;
+    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize, trimSilence } = body;
     let videoClips = body.videoClips;
 
     // Backward compatibility with Phase 1 payload
@@ -173,6 +174,51 @@ export async function POST(req: NextRequest) {
     const evenBgW = bgW % 2 === 0 ? bgW : bgW + 1;
     const evenBgH = bgH % 2 === 0 ? bgH : bgH + 1;
 
+    // Models render clips of fixed lengths, so a short line leaves dead air at the end.
+    // Find where speech actually stops instead of trusting a character-count estimate:
+    // if the clip ends in silence, cut just after the last sound (keeping a short tail).
+    const TAIL_PADDING = 0.4;
+    const MIN_TRIM_GAIN = 0.8; // don't re-encode to shave off less than this
+    const findSpeechEnd = (filePath: string): Promise<number | null> =>
+      new Promise((resolve) => {
+        // ffmpeg writes silencedetect results to stderr; read them directly rather than
+        // through the wrapper, which does not surface them for a null-muxer run.
+        execFile(
+          ffmpegInstaller.path,
+          ['-i', filePath, '-af', 'silencedetect=noise=-35dB:d=0.4', '-f', 'null', '-'],
+          { maxBuffer: 8 * 1024 * 1024 },
+          (_err, _stdout, stderr) => {
+            const log = stderr || '';
+            const durMatch = log.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+            const total = durMatch
+              ? (+durMatch[1]) * 3600 + (+durMatch[2]) * 60 + parseFloat(durMatch[3])
+              : null;
+            if (!total) return resolve(null);
+
+            const collect = (re: RegExp) => {
+              const out: number[] = [];
+              let m: RegExpExecArray | null;
+              while ((m = re.exec(log)) !== null) out.push(parseFloat(m[1]));
+              return out;
+            };
+            const starts = collect(/silence_start:\s*([\d.]+)/g);
+            const ends = collect(/silence_end:\s*([\d.]+)/g);
+            if (starts.length === 0) return resolve(null);
+
+            // ffmpeg also reports a silence_end at EOF, so a silence is "trailing" when its
+            // end lands at the end of the file — not when the end is missing.
+            const lastStart = starts[starts.length - 1];
+            const lastEnd = ends.length ? ends[ends.length - 1] : total;
+            const runsToEof = lastEnd >= total - 0.25;
+            if (!runsToEof || lastStart >= total) return resolve(null);
+
+            const cut = Math.min(total, lastStart + TAIL_PADDING);
+            if (total - cut < MIN_TRIM_GAIN) return resolve(null);
+            return resolve(cut);
+          }
+        );
+      });
+
     // Process segments
     const localVideoPaths: string[] = [];
 
@@ -181,11 +227,30 @@ export async function POST(req: NextRequest) {
       const localClipPath = localClipPaths[i];
       const segmentPath = path.join(tempDir, `segment_${i}.mp4`);
 
+      const trimTo = trimSilence ? await findSpeechEnd(localClipPath) : null;
+      if (trimTo) {
+        console.log(`[Merge API] Clip ${i}: trimming trailing silence at ${trimTo.toFixed(2)}s`);
+      }
+      const trimOpts = trimTo ? [`-t ${trimTo.toFixed(2)}`] : [];
+
       // If no base image, or clip does not have coordinates, we don't overlay
       if (!baseImageUrl) {
-        if (!normalize) {
+        if (!normalize && !trimTo) {
           // Direct Phase 1 concatenation: use downloaded clip directly
           localVideoPaths.push(localClipPath);
+          continue;
+        }
+        if (!normalize && trimTo) {
+          // Only the tail needs removing — copy the streams instead of re-encoding
+          await new Promise<void>((resolve, reject) => {
+            ffmpeg(localClipPath)
+              .outputOptions(['-t ' + trimTo.toFixed(2), '-c copy'])
+              .on('end', () => resolve())
+              .on('error', (err) => reject(err))
+              .save(segmentPath);
+          });
+          localVideoPaths.push(segmentPath);
+          tempFiles.push(segmentPath);
           continue;
         }
 
@@ -213,7 +278,8 @@ export async function POST(req: NextRequest) {
               '-r 25',
               '-c:a aac',
               '-ar 44100',
-              '-ac 2'
+              '-ac 2',
+              ...trimOpts
             ])
             .on('end', () => resolve())
             .on('error', (err) => reject(err))
@@ -240,7 +306,8 @@ export async function POST(req: NextRequest) {
               '-pix_fmt yuv420p',
               '-c:a aac',
               '-ar 44100',
-              '-ac 2'
+              '-ac 2',
+              ...trimOpts
             ])
             .save(segmentPath)
             .on('start', (cmd) => {
@@ -286,7 +353,8 @@ export async function POST(req: NextRequest) {
               '-c:a aac',
               '-ar 44100',
               '-ac 2',
-              '-shortest'
+              '-shortest',
+              ...trimOpts
             ])
             .save(segmentPath)
             .on('start', (cmd) => {
