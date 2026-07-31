@@ -16,7 +16,8 @@ import {
   Video,
   CheckCircle2,
   HelpCircle,
-  Upload
+  Upload,
+  Download
 } from 'lucide-react';
 import { THAI_VOICES, ASPECT_RATIOS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
@@ -180,6 +181,17 @@ export default function DialogueTabForm() {
   const [premiumAllowed, setPremiumAllowed] = useState(false);
   // Carry the last frame of each line into the next one so poses don't jump between clips
   const [continuityEnabled, setContinuityEnabled] = useState(false);
+
+  // Spreadsheet round-trip
+  const [sheetBusy, setSheetBusy] = useState<'export' | 'import' | null>(null);
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const [importReport, setImportReport] = useState<{
+    rows: any[];
+    problems: { rowNumber: number; label: string; reason: string; options?: Character[] }[];
+    sceneNames: string[];
+  } | null>(null);
+  // Face tagging lists only the characters who speak in that scene; this opens it up
+  const [showAllChars, setShowAllChars] = useState<Record<string, boolean>>({});
 
   // Merging state
   const [merging, setMerging] = useState(false);
@@ -509,6 +521,177 @@ export default function DialogueTabForm() {
   const splitAllLongCards = () => {
     tooLongCards.forEach((c) => splitCard(c.id));
   };
+
+  // ── Spreadsheet round-trip ────────────────────────────────────────────────
+  const EMOTION_WORDS: Record<string, DialogueCardData['emotion']> = {
+    ปกติ: 'normal', normal: 'normal',
+    ตกใจ: 'shocked', shocked: 'shocked',
+    ยิ้มแย้ม: 'happy', ดีใจ: 'happy', happy: 'happy',
+    เศร้า: 'sad', sad: 'sad',
+    โกรธ: 'angry', angry: 'angry'
+  };
+
+  const exportSheet = async () => {
+    setSheetBusy('export');
+    setSheetError(null);
+    try {
+      const rows: any[] = [];
+      scenes.forEach((scene) => {
+        cards
+          .filter((c) => c.sceneId === scene.id)
+          .forEach((c, i) => {
+            const ch = characterList.find((x) => x.id === c.characterId);
+            rows.push({
+              scene: scene.name,
+              order: i + 1,
+              characterCode: ch?.code || '',
+              characterName: ch?.name || '',
+              script: c.scriptText,
+              emotion: c.emotion === 'custom' ? c.customEmotionText : c.emotion,
+              speed: c.speedFactor
+            });
+          });
+      });
+
+      const res = await fetch('/api/dialogue-sheet/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows,
+          projectTitle,
+          characters: characterList.map((c) => ({ code: c.code, name: c.name }))
+        })
+      });
+      if (!res.ok) throw new Error('สร้างไฟล์ไม่สำเร็จ');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectTitle || 'บทสนทนา'}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setSheetError(err.message || 'ส่งออกไฟล์ไม่สำเร็จ');
+    } finally {
+      setSheetBusy(null);
+    }
+  };
+
+  // Read a sheet and check every row against the character library before touching state
+  const importSheet = async (file: File) => {
+    setSheetBusy('import');
+    setSheetError(null);
+    setImportReport(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/dialogue-sheet/import', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'อ่านไฟล์ไม่สำเร็จ');
+
+      const norm = (s: string) => (s || '').trim().toLowerCase();
+      const problems: { rowNumber: number; label: string; reason: string; options?: Character[] }[] = [];
+      const resolved: any[] = [];
+
+      for (const r of json.rows as any[]) {
+        const label = `${r.characterName || r.characterCode || '(ไม่ระบุตัวละคร)'} — ${r.script?.slice(0, 25) || '(ไม่มีบท)'}`;
+        if (!r.script) {
+          problems.push({ rowNumber: r.rowNumber, label, reason: 'ไม่มีบทพูด' });
+          continue;
+        }
+        let matches = r.characterCode
+          ? characterList.filter((c) => norm(c.code) === norm(r.characterCode))
+          : [];
+        if (matches.length === 0 && r.characterName) {
+          matches = characterList.filter((c) => norm(c.name) === norm(r.characterName));
+        }
+        if (matches.length === 0) {
+          problems.push({
+            rowNumber: r.rowNumber,
+            label,
+            reason: 'ไม่พบตัวละครนี้ในคลัง — ต้องสร้างในคลังตัวละครก่อน'
+          });
+          continue;
+        }
+        if (matches.length > 1) {
+          problems.push({
+            rowNumber: r.rowNumber,
+            label,
+            reason: `มีตัวละครชื่อ/รหัสซ้ำกัน ${matches.length} ตัวในคลัง`,
+            options: matches
+          });
+          continue;
+        }
+        resolved.push({ ...r, characterId: matches[0].id });
+      }
+
+      const sceneNames: string[] = [];
+      resolved.forEach((r) => {
+        const name = r.scene || 'ฉากที่ 1';
+        if (!sceneNames.includes(name)) sceneNames.push(name);
+      });
+
+      setImportReport({ rows: resolved, problems, sceneNames });
+    } catch (err: any) {
+      setSheetError(err.message || 'นำเข้าไฟล์ไม่สำเร็จ');
+    } finally {
+      setSheetBusy(null);
+    }
+  };
+
+  // Replace the timeline with the imported rows, keeping any background image and
+  // face tags already set for a scene of the same name.
+  const applyImport = () => {
+    if (!importReport) return;
+    const { rows, sceneNames } = importReport;
+
+    const newScenes: SceneData[] = sceneNames.map((name, i) => {
+      const existing = scenes.find((s) => s.name.trim() === name.trim());
+      return (
+        existing || {
+          id: `scene-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+          name,
+          imageFile: null,
+          imagePreview: null,
+          faceTags: []
+        }
+      );
+    });
+
+    const newCards: DialogueCardData[] = rows.map((r, i) => {
+      const sceneName = r.scene || sceneNames[0];
+      const scene = newScenes.find((s) => s.name.trim() === String(sceneName).trim()) || newScenes[0];
+      const emotionKey = norm(r.emotion);
+      const known = EMOTION_WORDS[emotionKey];
+      const voice = resolveVoiceForCharacter(r.characterId, { voiceId: '', ttsProvider });
+      return {
+        id: `card-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+        sceneId: scene.id,
+        characterId: r.characterId,
+        voiceId: voice.voiceId,
+        ttsProvider: voice.ttsProvider,
+        audioFile: null,
+        scriptText: r.script,
+        speedFactor: r.speed || 1,
+        emotion: r.emotion ? known || 'custom' : 'normal',
+        customEmotionText: r.emotion && !known ? r.emotion : '',
+        status: 'idle'
+      };
+    });
+
+    if (newCards.length === 0) {
+      setSheetError('ไม่มีแถวที่นำเข้าได้');
+      return;
+    }
+    setScenes(newScenes);
+    setCards(newCards);
+    setMergedVideoUrl(null);
+    setImportReport(null);
+  };
+
+  const norm = (s: string) => (s || '').trim().toLowerCase();
 
   // Per-card clip length, mirroring the rule used when generating (15 chars ≈ 1s, +2s padding)
   const estimateCardDuration = (card: DialogueCardData) =>
@@ -1162,6 +1345,98 @@ export default function DialogueTabForm() {
         </div>
       </div>
 
+      {/* Spreadsheet round-trip: edit the script outside the app and bring it back */}
+      <div className="bg-white border border-gray-150 rounded-2xl p-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-sm font-semibold text-[#1A1A1A] font-thai flex items-center gap-2">
+            📄 บทจากไฟล์ Excel
+          </h3>
+          <div className="flex flex-wrap gap-2 ml-auto">
+            <button
+              type="button"
+              onClick={exportSheet}
+              disabled={sheetBusy !== null || autoRunning || batchGenerating || merging}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:border-[#D4AF37] hover:text-[#D4AF37] disabled:opacity-40 font-thai"
+            >
+              {sheetBusy === 'export' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              ส่งออกเป็น Excel
+            </button>
+            <label className={`flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1A1A1A] text-[#D4AF37] text-xs font-semibold cursor-pointer hover:bg-black font-thai ${sheetBusy !== null || autoRunning || batchGenerating || merging ? 'opacity-40 pointer-events-none' : ''}`}>
+              {sheetBusy === 'import' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+              นำเข้าจาก Excel
+              <input
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) importSheet(f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-500 font-thai">
+          ไฟล์เก็บเฉพาะโครงเรื่องและบทพูด — ภาพฉากและการแท็กใบหน้ายังทำในระบบเหมือนเดิม
+          นำเข้าทับได้โดยไม่กระทบภาพฉากที่ตั้งไว้ (จับคู่ด้วยชื่อฉาก)
+        </p>
+
+        {sheetError && (
+          <div className="flex items-start gap-2 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2 font-thai">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {sheetError}
+          </div>
+        )}
+
+        {/* Pre-import summary: nothing is applied until this is confirmed */}
+        {importReport && (
+          <div className="border border-[#D4AF37]/40 bg-[#D4AF37]/5 rounded-2xl p-4 space-y-3 font-thai">
+            <p className="text-xs font-bold text-[#1A1A1A]">ตรวจก่อนนำเข้า</p>
+            <div className="flex flex-wrap gap-4 text-[11px]">
+              <span className="text-green-700">✓ นำเข้าได้ {importReport.rows.length} บท</span>
+              <span className="text-gray-600">{importReport.sceneNames.length} ฉาก: {importReport.sceneNames.join(' · ')}</span>
+              {importReport.problems.length > 0 && (
+                <span className="text-red-600">✕ มีปัญหา {importReport.problems.length} แถว</span>
+              )}
+            </div>
+
+            {importReport.problems.length > 0 && (
+              <div className="max-h-40 overflow-y-auto space-y-1.5">
+                {importReport.problems.map((p) => (
+                  <div key={p.rowNumber} className="text-[11px] bg-white border border-red-200 rounded-lg px-2.5 py-1.5">
+                    <span className="font-semibold text-red-700">แถว {p.rowNumber}</span>
+                    <span className="text-gray-600"> — {p.label}</span>
+                    <div className="text-red-600">{p.reason}</div>
+                  </div>
+                ))}
+                <p className="text-[10px] text-gray-500">
+                  แถวที่มีปัญหาจะถูกข้าม — แก้ในไฟล์แล้วนำเข้าใหม่ หรือไปเพิ่มตัวละครที่{' '}
+                  <a href="/characters" className="underline text-[#D4AF37]">คลังตัวละคร</a>
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={applyImport}
+                disabled={importReport.rows.length === 0}
+                className="px-4 py-2 rounded-xl bg-[#D4AF37] text-black text-xs font-bold hover:bg-amber-500 disabled:opacity-40"
+              >
+                ยืนยันนำเข้า (แทนที่บททั้งหมด)
+              </button>
+              <button
+                type="button"
+                onClick={() => setImportReport(null)}
+                className="px-4 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Loading characters state */}
       {loadingCharacters ? (
         <div className="flex flex-col items-center py-12">
@@ -1241,16 +1516,42 @@ export default function DialogueTabForm() {
                   )}
                 </div>
 
-                {scene.imagePreview && characterList.length > 0 && (
-                  <div className="bg-white border border-gray-150 rounded-2xl p-4 shadow-inner">
-                    <DialogueCanvasWorkspace
-                      imageUrl={scene.imagePreview}
-                      characters={characterList}
-                      faceTags={scene.faceTags}
-                      onTagsChange={(tags) => updateScene(scene.id, { faceTags: tags })}
-                    />
-                  </div>
-                )}
+                {scene.imagePreview && characterList.length > 0 && (() => {
+                  // Offer only the characters who actually speak in this scene — tagging a
+                  // face to someone with no lines here is almost always a mistake. Already
+                  // tagged characters stay listed so existing tags remain editable.
+                  const speakingIds = new Set(
+                    sceneCards.map((c) => c.characterId).filter(Boolean)
+                  );
+                  scene.faceTags.forEach((t) => speakingIds.add(t.characterId));
+                  const scoped = characterList.filter((c) => speakingIds.has(c.id));
+                  const expanded = showAllChars[scene.id] || scoped.length === 0;
+                  const hiddenCount = characterList.length - scoped.length;
+
+                  return (
+                    <div className="bg-white border border-gray-150 rounded-2xl p-4 shadow-inner space-y-2">
+                      <DialogueCanvasWorkspace
+                        imageUrl={scene.imagePreview}
+                        characters={expanded ? characterList : scoped}
+                        faceTags={scene.faceTags}
+                        onTagsChange={(tags) => updateScene(scene.id, { faceTags: tags })}
+                      />
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowAllChars((prev) => ({ ...prev, [scene.id]: !prev[scene.id] }))
+                          }
+                          className="text-[10px] text-gray-500 hover:text-[#D4AF37] underline font-thai"
+                        >
+                          {expanded
+                            ? `แสดงเฉพาะตัวละครที่มีบทในฉากนี้ (${scoped.length})`
+                            : `แสดงตัวละครอื่นในคลังด้วย (+${hiddenCount})`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Voice per tagged person in this scene */}
                 {taggedInScene.length > 0 && (
