@@ -133,6 +133,10 @@ export async function POST(req: NextRequest) {
     const prompt = formData.get('prompt') as string;
     const imageFile = formData.get('image') as File | null;
     const maskFile = formData.get('mask') as File | null;
+    // Photos routinely exceed the platform's request body limit (413), so the browser may
+    // upload them to storage itself and pass URLs instead. Files still work for small ones.
+    const preUploadedImageUrl = (formData.get('image_url') as string) || '';
+    const preUploadedMaskUrl = (formData.get('mask_url') as string) || '';
     const imageMode = formData.get('image_mode') as string || 'text_to_image'; // 'text_to_image' | 'image_to_image' | 'inpainting' | 'outpainting'
     const modelType = formData.get('model_type') as string || 'flux_dev'; // 'flux_dev' | 'flux_schnell'
     const visualStyle = formData.get('visual_style') as string || 'none';
@@ -212,9 +216,9 @@ export async function POST(req: NextRequest) {
     const timestamp = Date.now();
 
     // 1. Upload input image to Supabase if present
-    let imageUrl = '';
+    let imageUrl = preUploadedImageUrl;
     let imagePath = '';
-    if (imageFile && imageFile.size > 0) {
+    if (!imageUrl && imageFile && imageFile.size > 0) {
       const ext = imageFile.name.split('.').pop() || 'png';
       imagePath = `images/${userEmail}/${timestamp}_src.${ext}`;
       const buffer = Buffer.from(await imageFile.arrayBuffer());
@@ -233,9 +237,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Upload mask image to Supabase if present
-    let maskUrl = '';
+    let maskUrl = preUploadedMaskUrl;
     let maskPath = '';
-    if (maskFile && maskFile.size > 0) {
+    if (!maskUrl && maskFile && maskFile.size > 0) {
       const ext = maskFile.name.split('.').pop() || 'png';
       maskPath = `images/${userEmail}/${timestamp}_mask.${ext}`;
       const buffer = Buffer.from(await maskFile.arrayBuffer());

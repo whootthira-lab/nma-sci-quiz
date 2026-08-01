@@ -904,7 +904,28 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       setProgressMessage('กำลังขยายและปรับแต่ง Prompt...');
       setProgressPercent(20);
 
+      // A phone photo alone can exceed the request body limit and come back as 413, so move
+      // any image out of the request: upload it to storage here and send its URL instead.
+      const moveFileToStorage = async (field: 'image' | 'mask') => {
+        const file = formData.get(field);
+        if (!(file instanceof File) || file.size === 0 || !supabase) return;
+        const ext = file.name.split('.').pop() || 'png';
+        const storagePath = `images/${user?.email || 'unknown'}/${Date.now()}_${field}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from('kruth-ai-assets')
+          .upload(storagePath, file, { upsert: true, contentType: file.type });
+        if (upErr) throw new Error(`อัปโหลดรูปไม่สำเร็จ: ${upErr.message}`);
+        const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
+        formData.delete(field);
+        formData.set(`${field}_url`, publicUrl);
+      };
+
+      setProgressMessage('กำลังอัปโหลดรูปภาพ...');
+      await moveFileToStorage('image');
+      await moveFileToStorage('mask');
+
       // Submit generation call to backend API
+      setProgressMessage('กำลังส่งคำสั่งไปยังระบบ AI...');
       const response = await fetch('/api/generate-image', {
         method: 'POST',
         body: formData
