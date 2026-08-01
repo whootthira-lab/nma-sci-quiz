@@ -12,6 +12,7 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 export const dynamic = 'force-dynamic';
 
 const LIPSYNC_ENDPOINT = 'fal-ai/sync-lipsync/v3';
+const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2';
 
 /**
  * Fal's queue lives on the application id, never on the sub-path a job was submitted to:
@@ -111,13 +112,33 @@ export async function POST(req: NextRequest) {
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
     const isLipsyncPhase = !!lipsyncRequestId;
+    const ambientRequestId = genRow?.metadata?.ambient_request_id;
+    const isAmbientPhase = !isLipsyncPhase && !!ambientRequestId;
 
     const apiProvider = genRow?.metadata?.api_provider || 'fal';
 
     let statusData: any = null;
     let currentStatus = '';
 
-    if (isLipsyncPhase) {
+    if (isAmbientPhase) {
+      // Scoring a silent clip runs as its own queued job, exactly like lip-sync
+      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}/status`, {
+        headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      if (!checkResponse.ok) {
+        console.error(`[Ambient Status Fail] status: ${checkResponse.status}`);
+        if (checkResponse.status === 404 || checkResponse.status === 405) {
+          return NextResponse.json({
+            status: 'ERROR',
+            error: `ที่อยู่สำหรับตรวจสถานะเสียงบรรยากาศไม่ถูกต้อง (${checkResponse.status})`
+          }, { status: 500 });
+        }
+        return NextResponse.json({ status: 'WAITING' });
+      }
+      statusData = await checkResponse.json();
+      currentStatus = statusData.status;
+    } else if (isLipsyncPhase) {
       // 1. Fetch official queue status endpoint for Lipsync (always on Fal.ai)
       const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}/status`, {
         headers: {
@@ -218,7 +239,9 @@ export async function POST(req: NextRequest) {
       if (apiProvider === 'siliconflow' && !isLipsyncPhase) {
         tempUrl = statusData.results?.videos?.[0]?.url;
       } else {
-        const detailUrl = statusData.response_url || (isLipsyncPhase
+        const detailUrl = statusData.response_url || (isAmbientPhase
+          ? `https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}`
+          : isLipsyncPhase
           ? `https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}`
           : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
 
@@ -249,6 +272,51 @@ export async function POST(req: NextRequest) {
 
       const audioUrl = genRow?.audio_prompt;
       const isNoSpeech = genRow?.metadata?.is_no_speech === true;
+
+      // A silent clip from an engine that can't score itself gets a soundtrack now, as its
+      // own queued job — the previous attempt at this ran inline and timed out, so it never
+      // blocks this request.
+      const ambientPending = genRow?.metadata?.ambient_pending === true;
+      if (!isLipsyncPhase && !isAmbientPhase && ambientPending && isNoSpeech && tempUrl) {
+        const ambientPrompt = genRow?.metadata?.ambient_prompt || 'natural ambience matching the scene';
+        console.log(`⏳ [Ambient] Scoring silent clip via ${AMBIENT_ENDPOINT}: "${ambientPrompt}"`);
+        try {
+          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_ENDPOINT}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({ video_url: tempUrl, prompt: ambientPrompt })
+          });
+          if (!ambRes.ok) throw new Error(`ambient submit failed: ${ambRes.status}`);
+          const ambJson = await ambRes.json();
+          if (!ambJson.request_id) throw new Error('ambient job returned no request id');
+
+          await supabase
+            .from('generations')
+            .update({
+              metadata: {
+                ...(genRow?.metadata || {}),
+                ambient_request_id: ambJson.request_id,
+                ambient_pending: false,
+                silent_video_url: tempUrl
+              },
+              updated_at: new Date().toISOString()
+            })
+            .eq('fal_request_id', requestId);
+
+          return NextResponse.json({
+            status: 'IN_QUEUE',
+            progressMessage: 'กำลังใส่เสียงบรรยากาศให้คลิป...',
+            progressPercent: 90
+          });
+        } catch (ambErr: any) {
+          // Sound is a bonus, not the deliverable: keep the silent clip rather than failing
+          console.error('[Ambient] skipped:', ambErr?.message || ambErr);
+        }
+      }
 
       // Check if we need to run Lip-Sync Post-Processing
       if (!isLipsyncPhase && !isNoSpeech && audioUrl) {

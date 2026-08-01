@@ -35,6 +35,9 @@ export default function AdminPage() {
   const [grokResolution, setGrokResolution] = useState('720p');
   const [seedanceResolution, setSeedanceResolution] = useState('720p');
   const [klingAudioEnabled, setKlingAudioEnabled] = useState(false);
+  // Give clips without dialogue a soundtrack: engines that can score themselves do,
+  // the rest get one added afterwards (costs ~2 extra credits per clip).
+  const [ambientAudioEnabled, setAmbientAudioEnabled] = useState(false);
   // Allow premium engines (Veo 3 / Sora 2) inside the automated long-video mode. Off by default: a
   // 2-minute auto video is ~15 clips, which costs roughly 6-9x more on premium engines.
   const [automationPremiumEnabled, setAutomationPremiumEnabled] = useState(false);
@@ -93,6 +96,7 @@ export default function AdminPage() {
         const grokRes = data.find((item: any) => item.key === 'grok_resolution');
         const seedanceRes = data.find((item: any) => item.key === 'seedance_resolution');
         const klingAudio = data.find((item: any) => item.key === 'kling_audio_enabled');
+        const ambientAudio = data.find((item: any) => item.key === 'ambient_audio_enabled');
         const autoPremium = data.find((item: any) => item.key === 'automation_premium_enabled');
 
         setMode1Enabled(mode1 ? mode1.value === 'true' : true);
@@ -104,6 +108,7 @@ export default function AdminPage() {
         setGrokResolution(grokRes ? grokRes.value : '720p');
         setSeedanceResolution(seedanceRes ? seedanceRes.value : '720p');
         setKlingAudioEnabled(klingAudio ? klingAudio.value === 'true' : false);
+        setAmbientAudioEnabled(ambientAudio ? ambientAudio.value === 'true' : false);
         setAutomationPremiumEnabled(autoPremium ? autoPremium.value === 'true' : false);
       }
     } catch (err) {
@@ -527,6 +532,34 @@ export default function AdminPage() {
                 className="text-2xl"
               >
                 {automationPremiumEnabled ? (
+                  <ToggleRight className="w-10 h-10 text-accent-success" />
+                ) : (
+                  <ToggleLeft className="w-10 h-10 text-text-muted" />
+                )}
+              </button>
+            </div>
+
+            {/* Ambient sound for clips without dialogue */}
+            <div className="flex items-center justify-between p-4 rounded-xl bg-surface-2/30 border border-white/5">
+              <div className="flex items-center gap-3">
+                <Volume2 className="w-5 h-5 text-[#D4AF37]" />
+                <div>
+                  <p className="text-sm font-medium text-text-primary font-thai">
+                    เสียงบรรยากาศสำหรับคลิปที่ไม่มีบทพูด
+                  </p>
+                  <p className="text-xs text-text-muted font-thai">
+                    โมเดลที่ทำเสียงเองได้ (Veo 3 / Kling 1080p) จะเปิดใช้ ส่วนโมเดลอื่นจะใส่เสียงให้ตรงภาพหลังสร้างเสร็จ (+2 เครดิต/คลิป)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setAmbientAudioEnabled(!ambientAudioEnabled);
+                  saveConfig('ambient_audio_enabled', !ambientAudioEnabled);
+                }}
+                className="text-2xl"
+              >
+                {ambientAudioEnabled ? (
                   <ToggleRight className="w-10 h-10 text-accent-success" />
                 ) : (
                   <ToggleLeft className="w-10 h-10 text-text-muted" />

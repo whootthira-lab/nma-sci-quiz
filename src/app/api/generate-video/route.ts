@@ -206,6 +206,72 @@ async function generateCosyVoiceTTS(text: string, voiceId: string, speedFactor: 
   }
 }
 
+/**
+ * Writes the short English sound description used to score a silent clip.
+ * Cheap by design (Gemini first, tiny output); falls back to the scene text itself
+ * so a missing key never blocks generation.
+ */
+async function buildAmbientPrompt(sceneDescription: string): Promise<string> {
+  const fallback = (sceneDescription || 'quiet room tone').slice(0, 200);
+  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+  const instruction = `You are a sound designer. From the scene description, write ONE English prompt (max 40 words) describing only the ambient sound and diegetic sound effects that scene would have — room tone, weather, crowd, footsteps, objects. No music unless the scene clearly has music playing, and no speech or narration. Return only the prompt.
+
+Scene: "${sceneDescription}"`;
+
+  if (geminiKey) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: instruction }] }],
+          generationConfig: { temperature: 0.6, maxOutputTokens: 80 },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const j = await res.json();
+        const text = j.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (text) return text;
+      }
+    } catch (err: any) {
+      console.warn('[Ambient prompt] Gemini failed:', err?.message || err);
+    }
+  }
+
+  if (openaiKey) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: instruction }],
+          temperature: 0.6,
+          max_tokens: 80,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const j = await res.json();
+        const text = j.choices?.[0]?.message?.content?.trim();
+        if (text) return text;
+      }
+    } catch (err: any) {
+      console.warn('[Ambient prompt] OpenAI failed:', err?.message || err);
+    }
+  }
+
+  return fallback;
+}
+
 async function enhancePromptWithGPT(
   situationPrompt: string,
   scriptText: string,
@@ -495,6 +561,9 @@ export async function POST(req: NextRequest) {
     let grokResolution = '720p';
     let seedanceResolution = '720p';
     let klingAudioEnabled = false;
+    // One switch for "give silent clips a soundtrack": models that can score themselves do so,
+    // the rest get one added afterwards.
+    let ambientAudioEnabled = false;
     try {
       const { data: settings } = await supabase
         .from('system_settings')
@@ -506,13 +575,15 @@ export async function POST(req: NextRequest) {
         const grokRes = settings.find((item: any) => item.key === 'grok_resolution');
         const seedanceRes = settings.find((item: any) => item.key === 'seedance_resolution');
         const klingAudio = settings.find((item: any) => item.key === 'kling_audio_enabled');
-        
+        const ambientAudio = settings.find((item: any) => item.key === 'ambient_audio_enabled');
+
         if (provider?.value) activeProvider = provider.value;
         if (wanRes?.value) wanResolution = wanRes.value;
         if (klingRes?.value) klingResolution = klingRes.value;
         if (grokRes?.value) grokResolution = grokRes.value;
         if (seedanceRes?.value) seedanceResolution = seedanceRes.value;
         if (klingAudio?.value) klingAudioEnabled = klingAudio.value === 'true';
+        if (ambientAudio?.value) ambientAudioEnabled = ambientAudio.value === 'true';
       }
     } catch (e) {
       console.warn('Error fetching system settings:', e);
@@ -543,7 +614,13 @@ export async function POST(req: NextRequest) {
     }
 
     const duration = isMotionControl ? 5 : selectedDuration;
-    const requiredCredits = ((ratePerSecond * duration) + 1) * 10; // Scaled x10 (Base cost + 1 credit GPT fee)
+    // Veo 3 and Kling 2.6 Pro can score themselves; every other engine returns a silent clip,
+    // so a soundtrack has to be added after the video exists.
+    const modelScoresItself =
+      modelType === 'veo3' || (modelType === 'fast' && klingResolution === '1080p');
+    const needsAmbientPass = ambientAudioEnabled && isNoSpeech && !modelScoresItself;
+
+    const requiredCredits = ((ratePerSecond * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0); // Scaled x10 (Base cost + 1 credit GPT fee)
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 
     if (!isSuperAdmin && userCredits < requiredCredits) {
@@ -655,6 +732,11 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.warn('[Elements] could not read extra_image_urls:', err);
     }
+    const ambientPromptTask = (async () => {
+      if (!needsAmbientPass) return '';
+      return buildAmbientPrompt(situationPrompt || scriptText || 'a quiet scene');
+    })();
+
     const uploadExtraImagesTask = (async () => {
       if (preUploadedExtraUrls.length > 0) return preUploadedExtraUrls;
       const urls: string[] = [];
@@ -719,14 +801,16 @@ export async function POST(req: NextRequest) {
       vidResult,
       endImgResult,
       ttsResult,
-      extraImageUrls
+      extraImageUrls,
+      ambientPrompt
     ] = await Promise.all([
       promptTask,
       uploadImageTask,
       uploadVideoTask,
       uploadEndImageTask,
       generateTTSTask,
-      uploadExtraImagesTask
+      uploadExtraImagesTask,
+      ambientPromptTask
     ]);
 
     let imageUrl = imgResult?.imageUrl || '';
@@ -949,7 +1033,8 @@ export async function POST(req: NextRequest) {
           prompt: combinedPrompt,
           aspect_ratio: aspectRatio === '9:16' ? '9:16' : '16:9',
           duration: '8s',
-          generate_audio: false,
+          // Only when nothing is spoken: otherwise the app's own dub and lip-sync own the track
+          generate_audio: ambientAudioEnabled && isNoSpeech,
         };
         if (videoMode !== 'text_to_video' && imageUrl) {
           requestBody.image_url = imageUrl;
@@ -994,7 +1079,7 @@ export async function POST(req: NextRequest) {
           duration: selectedDuration <= 5 ? 5 : 10,
         };
         if (modelEndpoint.includes('kling-video/v2.6/pro')) {
-          requestBody.generate_audio = klingAudioEnabled;
+          requestBody.generate_audio = (klingAudioEnabled || ambientAudioEnabled) && isNoSpeech;
         }
         if (videoMode === 'image_to_video') {
           requestBody.image_url = imageUrl;
@@ -1102,6 +1187,8 @@ export async function POST(req: NextRequest) {
             model_endpoint: modelEndpoint,
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
+            ambient_pending: needsAmbientPass,
+            ambient_prompt: ambientPrompt,
             visual_style: visualStyle,
             model_name: modelType === 'veo3'
               ? 'veo-3-fast'
