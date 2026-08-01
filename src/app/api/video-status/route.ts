@@ -11,6 +11,21 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 export const dynamic = 'force-dynamic';
 
+const LIPSYNC_ENDPOINT = 'fal-ai/sync-lipsync/v3';
+
+/**
+ * Fal's queue lives on the application id, never on the sub-path a job was submitted to:
+ * submitting `fal-ai/flux/schnell` means polling `fal-ai/flux/requests/{id}/status`, and
+ * hitting the sub-path answers 405 — which this route used to report as "still waiting",
+ * so the job appeared to hang forever. An application id is always the first two segments
+ * (`owner/app`); everything after it is a variant. Verified against kling-video, flux,
+ * bytedance, veo3, sora-2, image-editing, sync-lipsync and xai/grok-imagine-video.
+ */
+function baseAppId(endpoint: string): string {
+  const parts = (endpoint || '').split('/').filter(Boolean);
+  return parts.length <= 2 ? parts.join('/') : parts.slice(0, 2).join('/');
+}
+
 async function uploadToFirebaseStorage(
   buffer: Buffer,
   path: string,
@@ -92,26 +107,7 @@ export async function POST(req: NextRequest) {
           );
     }
 
-    // Reconstruct queueNamespace: Fal's queue status/result endpoints live on the base
-    // application id, NOT the full submit path. e.g. submitting to `fal-ai/flux/schnell`
-    // means status is `fal-ai/flux/requests/{id}/status` — hitting the sub-path returns 405.
-    // Collapse multi-endpoint apps (kling-video, flux) to their base app id.
-    let queueNamespace = modelEndpoint;
-    if (modelEndpoint.startsWith('fal-ai/kling-video')) {
-      queueNamespace = 'fal-ai/kling-video';
-    } else if (modelEndpoint.startsWith('fal-ai/flux-pro')) {
-      queueNamespace = 'fal-ai/flux-pro'; // Kontext — check before the flux prefix below
-    } else if (modelEndpoint.startsWith('fal-ai/flux')) {
-      queueNamespace = 'fal-ai/flux';
-    } else if (modelEndpoint.startsWith('fal-ai/bytedance')) {
-      queueNamespace = 'fal-ai/bytedance'; // Seedance status/result live on the base app id
-    } else if (modelEndpoint.startsWith('fal-ai/veo3')) {
-      queueNamespace = 'fal-ai/veo3'; // Veo 3 status/result on the base app id
-    } else if (modelEndpoint.startsWith('fal-ai/sora-2')) {
-      queueNamespace = 'fal-ai/sora-2'; // Sora 2 status/result on the base app id
-    } else if (modelEndpoint.startsWith('fal-ai/image-editing')) {
-      queueNamespace = 'fal-ai/image-editing'; // color-correction etc. live on the base app id
-    }
+    const queueNamespace = baseAppId(modelEndpoint);
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
     const isLipsyncPhase = !!lipsyncRequestId;
@@ -123,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     if (isLipsyncPhase) {
       // 1. Fetch official queue status endpoint for Lipsync (always on Fal.ai)
-      const checkResponse = await fetch(`https://queue.fal.run/fal-ai/sync-lipsync/v3/requests/${lipsyncRequestId}/status`, {
+      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}/status`, {
         headers: {
           'Authorization': `Key ${falKey}`,
           'Accept': 'application/json'
@@ -138,6 +134,14 @@ export async function POST(req: NextRequest) {
             status: 'ERROR', 
             error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
           }, { status: checkResponse.status });
+        }
+        // A wrong queue address never becomes right by waiting: report it instead of
+        // spinning forever, which is how the namespace bugs used to present.
+        if (checkResponse.status === 404 || checkResponse.status === 405) {
+          return NextResponse.json({
+            status: 'ERROR',
+            error: `ที่อยู่สำหรับตรวจสถานะซิงก์ปากไม่ถูกต้อง (${checkResponse.status})`
+          }, { status: 500 });
         }
         return NextResponse.json({ status: 'WAITING' });
       }
@@ -186,12 +190,20 @@ export async function POST(req: NextRequest) {
       });
 
       if (!checkResponse.ok) {
-        console.error(`[KRUTH Status Fail] status: ${checkResponse.status}`);
+        console.error(`[KRUTH Status Fail] ${checkUrl} → ${checkResponse.status}`);
         if (checkResponse.status === 401 || checkResponse.status === 403) {
           return NextResponse.json({ 
             status: 'ERROR', 
             error: 'สิทธิ์การใช้งาน Fal.ai (FAL_KEY) ไม่ถูกต้อง หรือหมดอายุ' 
           }, { status: checkResponse.status });
+        }
+        // A wrong queue address never becomes right by waiting: report it instead of
+        // spinning forever, which is how the namespace bugs used to present.
+        if (checkResponse.status === 404 || checkResponse.status === 405) {
+          return NextResponse.json({
+            status: 'ERROR',
+            error: `ที่อยู่สำหรับตรวจสถานะของโมเดลนี้ไม่ถูกต้อง (${checkResponse.status}) — ${queueNamespace}`
+          }, { status: 500 });
         }
         return NextResponse.json({ status: 'WAITING' });
       }
@@ -207,7 +219,7 @@ export async function POST(req: NextRequest) {
         tempUrl = statusData.results?.videos?.[0]?.url;
       } else {
         const detailUrl = statusData.response_url || (isLipsyncPhase
-          ? `https://queue.fal.run/fal-ai/sync-lipsync/v3/requests/${lipsyncRequestId}`
+          ? `https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}`
           : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
 
         const detailResponse = await fetch(detailUrl, {
@@ -242,7 +254,7 @@ export async function POST(req: NextRequest) {
       if (!isLipsyncPhase && !isNoSpeech && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
-          const syncResponse = await fetch('https://queue.fal.run/fal-ai/sync-lipsync/v3', {
+          const syncResponse = await fetch(`https://queue.fal.run/${LIPSYNC_ENDPOINT}`, {
             method: 'POST',
             headers: {
               'Authorization': `Key ${falKey}`,

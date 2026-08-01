@@ -429,6 +429,7 @@ export async function POST(req: NextRequest) {
     const characterDescription = formData.get('character_description') as string || '';
     const characterNegativePrompt = formData.get('character_negative_prompt') as string || '';
     const characterImageUrl = formData.get('character_image_url') as string || '';
+    const directImageUrl = formData.get('image_url') as string || '';
     const speedFactor = parseFloat(formData.get('speed_factor') as string || '1.0');
     const characterEmotion = formData.get('character_emotion') as string || '';
 
@@ -568,7 +569,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       if (videoMode === 'image_to_video') {
-        if ((!imageFile && !characterImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
+        if ((!imageFile && !characterImageUrl && !directImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
           return NextResponse.json(
             { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
             { status: 400 }
@@ -612,6 +613,10 @@ export async function POST(req: NextRequest) {
         if (useLoraModel) {
           // LoRA model generation depends on GPT-enhanced prompt, so we must defer it
           return null;
+        } else if (directImageUrl) {
+          // Already in storage — the browser uploaded it to keep the request small
+          console.log('[STEP 1] Using pre-uploaded reference image:', directImageUrl);
+          imageUrl = directImageUrl;
         } else if (imageFile) {
           console.log('[STEP 1] Uploading reference image to Supabase...');
           const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
@@ -639,9 +644,19 @@ export async function POST(req: NextRequest) {
       return { videoUrl, refVideoPath };
     })();
 
-    // Extra reference images (for multi-image "Elements" montage; up to 3 more beyond the primary = 4 total)
+    // Extra reference images (for multi-image "Elements" montage; up to 3 more beyond the primary = 4 total).
+    // Several photos easily exceed the platform's request body limit, so the browser may upload them
+    // to storage itself and pass URLs instead; files remain supported for small payloads.
     const extraImageFiles = formData.getAll('extra_images').filter((f): f is File => f instanceof File && f.size > 0).slice(0, 3);
+    let preUploadedExtraUrls: string[] = [];
+    try {
+      const raw = formData.get('extra_image_urls') as string || '';
+      if (raw) preUploadedExtraUrls = (JSON.parse(raw) as string[]).filter(Boolean).slice(0, 3);
+    } catch (err) {
+      console.warn('[Elements] could not read extra_image_urls:', err);
+    }
     const uploadExtraImagesTask = (async () => {
+      if (preUploadedExtraUrls.length > 0) return preUploadedExtraUrls;
       const urls: string[] = [];
       for (let i = 0; i < extraImageFiles.length; i++) {
         const f = extraImageFiles[i];

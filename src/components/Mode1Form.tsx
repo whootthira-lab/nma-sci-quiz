@@ -550,9 +550,41 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         }
       }
 
-      // Kling Elements: extra reference images (montage from up to 4 images)
+      // Kling Elements sends up to four photos, which together blow past the platform's
+      // request body limit (413). Upload them straight to storage from here and hand the
+      // API URLs instead, so the request itself stays tiny.
       if (modelType === 'elements') {
-        extraImages.slice(0, 3).forEach((f) => formData.append('extra_images', f));
+        const uploadForMontage = async (file: File, label: string): Promise<string | null> => {
+          if (!supabase) return null;
+          const ext = file.name.split('.').pop() || 'png';
+          const p = `references/${user?.email || 'unknown'}/${Date.now()}_${label}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from('kruth-ai-assets')
+            .upload(p, file, { upsert: true, contentType: file.type });
+          if (upErr) throw new Error(`อัปโหลดรูป ${label} ไม่สำเร็จ: ${upErr.message}`);
+          const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(p);
+          return publicUrl;
+        };
+
+        setProcessingStage('กำลังอัปโหลดภาพอ้างอิง...');
+        const extras = extraImages.slice(0, 3);
+        const extraUrls: string[] = [];
+        for (let i = 0; i < extras.length; i++) {
+          const url = await uploadForMontage(extras[i], `montage_extra${i + 1}`);
+          if (url) extraUrls.push(url);
+        }
+        if (extraUrls.length > 0) {
+          formData.set('extra_image_urls', JSON.stringify(extraUrls));
+        }
+
+        // The primary image travels the same way, so no photo rides in the request body
+        if (imageFile) {
+          const primaryUrl = await uploadForMontage(imageFile, 'montage_main');
+          if (primaryUrl) {
+            formData.delete('image');
+            formData.set('image_url', primaryUrl);
+          }
+        }
       }
 
       if (modelType === 'motion-control') {
