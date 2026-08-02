@@ -192,7 +192,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const cost = 20; // 2.0 credits scaled by 10 = 20 credits
+    // Measured against the provider's balance rather than guessed: a Schnell draft costs
+    // a fraction of a cent while an upscale runs tens of times that, so charging one flat
+    // price meant the cheap modes subsidised the expensive ones. Credits are stored x10.
+    const creditsForMode = (): number => {
+      if (imageMode === 'upscale') return 60;                    // heaviest by a wide margin
+      if (imageMode === 'camera' || imageMode === 'kontext') return 40;  // Gemini / Kontext editing
+      if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 30;
+      if (modelType === 'flux_schnell' && !characterId) return 10;       // fast draft
+      return 20;                                                  // Flux dev and the mask flows
+    };
+    const cost = creditsForMode();
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 
     if (!isSuperAdmin && userCredits < cost) {
