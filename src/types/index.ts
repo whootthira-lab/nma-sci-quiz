@@ -66,6 +66,33 @@ export const THAI_VOICES: ThaiVoice[] = [
   { id: 'FunAudioLLM/CosyVoice2-0.5B:david', name: 'Cosy-David', label: 'คอซี่-เดวิด (ชาย) — ⚠️ สำเนียงต่างชาติ (ไม่รองรับไทยเต็มรูปแบบ)', gender: 'male', sample_url: '/samples/cosy-david.mp3', provider: 'cosyvoice', accent: 'foreign' },
 ];
 
+// ─── Character Emotions ─────────────────────────────
+// One vocabulary shared by LoRA training and generation. They used to differ — training
+// captioned an expression "joyful expression" while generation asked for "Friendly &
+// Smiling", so the trained expressions were never actually triggered.
+
+export interface CharacterEmotion {
+  id: string;
+  label: string;   // shown to the user
+  tags: string;    // written into training captions and generation prompts
+}
+
+export const CHARACTER_EMOTIONS: CharacterEmotion[] = [
+  { id: 'happy', label: '😊 ยิ้มแย้ม เป็นกันเอง', tags: 'smiling cheerfully, friendly warm expression, joyful' },
+  { id: 'serious', label: '💼 สุขุม จริงจัง มืออาชีพ', tags: 'serious professional expression, calm and composed, confident' },
+  { id: 'excited', label: '⚡ กระตือรือร้น ตื่นเต้น', tags: 'energetic excited expression, bright eyes, enthusiastic' },
+  { id: 'gentle', label: '🤝 อ่อนโยน เห็นอกเห็นใจ', tags: 'gentle empathetic expression, soft caring look' },
+  { id: 'worried', label: '😨 กังวล กลัว', tags: 'worried fearful expression, furrowed brows, anxious look' },
+  { id: 'sad', label: '😢 เศร้า หมองหม่น', tags: 'sad face, gloomy downcast expression, sorrowful' },
+  { id: 'angry', label: '😠 โกรธ ไม่พอใจ', tags: 'angry expression, frowning face, annoyed look' },
+  { id: 'shocked', label: '😲 ตกใจ ประหลาดใจ', tags: 'shocked face, mouth open in disbelief, wide surprised eyes' },
+];
+
+export const emotionTagsById = (id: string, customTag?: string): string => {
+  if (id === 'custom') return customTag || 'expressive face';
+  return CHARACTER_EMOTIONS.find((e) => e.id === id)?.tags || 'expressive face';
+};
+
 // ─── Aspect Ratio Options ───────────────────────────
 
 export interface AspectOption {

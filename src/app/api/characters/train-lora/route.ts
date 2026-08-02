@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import JSZip from 'jszip';
+import { emotionTagsById } from '@/types';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -225,22 +226,9 @@ export async function POST(req: NextRequest) {
     );
 
     // Concurrently analyze expression images using Vision API and map categories
-    const mapCategoryToTags = (category: string, customTag?: string) => {
-      switch (category) {
-        case 'shocked':
-          return 'overreacting shocked face, mouth wide open in disbelief, eyes popped out';
-        case 'happy':
-          return 'smiling cheerfully, laughing happily, joyful expression';
-        case 'sad':
-          return 'sad face, crying expression, tears on cheeks';
-        case 'angry':
-          return 'angry expression, frowning face, annoyed look';
-        case 'custom':
-          return customTag || 'expressive face';
-        default:
-          return 'expressive face';
-      }
-    };
+    // Same vocabulary the generator uses, so an expression trained here is reachable later
+    const mapCategoryToTags = (category: string, customTag?: string) =>
+      emotionTagsById(category, customTag);
 
     console.log(`[LoRA Train] Analyzing ${expressionImages.length} expression images...`);
     const expressionResults = await Promise.all(

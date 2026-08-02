@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import Navbar from '@/components/Navbar';
+import { CHARACTER_EMOTIONS } from '@/types';
 import { Loader2, Plus, Users, Trash2, ShieldAlert, Sparkles, Upload, X, Brain } from 'lucide-react';
 import { getCharacters, createCharacter, deleteCharacter, uploadToStorage } from '@/lib/supabase-db';
 import JSZip from 'jszip';
@@ -56,11 +57,11 @@ export default function CharactersPage() {
   const [loraTriggerWord, setLoraTriggerWord] = useState('');
   const [loraSteps, setLoraSteps] = useState(1000);
   const [loraFiles, setLoraFiles] = useState<{ file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]>([]);
-  const [expressionFiles, setExpressionFiles] = useState<{ file: File; preview: string; category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom'; customTag?: string }[]>([]);
+  const [expressionFiles, setExpressionFiles] = useState<{ file: File; preview: string; category: string; customTag?: string }[]>([]);
   const [submittingLora, setSubmittingLora] = useState<string | null>(null);
   const loraInputRef = useRef<HTMLInputElement>(null);
   const expressionInputRef = useRef<HTMLInputElement>(null);
-  const [activeExpressionCategory, setActiveExpressionCategory] = useState<'shocked' | 'happy' | 'sad' | 'angry' | 'custom' | null>(null);
+  const [activeExpressionCategory, setActiveExpressionCategory] = useState<string | null>(null);
   const [expressionCustomTagInput, setExpressionCustomTagInput] = useState('');
 
   const fetchCharactersList = async () => {
@@ -248,12 +249,12 @@ export default function CharactersPage() {
 
   const handleExpressionFilesChange = (
     e: React.ChangeEvent<HTMLInputElement>,
-    category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom',
+    category: string,
     customTag?: string
   ) => {
     const files = e.target.files;
     if (!files) return;
-    const newFiles: { file: File; preview: string; category: 'shocked' | 'happy' | 'sad' | 'angry' | 'custom'; customTag?: string }[] = [];
+    const newFiles: { file: File; preview: string; category: string; customTag?: string }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (file.type.startsWith('image/')) {
@@ -1146,11 +1147,10 @@ export default function CharactersPage() {
 
                         {/* Emotion grid selectors */}
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                          {/* Same emotions the generator offers, so an expression trained
+                              here can actually be asked for later. */}
                           {[
-                            { id: 'shocked', label: '😮 ตกใจ / ช็อค', desc: 'Overreact' },
-                            { id: 'happy', label: '😊 ยิ้มแย้ม / หัวเราะ', desc: 'Happy' },
-                            { id: 'sad', label: '😢 ร้องไห้ / เศร้า', desc: 'Sad' },
-                            { id: 'angry', label: '😡 โกรธ / จริงจัง', desc: 'Angry' },
+                            ...CHARACTER_EMOTIONS.map((em) => ({ id: em.id, label: em.label, desc: em.id })),
                             { id: 'custom', label: '🎭 แท็กอื่น ๆ (ระบุเอง)', desc: 'Custom' }
                           ].map(cat => (
                             <button

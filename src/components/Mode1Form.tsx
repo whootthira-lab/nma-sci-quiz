@@ -19,7 +19,7 @@ import {
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
-import { ASPECT_RATIOS, THAI_VOICES } from '@/types';
+import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage } from '@/lib/image-utils';
 import { getCharacters, supabase } from '@/lib/supabase-db';
@@ -964,12 +964,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
               >
                 <option value="">⚪ ไม่ระบุอารมณ์ (ตามปกติ)</option>
-                <option value="Friendly & Smiling">😊 Friendly & Smiling (ยิ้มแย้ม เป็นกันเอง)</option>
-                <option value="Professional & Serious">💼 Professional & Serious (สุขุม จริงจัง มืออาชีพ)</option>
-                <option value="Energetic & Excited">⚡ Energetic & Excited (กระตือรือร้น ตื่นเต้น มีพลัง)</option>
-                <option value="Empathetic & Gentle">🤝 Empathetic & Gentle (อ่อนโยน เห็นอกเห็นใจ)</option>
-                <option value="Fearful & Worried">😨 Fearful & Worried (กังวล กลัว)</option>
-                <option value="Sad & Gloomy">😢 Sad & Gloomy (เศร้า หมองหม่น)</option>
+                {/* Same list the character trainer captions with, so a trained expression
+                    is reachable from here instead of being described a different way. */}
+                {CHARACTER_EMOTIONS.map((em) => (
+                  <option key={em.id} value={em.tags}>{em.label}</option>
+                ))}
                 <option value="custom">✍️ กำหนดเอง (พิมพ์อารมณ์เอง)</option>
               </select>
 

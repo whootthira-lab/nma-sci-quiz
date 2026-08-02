@@ -20,7 +20,7 @@ import {
   Download,
   RefreshCw
 } from 'lucide-react';
-import { THAI_VOICES, ASPECT_RATIOS } from '@/types';
+import { THAI_VOICES, ASPECT_RATIOS, CHARACTER_EMOTIONS, emotionTagsById } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { getCharacters, supabase } from '@/lib/supabase-db';
 import DialogueCanvasWorkspace, { type FaceTag } from './DialogueCanvasWorkspace';
@@ -1031,7 +1031,8 @@ export default function DialogueTabForm() {
       
       const finalEmotion = card.emotion === 'custom' ? card.customEmotionText : card.emotion;
       if (finalEmotion && finalEmotion !== 'normal') {
-        formData.append('character_emotion', finalEmotion);
+        // Send the wording the character was trained with, not the internal id
+        formData.append('character_emotion', emotionTagsById(card.emotion, card.customEmotionText));
       }
 
       formData.append('visual_style', 'cinematic');
@@ -2039,10 +2040,9 @@ export default function DialogueTabForm() {
                               className="w-full px-3 py-2 border border-gray-200 text-sm rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai bg-white"
                             >
                               <option value="normal">ปกติ (Neutral)</option>
-                              <option value="shocked">😮 ตกใจสุดขีด (Shocked)</option>
-                              <option value="happy">😊 ยิ้มแย้มสดใส (Happy)</option>
-                              <option value="sad">😢 ร้องไห้เสียใจ (Sad)</option>
-                              <option value="angry">😡 โกรธเคือง (Angry)</option>
+                              {CHARACTER_EMOTIONS.map((em) => (
+                                <option key={em.id} value={em.id}>{em.label}</option>
+                              ))}
                               <option value="custom">🎭 กำหนดเอง (Custom Tag)</option>
                             </select>
 
