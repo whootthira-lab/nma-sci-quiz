@@ -152,6 +152,16 @@ export async function POST(req: NextRequest) {
     // Rotating a viewpoint still drifts a likeness a little; putting the original face
     // back afterwards closes most of that gap. Opt-in, and only where there is a face.
     const restoreFace = formData.get('restore_face') === 'true';
+    // Which editor turns the view. Measured against the provider's balance: the pricier
+    // ones are sharper but drift the face, so the cheapest capable one is the default.
+    const editModel = (formData.get('edit_model') as string) || 'flux2';
+    const EDIT_MODELS: Record<string, { endpoint: string; credits: number }> = {
+      flux2:    { endpoint: 'fal-ai/flux-2-pro/edit',     credits: 30 },   // ~$0.023
+      nano:     { endpoint: 'fal-ai/nano-banana/edit',    credits: 40 },   // ~$0.03
+      nanopro:  { endpoint: 'fal-ai/nano-banana-pro/edit', credits: 150 }, // ~$0.15
+      gptimage: { endpoint: 'fal-ai/gpt-image-1/edit-image', credits: 140 } // ~$0.14
+    };
+    const chosenEditor = EDIT_MODELS[editModel] || EDIT_MODELS.flux2;
 
     if (!prompt || !userEmail) {
       return NextResponse.json(
@@ -197,7 +207,8 @@ export async function POST(req: NextRequest) {
     // price meant the cheap modes subsidised the expensive ones. Credits are stored x10.
     const creditsForMode = (): number => {
       if (imageMode === 'upscale') return 60;                    // heaviest by a wide margin
-      if (imageMode === 'camera' || imageMode === 'kontext') return 40;  // Gemini / Kontext editing
+      if (imageMode === 'camera') return chosenEditor.credits;          // priced per editor
+      if (imageMode === 'kontext') return 40;
       if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 30;
       if (modelType === 'flux_schnell' && !characterId) return 10;       // fast draft
       return 20;                                                  // Flux dev and the mask flows
@@ -406,9 +417,7 @@ export async function POST(req: NextRequest) {
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
       modelEndpoint = 'fal-ai/flux/dev/fill';
     } else if (imageMode === 'camera') {
-      // Compared head to head on the same portrait: this one turns the view *and* keeps the
-      // face recognisable, where Kontext drifted and Seedream reframed the shot entirely.
-      modelEndpoint = 'fal-ai/nano-banana/edit';
+      modelEndpoint = chosenEditor.endpoint;
     } else if (imageMode === 'upscale') {
       modelEndpoint = 'fal-ai/clarity-upscaler';
     } else if (imageMode === 'bgreplace') {
@@ -444,8 +453,8 @@ export async function POST(req: NextRequest) {
     // Edit modes operate on the uploaded image directly (keep its native dimensions)
     if (['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       requestBody.image_url = imageUrl;
-      // Gemini-based editing takes a list of sources rather than a single url
-      if (modelEndpoint.startsWith('fal-ai/nano-banana')) {
+      // These editors take a list of sources rather than a single url
+      if (imageMode === 'camera' || modelEndpoint.startsWith('fal-ai/nano-banana')) {
         delete requestBody.image_url;
         requestBody.image_urls = [imageUrl];
         delete requestBody.enable_safety_checker;

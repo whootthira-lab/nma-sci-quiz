@@ -46,6 +46,15 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   // After turning a viewpoint, paste the original face back over the result
   const [restoreFace, setRestoreFace] = useState(false);
+  // Which editor performs the rotation. Compared on one portrait: the pricier models are
+  // sharper but drift the face, so the cheapest capable one leads.
+  const [editModel, setEditModel] = useState<'flux2' | 'nano' | 'nanopro' | 'gptimage'>('flux2');
+  const EDIT_MODEL_OPTIONS = [
+    { id: 'flux2',    label: '⚡ Flux 2 Pro — คมชัด คุ้มที่สุด', credits: 3 },
+    { id: 'nano',     label: '🍌 Nano Banana — เหมือนต้นฉบับที่สุด', credits: 4 },
+    { id: 'nanopro',  label: '🍌 Nano Banana Pro — ละเอียดสูง', credits: 15 },
+    { id: 'gptimage', label: '🧠 GPT Image — เก่งคำสั่งซับซ้อน/ตัวหนังสือ', credits: 14 },
+  ] as const;
   const [imagePreview, setImagePreview] = useState<string>('');
   
   // Canvas drawing states (Inpainting)
@@ -754,6 +763,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       formData.set('camera_angle', cameraAngle);
       formData.set('camera_zoom', cameraZoom);
       formData.set('restore_face', String(restoreFace));
+      formData.set('edit_model', editModel);
       formData.set('character_id', characterId);
       formData.set('user_email', user?.email || '');
       formData.set('user_id', user?.id || '');
@@ -1315,6 +1325,22 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               >
                 🔄 รีเซ็ตมุมกล้องปกติ
               </button>
+
+              <div className="w-full mt-2 text-left">
+                <label className="block text-[10px] font-bold text-text-muted mb-1">โมเดลที่ใช้หมุนภาพ</label>
+                <select
+                  value={editModel}
+                  onChange={(e) => setEditModel(e.target.value as typeof editModel)}
+                  className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[11px] rounded-lg px-2 py-1.5 outline-none cursor-pointer"
+                >
+                  {EDIT_MODEL_OPTIONS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label} ({m.credits} เครดิต)</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-text-muted mt-1 leading-relaxed">
+                  รุ่นแพงกว่าให้ภาพคมกว่า แต่จากที่ทดสอบมัก<b>ปรับหน้าให้สวยขึ้นจนเหมือนต้นฉบับน้อยลง</b>
+                </p>
+              </div>
 
               {Math.abs(yaw) > 100 && (
                 <p className="mt-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed">
