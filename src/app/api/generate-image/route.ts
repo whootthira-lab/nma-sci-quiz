@@ -316,6 +316,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The model fetches this URL itself, so a link the browser could write but the world
+    // cannot read fails far away from the cause. Check it here, and re-upload with our own
+    // credentials when the file we were handed is still in the request.
+    if (imageUrl) {
+      const reachable = await fetch(imageUrl, { method: 'HEAD' })
+        .then((r) => r.ok)
+        .catch(() => false);
+      if (!reachable) {
+        console.warn('[IMAGE GEN API] Source image URL is not reachable:', imageUrl);
+        if (imageFile && imageFile.size > 0) {
+          const ext = imageFile.name.split('.').pop() || 'png';
+          const retryPath = `images/${userEmail}/${timestamp}_src_retry.${ext}`;
+          const buffer = Buffer.from(await imageFile.arrayBuffer());
+          const { error: retryErr } = await supabase.storage
+            .from('kruth-ai-assets')
+            .upload(retryPath, buffer, { contentType: imageFile.type, upsert: true });
+          if (retryErr) {
+            return NextResponse.json(
+              { success: false, error: `เก็บรูปต้นฉบับไม่สำเร็จ: ${retryErr.message}` },
+              { status: 500 }
+            );
+          }
+          const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(retryPath);
+          imageUrl = publicUrl;
+          imagePath = retryPath;
+        } else {
+          return NextResponse.json(
+            { success: false, error: 'ระบบเข้าถึงรูปต้นฉบับไม่ได้ กรุณาอัปโหลดรูปใหม่อีกครั้ง' },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     // Every mode that edits an existing picture needs one; without this check the request
     // reaches the model with an empty image_url and fails there for an unrelated-looking reason.
     if (['image_to_image', 'inpainting', 'outpainting'].includes(imageMode) && !imageUrl) {
