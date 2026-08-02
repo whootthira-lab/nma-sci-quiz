@@ -148,7 +148,10 @@ export async function POST(req: NextRequest) {
     const strength = parseFloat(formData.get('strength') as string || '0.65');
     const aspectRatio = formData.get('aspect_ratio') as string || '1:1';
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
-    const skipEnhance = formData.get('skip_enhance') === 'true'; // power users who write their own prompt → skip the LLM enhancer (saves tokens)
+    const skipEnhance = formData.get('skip_enhance') === 'true';
+    // Rotating a viewpoint still drifts a likeness a little; putting the original face
+    // back afterwards closes most of that gap. Opt-in, and only where there is a face.
+    const restoreFace = formData.get('restore_face') === 'true';
 
     if (!prompt || !userEmail) {
       return NextResponse.json(
@@ -304,7 +307,7 @@ export async function POST(req: NextRequest) {
         // tell it to hold the subject steady while doing it.
         // Naming what must NOT change matters more than naming the new angle: without it
         // the model quietly restyles the face and body while turning the view.
-        combinedPrompt = imageMode === 'kontext'
+        combinedPrompt = (imageMode === 'camera' || imageMode === 'kontext')
           ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Change only the camera viewpoint to ${cameraAngle}. Keep the exact same person, identical facial features, identical body shape and proportions, identical hairstyle, identical clothing and identical background. Do not restyle, beautify or reshape anything.`
           : `${combinedPrompt}, ${cameraAngle}`;
       }
@@ -315,7 +318,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
     let enhancedPrompt = combinedPrompt;
-    if (skipEnhance || imageMode === 'kontext' || imageMode === 'relight' || imageMode === 'colorgrade') {
+    if (skipEnhance || ['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       console.log('[IMAGE GEN API] Skipping enhancer (opt-out or edit-mode instruction) → using original prompt');
     } else {
       console.log('[IMAGE GEN API] Enhancing prompt (Gemini Flash → OpenAI fallback)...');
@@ -372,7 +375,7 @@ export async function POST(req: NextRequest) {
 
     // Every mode that edits an existing picture needs one; without this check the request
     // reaches the model with an empty image_url and fails there for an unrelated-looking reason.
-    if (['image_to_image', 'inpainting', 'outpainting'].includes(imageMode) && !imageUrl) {
+    if (['image_to_image', 'inpainting', 'outpainting', 'camera', 'upscale', 'bgreplace'].includes(imageMode) && !imageUrl) {
       return NextResponse.json(
         { success: false, error: 'โหมดนี้ต้องมีรูปต้นฉบับ แต่ระบบไม่ได้รับรูป กรุณาอัปโหลดรูปใหม่อีกครั้ง' },
         { status: 400 }
@@ -392,11 +395,16 @@ export async function POST(req: NextRequest) {
       modelEndpoint = 'fal-ai/flux/dev/image-to-image';
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
       modelEndpoint = 'fal-ai/flux/dev/fill';
-    } else if (imageMode === 'kontext') {
+    } else if (imageMode === 'camera') {
       // Turning a viewpoint asks far more of the model than a local edit, and the stronger
       // variant holds a face together through it — verified side by side.
-      const rotatingCamera = !!cameraAngle && cameraAngle !== 'default' && cameraAngle !== 'none';
-      modelEndpoint = rotatingCamera ? 'fal-ai/flux-pro/kontext/max' : 'fal-ai/flux-pro/kontext';
+      modelEndpoint = 'fal-ai/flux-pro/kontext/max';
+    } else if (imageMode === 'upscale') {
+      modelEndpoint = 'fal-ai/clarity-upscaler';
+    } else if (imageMode === 'bgreplace') {
+      modelEndpoint = 'fal-ai/bria/background/replace';
+    } else if (imageMode === 'kontext') {
+      modelEndpoint = 'fal-ai/flux-pro/kontext';
     } else if (imageMode === 'relight') {
       modelEndpoint = 'fal-ai/iclight-v2'; // relighting from a lighting-description prompt
     } else if (imageMode === 'colorgrade') {
@@ -415,8 +423,7 @@ export async function POST(req: NextRequest) {
     // Add aspect ratio or custom sizing for non-fill endpoints.
     // Fal flux expects image_size as an object { width, height } (or one of its enum strings) —
     // sending a "1024x1024" string fails validation with HTTP 422.
-    if (imageMode !== 'inpainting' && imageMode !== 'outpainting' && imageMode !== 'kontext'
-        && imageMode !== 'relight' && imageMode !== 'colorgrade') {
+    if (!['inpainting', 'outpainting', 'kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       requestBody.image_size = aspectRatio === '16:9'
         ? { width: 1280, height: 720 }
         : (aspectRatio === '9:16'
@@ -425,8 +432,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Edit modes operate on the uploaded image directly (keep its native dimensions)
-    if (imageMode === 'kontext' || imageMode === 'relight' || imageMode === 'colorgrade') {
+    if (['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       requestBody.image_url = imageUrl;
+      // The upscaler takes no prompt and safety flags it does not know about
+      if (imageMode === 'upscale') {
+        delete requestBody.prompt;
+        delete requestBody.enable_safety_checker;
+        delete requestBody.sync_mode;
+      }
     }
 
     // Attach reference image for I2I
@@ -513,6 +526,8 @@ export async function POST(req: NextRequest) {
             model_endpoint: modelEndpoint,
             aspect_ratio: aspectRatio,
             storage_path: outputImagePath,
+            face_restore_pending: restoreFace && imageMode === 'camera' && !!imageUrl,
+            face_restore_source: imageUrl || null,
             image_path: imagePath || null,
             mask_path: maskPath || null,
             storage_provider: storageProvider

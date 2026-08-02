@@ -28,7 +28,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const { user, whitelistData } = useAuth();
   
   // Tab states
-  const [imageMode, setImageMode] = useState<'text_to_image' | 'image_to_image' | 'inpainting' | 'outpainting' | 'kontext' | 'relight' | 'colorgrade'>('text_to_image');
+  const [imageMode, setImageMode] = useState<'text_to_image' | 'image_to_image' | 'kontext' | 'camera' | 'relight' | 'colorgrade' | 'bgreplace' | 'upscale' | 'inpainting' | 'outpainting'>('text_to_image');
   
   // Parameters states
   const [prompt, setPrompt] = useState('');
@@ -44,6 +44,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
   // File Upload states
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  // After turning a viewpoint, paste the original face back over the result
+  const [restoreFace, setRestoreFace] = useState(true);
   const [imagePreview, setImagePreview] = useState<string>('');
   
   // Canvas drawing states (Inpainting)
@@ -745,6 +747,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       formData.set('visual_style', visualStyle);
       formData.set('camera_angle', cameraAngle);
       formData.set('camera_zoom', cameraZoom);
+      formData.set('restore_face', String(restoreFace));
       formData.set('character_id', characterId);
       formData.set('user_email', user?.email || '');
       formData.set('user_id', user?.id || '');
@@ -1093,7 +1096,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
       {/* Mode Sub-Tabs */}
       <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#1A1A1D] rounded-xl border border-white/5 mb-6">
-        {(['text_to_image', 'image_to_image', 'kontext', 'relight', 'colorgrade', 'inpainting', 'outpainting'] as const).map((mode) => (
+        {(['text_to_image', 'image_to_image', 'kontext', 'camera', 'relight', 'colorgrade', 'bgreplace', 'upscale', 'inpainting', 'outpainting'] as const).map((mode) => (
           <button
             key={mode}
             type="button"
@@ -1107,6 +1110,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
             {mode === 'text_to_image' && '📝 วาดจากข้อความ'}
             {mode === 'image_to_image' && '🖼️ แปลงจากรูปภาพ'}
             {mode === 'kontext' && '✨ แก้ภาพตามคำสั่ง'}
+            {mode === 'camera' && '🎥 หมุนมุมกล้อง'}
+            {mode === 'bgreplace' && '🖼️ เปลี่ยนพื้นหลัง'}
+            {mode === 'upscale' && '🔍 เพิ่มความคมชัด'}
             {mode === 'relight' && '💡 ปรับแสง'}
             {mode === 'colorgrade' && '🎨 เกลี่ยสี'}
             {mode === 'inpainting' && '🖌️ แก้เฉพาะจุด'}
@@ -1281,7 +1287,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
             </div>
           )}
 
-          {/* Orbit Camera Joypad & Zoom sliders */}
+          {/* Orbit controls belong to the mode that can actually turn a viewpoint */}
+          {imageMode === 'camera' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-[#1C1C1E] border border-white/10">
             <div className="flex flex-col items-center justify-center space-y-3">
               <label className="text-xs font-semibold text-text-secondary uppercase text-center w-full">
@@ -1303,22 +1310,19 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 🔄 รีเซ็ตมุมกล้องปกติ
               </button>
 
-              {/* A low change strength keeps the original framing, so the camera setting
-                  has nothing to act on — say so instead of letting it look broken. */}
-              {imageMode === 'image_to_image' && (yaw !== 0 || pitch !== 0) && (
-                <div className="mt-2 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed space-y-1.5">
-                  <p>
-                    ⚠️ โหมด “แปลงจากรูปภาพ” วาดภาพใหม่ทับโครงเดิม จึงเปลี่ยนหน้าตาได้แต่<b>หมุนมุมกล้องไม่ได้</b>
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => handleModeChange('kontext')}
-                    className="font-bold text-amber-200 underline hover:text-white"
-                  >
-                    ✨ สลับไปโหมด “แก้ภาพตามคำสั่ง” เพื่อหมุนมุมกล้องจริง
-                  </button>
-                </div>
-              )}
+              <label className="mt-2 flex items-start gap-2 cursor-pointer text-left">
+                <input
+                  type="checkbox"
+                  checked={restoreFace}
+                  onChange={(e) => setRestoreFace(e.target.checked)}
+                  className="mt-0.5 accent-[#D4AF37]"
+                />
+                <span className="text-[10px] text-text-muted leading-relaxed">
+                  <b className="text-text-secondary">คืนใบหน้าต้นฉบับหลังหมุน</b> — ทับใบหน้าเดิมกลับลงบนภาพที่หมุนแล้ว
+                  ทำให้หน้าเหมือนต้นฉบับมากขึ้น (ใช้เวลาเพิ่มเล็กน้อย)
+                </span>
+              </label>
+
             </div>
 
             <div className="space-y-4 flex flex-col justify-center">
@@ -1349,6 +1353,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               </div>
             </div>
           </div>
+          )}
 
           {/* Errors and Progress */}
           {errorMsg && (

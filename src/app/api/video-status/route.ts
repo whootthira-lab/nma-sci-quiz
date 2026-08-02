@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic';
 
 const LIPSYNC_ENDPOINT = 'fal-ai/sync-lipsync/v3';
 const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2';
+const FACE_RESTORE_ENDPOINT = 'fal-ai/face-swap';
 
 /**
  * Fal's queue lives on the application id, never on the sub-path a job was submitted to:
@@ -118,13 +119,27 @@ export async function POST(req: NextRequest) {
     const isLipsyncPhase = !!lipsyncRequestId;
     const ambientRequestId = genRow?.metadata?.ambient_request_id;
     const isAmbientPhase = !isLipsyncPhase && !!ambientRequestId;
+    const faceRestoreRequestId = genRow?.metadata?.face_restore_request_id;
+    const isFaceRestorePhase = !isLipsyncPhase && !isAmbientPhase && !!faceRestoreRequestId;
 
     const apiProvider = genRow?.metadata?.api_provider || 'fal';
 
     let statusData: any = null;
     let currentStatus = '';
 
-    if (isAmbientPhase) {
+    if (isFaceRestorePhase) {
+      // Putting the original face back runs as its own queued job, like the other passes
+      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(FACE_RESTORE_ENDPOINT)}/requests/${faceRestoreRequestId}/status`, {
+        headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      if (!checkResponse.ok) {
+        console.error(`[Face Restore Status Fail] status: ${checkResponse.status}`);
+        return NextResponse.json({ status: 'WAITING' });
+      }
+      statusData = await checkResponse.json();
+      currentStatus = statusData.status;
+    } else if (isAmbientPhase) {
       // Scoring a silent clip runs as its own queued job, exactly like lip-sync
       const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}/status`, {
         headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
@@ -243,7 +258,9 @@ export async function POST(req: NextRequest) {
       if (apiProvider === 'siliconflow' && !isLipsyncPhase) {
         tempUrl = statusData.results?.videos?.[0]?.url;
       } else {
-        const detailUrl = statusData.response_url || (isAmbientPhase
+        const detailUrl = statusData.response_url || (isFaceRestorePhase
+          ? `https://queue.fal.run/${baseAppId(FACE_RESTORE_ENDPOINT)}/requests/${faceRestoreRequestId}`
+          : isAmbientPhase
           ? `https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}`
           : isLipsyncPhase
           ? `https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}`
@@ -313,6 +330,50 @@ export async function POST(req: NextRequest) {
 
       const audioUrl = genRow?.audio_prompt;
       const isNoSpeech = genRow?.metadata?.is_no_speech === true;
+
+      // Turning a viewpoint drifts a likeness even with the strongest model, so put the
+      // original face back over the result — as its own queued job, like the passes below.
+      const faceRestorePending = genRow?.metadata?.face_restore_pending === true;
+      const faceSource = genRow?.metadata?.face_restore_source;
+      if (!isFaceRestorePhase && faceRestorePending && faceSource && tempUrl) {
+        console.log('[Face Restore] Putting the original face back over the rotated result');
+        try {
+          const fsRes = await fetch(`https://queue.fal.run/${FACE_RESTORE_ENDPOINT}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({ base_image_url: tempUrl, swap_image_url: faceSource })
+          });
+          if (!fsRes.ok) throw new Error(`face restore submit failed: ${fsRes.status}`);
+          const fsJson = await fsRes.json();
+          if (!fsJson.request_id) throw new Error('face restore job returned no request id');
+
+          await supabase
+            .from('generations')
+            .update({
+              metadata: {
+                ...(genRow?.metadata || {}),
+                face_restore_request_id: fsJson.request_id,
+                face_restore_pending: false,
+                pre_restore_url: tempUrl
+              },
+              updated_at: new Date().toISOString()
+            })
+            .eq('fal_request_id', requestId);
+
+          return NextResponse.json({
+            status: 'IN_QUEUE',
+            progressMessage: 'กำลังคืนใบหน้าต้นฉบับ...',
+            progressPercent: 90
+          });
+        } catch (fsErr: any) {
+          // The rotated image is still a usable result; keep it rather than failing
+          console.error('[Face Restore] skipped:', fsErr?.message || fsErr);
+        }
+      }
 
       // A silent clip from an engine that can't score itself gets a soundtrack now, as its
       // own queued job — the previous attempt at this ran inline and timed out, so it never
