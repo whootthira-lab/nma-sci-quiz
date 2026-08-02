@@ -931,6 +931,16 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         }
       };
 
+      // Only the mask-based flows above build their own composite. Every other mode that
+      // edits an existing picture still needs the source attached — without this the
+      // request arrives with no image at all while the preview shows one on screen.
+      if (imageMode !== 'text_to_image' && !formData.get('image') && !formData.get('image_url')) {
+        if (!uploadedImage) {
+          throw new Error('โหมดนี้ต้องมีรูปต้นฉบับ กรุณาอัปโหลดรูปก่อนสร้าง');
+        }
+        formData.set('image', uploadedImage);
+      }
+
       setProgressMessage('กำลังอัปโหลดรูปภาพ...');
       await moveFileToStorage('image');
       await moveFileToStorage('mask');
