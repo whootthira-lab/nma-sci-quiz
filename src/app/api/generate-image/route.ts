@@ -396,9 +396,9 @@ export async function POST(req: NextRequest) {
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
       modelEndpoint = 'fal-ai/flux/dev/fill';
     } else if (imageMode === 'camera') {
-      // Turning a viewpoint asks far more of the model than a local edit, and the stronger
-      // variant holds a face together through it — verified side by side.
-      modelEndpoint = 'fal-ai/flux-pro/kontext/max';
+      // Compared head to head on the same portrait: this one turns the view *and* keeps the
+      // face recognisable, where Kontext drifted and Seedream reframed the shot entirely.
+      modelEndpoint = 'fal-ai/nano-banana/edit';
     } else if (imageMode === 'upscale') {
       modelEndpoint = 'fal-ai/clarity-upscaler';
     } else if (imageMode === 'bgreplace') {
@@ -434,6 +434,13 @@ export async function POST(req: NextRequest) {
     // Edit modes operate on the uploaded image directly (keep its native dimensions)
     if (['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       requestBody.image_url = imageUrl;
+      // Gemini-based editing takes a list of sources rather than a single url
+      if (modelEndpoint.startsWith('fal-ai/nano-banana')) {
+        delete requestBody.image_url;
+        requestBody.image_urls = [imageUrl];
+        delete requestBody.enable_safety_checker;
+        delete requestBody.sync_mode;
+      }
       // The upscaler takes no prompt and safety flags it does not know about
       if (imageMode === 'upscale') {
         delete requestBody.prompt;
