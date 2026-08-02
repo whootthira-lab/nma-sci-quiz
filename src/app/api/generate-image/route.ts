@@ -302,8 +302,10 @@ export async function POST(req: NextRequest) {
         // Kontext follows instructions rather than descriptions, and it is the only mode
         // that genuinely moves the viewpoint — phrase the angle as something to do, and
         // tell it to hold the subject steady while doing it.
+        // Naming what must NOT change matters more than naming the new angle: without it
+        // the model quietly restyles the face and body while turning the view.
         combinedPrompt = imageMode === 'kontext'
-          ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Rotate the camera to ${cameraAngle}, keeping the same subject, clothing, lighting and background`
+          ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Change only the camera viewpoint to ${cameraAngle}. Keep the exact same person, identical facial features, identical body shape and proportions, identical hairstyle, identical clothing and identical background. Do not restyle, beautify or reshape anything.`
           : `${combinedPrompt}, ${cameraAngle}`;
       }
     }
@@ -391,7 +393,10 @@ export async function POST(req: NextRequest) {
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
       modelEndpoint = 'fal-ai/flux/dev/fill';
     } else if (imageMode === 'kontext') {
-      modelEndpoint = 'fal-ai/flux-pro/kontext'; // reference/instruction image editing
+      // Turning a viewpoint asks far more of the model than a local edit, and the stronger
+      // variant holds a face together through it — verified side by side.
+      const rotatingCamera = !!cameraAngle && cameraAngle !== 'default' && cameraAngle !== 'none';
+      modelEndpoint = rotatingCamera ? 'fal-ai/flux-pro/kontext/max' : 'fal-ai/flux-pro/kontext';
     } else if (imageMode === 'relight') {
       modelEndpoint = 'fal-ai/iclight-v2'; // relighting from a lighting-description prompt
     } else if (imageMode === 'colorgrade') {
