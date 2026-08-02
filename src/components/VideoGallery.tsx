@@ -28,6 +28,15 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
     }
   };
 
+  // The output URL is authoritative; mode is the fallback for older rows.
+  const isImageResult = (gen: any) => {
+    const url = (gen.video_url || '').split('?')[0].toLowerCase();
+    if (/\.(png|jpe?g|webp|gif)$/.test(url)) return true;
+    if (/\.(mp4|webm|mov|m4v)$/.test(url)) return false;
+    const mode = gen.mode || '';
+    return mode.startsWith('image-') || mode === 'text_to_image';
+  };
+
   const modeLabel = (mode: string) => {
     if (!mode) return 'วิดีโอ';
     if (mode.startsWith('image-') || mode === 'text_to_image') return 'รูปภาพ';
@@ -55,7 +64,7 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
   }, [user?.email, refreshTrigger]);
 
   const handleDelete = async (id: string, storagePath: string) => {
-    if (!confirm('ต้องการลบวิดีโอนี้หรือไม่?')) return;
+    if (!confirm('ต้องการลบรายการนี้หรือไม่?')) return;
     setDeleting(id);
     try {
       await deleteGeneration(id, storagePath);
@@ -106,7 +115,7 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <Loader2 className="w-8 h-8 text-accent-primary animate-spin" />
-        <p className="text-sm text-text-muted mt-4">กำลังโหลดคลังวิดีโอ...</p>
+        <p className="text-sm text-text-muted mt-4">กำลังโหลดคลังผลงาน...</p>
       </div>
     );
   }
@@ -117,7 +126,7 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
         <div className="w-16 h-16 rounded-2xl bg-surface-2 flex items-center justify-center mb-4">
           <Film className="w-8 h-8 text-text-muted" />
         </div>
-        <h3 className="text-lg font-medium text-text-primary font-thai">ยังไม่มีวิดีโอ</h3>
+        <h3 className="text-lg font-medium text-text-primary font-thai">ยังไม่มีผลงาน</h3>
         <p className="text-sm text-text-muted mt-1 font-thai">
           เริ่มสร้างวิดีโอ AI แรกของคุณได้เลย!
         </p>
@@ -131,9 +140,9 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h3 className="text-sm font-medium text-text-secondary font-thai">
-            ทั้งหมด {generations.length} วิดีโอ
+            ทั้งหมด {generations.length} รายการ
           </h3>
-          <p className="text-xs text-text-muted mt-0.5">วิดีโอจะถูกลบอัตโนมัติภายใน 24 ชม.</p>
+          <p className="text-xs text-text-muted mt-0.5">ผลงานจะถูกลบอัตโนมัติภายใน 24 ชม.</p>
         </div>
         <button onClick={loadGenerations} className="btn-ghost flex items-center gap-2 text-sm">
           <RefreshCw className="w-3.5 h-3.5" />
@@ -145,15 +154,27 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {generations.map((gen) => (
           <div key={gen.id} className="glow-card overflow-hidden">
-            {/* Video Player */}
+            {/* Result: an image generation stores its output in the same field, so pick
+                the element that matches instead of always mounting a video player. */}
             {gen.status === 'completed' && gen.video_url ? (
               <div className="relative aspect-video bg-black rounded-t-2xl overflow-hidden">
-                <video
-                  src={gen.video_url}
-                  controls
-                  preload="metadata"
-                  className="w-full h-full object-contain"
-                />
+                {isImageResult(gen) ? (
+                  <a href={gen.video_url} target="_blank" rel="noreferrer" className="block w-full h-full">
+                    <img
+                      src={gen.video_url}
+                      alt={gen.prompt || 'ผลลัพธ์รูปภาพ'}
+                      loading="lazy"
+                      className="w-full h-full object-contain"
+                    />
+                  </a>
+                ) : (
+                  <video
+                    src={gen.video_url}
+                    controls
+                    preload="metadata"
+                    className="w-full h-full object-contain"
+                  />
+                )}
               </div>
             ) : gen.status === 'processing' ? (
               <div className="aspect-video bg-surface-2 rounded-t-2xl flex items-center justify-center">
@@ -227,7 +248,11 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
               <div className="flex items-center gap-2 pt-1">
                 {gen.status === 'completed' && gen.video_url && (
                   <button
-                    onClick={() => handleDownload(gen.video_url, `video-${gen.id}.mp4`)}
+                    onClick={() => {
+                      const ext = (gen.video_url.split('?')[0].match(/\.([a-z0-9]+)$/i) || [])[1]
+                        || (isImageResult(gen) ? 'png' : 'mp4');
+                      handleDownload(gen.video_url, `${isImageResult(gen) ? 'image' : 'video'}-${gen.id}.${ext}`);
+                    }}
                     className="btn-ghost flex items-center gap-1.5 text-xs flex-1 justify-center"
                   >
                     <Download className="w-3.5 h-3.5" />
