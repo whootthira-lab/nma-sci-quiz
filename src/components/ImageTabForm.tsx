@@ -979,10 +979,20 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
           if (!statusRes.ok) {
             failCount++;
-            console.warn(`Status check failed (${failCount}/5)`);
+            // Say what actually went wrong: a bare "connection failed" gave no way to tell a
+            // timeout from a bad request, and the same reason repeats on every retry.
+            let reason = `HTTP ${statusRes.status}`;
+            try {
+              const body = await statusRes.text();
+              const parsed = body.trim().startsWith('{') ? JSON.parse(body) : null;
+              reason = parsed?.error ? `${parsed.error} (HTTP ${statusRes.status})` : `${reason} ${body.slice(0, 90)}`;
+            } catch {
+              /* keep the status code */
+            }
+            console.warn(`[Image status] attempt ${failCount}/5 failed: ${reason}`);
             if (failCount >= 5) {
               clearInterval(intervalId);
-              setErrorMsg('การเชื่อมต่อกับเซิร์ฟเวอร์ตรวจสถานะล้มเหลวติดต่อกัน กรุณาลองใหม่อีกครั้ง');
+              setErrorMsg(`ตรวจสถานะไม่สำเร็จติดต่อกัน — ${reason}`);
               setLoading(false);
             }
             return;

@@ -9,6 +9,10 @@ import os from 'os';
 // Configure ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
+// Completing a job means pulling the finished file and storing it, which is far more
+// than the default execution window allows — without this the request is cut off at 10s
+// and, because every poll retries the same work, it fails on every attempt.
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const LIPSYNC_ENDPOINT = 'fal-ai/sync-lipsync/v3';
