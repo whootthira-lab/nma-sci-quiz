@@ -228,12 +228,17 @@ export async function POST(req: NextRequest) {
           contentType: imageFile.type,
           upsert: true
         });
-      if (!uploadErr) {
-        const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(imagePath);
-        imageUrl = publicUrl;
-      } else {
+      if (uploadErr) {
+        // Carrying on would hand the model an empty image_url, which comes back as the
+        // baffling "Failed to download the file" instead of the real storage problem.
         console.error('[IMAGE GEN API] Image upload failed:', uploadErr);
+        return NextResponse.json(
+          { success: false, error: `เก็บรูปต้นฉบับไม่สำเร็จ: ${uploadErr.message}` },
+          { status: 500 }
+        );
       }
+      const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(imagePath);
+      imageUrl = publicUrl;
     }
 
     // 2. Upload mask image to Supabase if present
@@ -307,6 +312,15 @@ export async function POST(req: NextRequest) {
     if (imageMode === 'kontext' && !imageUrl) {
       return NextResponse.json(
         { success: false, error: 'โหมดแก้ภาพ (Kontext) ต้องอัปโหลดรูปต้นฉบับก่อน' },
+        { status: 400 }
+      );
+    }
+
+    // Every mode that edits an existing picture needs one; without this check the request
+    // reaches the model with an empty image_url and fails there for an unrelated-looking reason.
+    if (['image_to_image', 'inpainting', 'outpainting'].includes(imageMode) && !imageUrl) {
+      return NextResponse.json(
+        { success: false, error: 'โหมดนี้ต้องมีรูปต้นฉบับ แต่ระบบไม่ได้รับรูป กรุณาอัปโหลดรูปใหม่อีกครั้ง' },
         { status: 400 }
       );
     }
