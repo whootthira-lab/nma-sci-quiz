@@ -293,6 +293,17 @@ export async function POST(req: NextRequest) {
       combinedPrompt = `a photo of ${loraTriggerWord}, ${prompt}`;
     }
 
+    // The camera angle only ever reached the model through the enhancer, so skipping it
+    // (or using a mode that always skips it) silently dropped the setting. Fold it into
+    // the prompt directly in that case.
+    if (cameraAngle && cameraAngle !== 'default' && cameraAngle !== 'none') {
+      const alreadyMentions = combinedPrompt.toLowerCase().includes(cameraAngle.toLowerCase().slice(0, 20));
+      if (!alreadyMentions) combinedPrompt = `${combinedPrompt}, ${cameraAngle}`;
+    }
+    if (cameraZoom && cameraZoom !== 'default' && cameraZoom !== 'none') {
+      combinedPrompt = `${combinedPrompt}, ${cameraZoom}`;
+    }
+
     // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
     let enhancedPrompt = combinedPrompt;
     if (skipEnhance || imageMode === 'kontext' || imageMode === 'relight' || imageMode === 'colorgrade') {
