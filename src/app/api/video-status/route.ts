@@ -260,6 +260,43 @@ export async function POST(req: NextRequest) {
         if (!detailResponse.ok) {
           const errorText = await detailResponse.text();
           console.error(`[Fal.ai Queue Detail Error] Status: ${detailResponse.status}, Response:`, errorText);
+
+          // A 422 here is the model rejecting the job's parameters. Retrying can't fix that,
+          // and the payload says exactly which field is wrong — report it and stop rather
+          // than letting the caller exhaust its retries against a permanent failure.
+          if (detailResponse.status === 422) {
+            let why = errorText.slice(0, 300);
+            try {
+              const parsed = JSON.parse(errorText);
+              const detail = parsed?.detail;
+              if (Array.isArray(detail)) {
+                why = detail
+                  .map((d: any) => `${(d.loc || []).filter((p: any) => p !== 'body').join('.')}: ${d.msg}`)
+                  .join(' | ')
+                  .slice(0, 300);
+              } else if (typeof detail === 'string') {
+                why = detail.slice(0, 300);
+              }
+            } catch {
+              /* keep the raw text */
+            }
+
+            await supabase
+              .from('generations')
+              .update({
+                status: 'failed',
+                error_message: `Fal rejected the request: ${why}`,
+                updated_at: new Date().toISOString()
+              })
+              .eq('fal_request_id', requestId);
+
+            return NextResponse.json({
+              status: 'FAILED',
+              error: `ระบบ AI ปฏิเสธคำสั่งนี้ — ${why}`,
+              progressMessage: '❌ ล้มเหลว'
+            });
+          }
+
           throw new Error(`ไม่สามารถดึงผลลัพธ์จาก Fal.ai ได้ (status: ${detailResponse.status})`);
         }
 
