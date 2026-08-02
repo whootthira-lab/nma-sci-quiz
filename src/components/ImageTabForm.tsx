@@ -1298,11 +1298,19 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
               {/* A low change strength keeps the original framing, so the camera setting
                   has nothing to act on — say so instead of letting it look broken. */}
-              {imageMode === 'image_to_image' && (yaw !== 0 || pitch !== 0) && strength < 0.45 && (
-                <p className="mt-2 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed">
-                  ⚠️ ความแรงในการเปลี่ยนรูปต่ำ ({strength.toFixed(2)}) ภาพจะยึดต้นแบบไว้เกือบทั้งหมด มุมกล้องจึงแทบไม่เปลี่ยน —
-                  ลองเพิ่มเป็น <b>0.6–0.8</b> เพื่อให้หมุนมุมกล้องได้จริง
-                </p>
+              {imageMode === 'image_to_image' && (yaw !== 0 || pitch !== 0) && (
+                <div className="mt-2 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed space-y-1.5">
+                  <p>
+                    ⚠️ โหมด “แปลงจากรูปภาพ” วาดภาพใหม่ทับโครงเดิม จึงเปลี่ยนหน้าตาได้แต่<b>หมุนมุมกล้องไม่ได้</b>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('kontext')}
+                    className="font-bold text-amber-200 underline hover:text-white"
+                  >
+                    ✨ สลับไปโหมด “แก้ภาพตามคำสั่ง” เพื่อหมุนมุมกล้องจริง
+                  </button>
+                </div>
               )}
             </div>
 

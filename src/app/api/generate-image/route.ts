@@ -298,7 +298,14 @@ export async function POST(req: NextRequest) {
     // the prompt directly in that case.
     if (cameraAngle && cameraAngle !== 'default' && cameraAngle !== 'none') {
       const alreadyMentions = combinedPrompt.toLowerCase().includes(cameraAngle.toLowerCase().slice(0, 20));
-      if (!alreadyMentions) combinedPrompt = `${combinedPrompt}, ${cameraAngle}`;
+      if (!alreadyMentions) {
+        // Kontext follows instructions rather than descriptions, and it is the only mode
+        // that genuinely moves the viewpoint — phrase the angle as something to do, and
+        // tell it to hold the subject steady while doing it.
+        combinedPrompt = imageMode === 'kontext'
+          ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Rotate the camera to ${cameraAngle}, keeping the same subject, clothing, lighting and background`
+          : `${combinedPrompt}, ${cameraAngle}`;
+      }
     }
     if (cameraZoom && cameraZoom !== 'default' && cameraZoom !== 'none') {
       combinedPrompt = `${combinedPrompt}, ${cameraZoom}`;
