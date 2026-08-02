@@ -45,7 +45,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   // File Upload states
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   // After turning a viewpoint, paste the original face back over the result
-  const [restoreFace, setRestoreFace] = useState(true);
+  const [restoreFace, setRestoreFace] = useState(false);
   const [imagePreview, setImagePreview] = useState<string>('');
   
   // Canvas drawing states (Inpainting)
@@ -515,15 +515,21 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     let angleLabel = 'default';
     const absYaw = Math.abs(yaw);
     
+    // Wording beats numbers here: asking for "25 degrees" turns the subject only slightly
+    // and "70 degrees" barely turns it at all, while a named framing lands reliably. So the
+    // dial maps to finer named steps instead of four wide buckets.
+    const side = yaw > 0 ? 'right' : 'left';
     let yawLabel = 'front view';
-    if (absYaw > 22.5 && absYaw <= 67.5) {
-      yawLabel = yaw > 0 ? 'three-quarter view from the right side' : 'three-quarter view from the left side';
-    } else if (absYaw > 67.5 && absYaw <= 112.5) {
-      yawLabel = yaw > 0 ? 'side profile view shot from the right side' : 'side profile view shot from the left side';
-    } else if (absYaw > 112.5 && absYaw <= 157.5) {
-      yawLabel = yaw > 0 ? 'three-quarter view from behind on the right' : 'three-quarter view from behind on the left';
-    } else if (absYaw > 157.5) {
-      yawLabel = 'back view, shot from behind the subject';
+    if (absYaw > 10 && absYaw <= 30) {
+      yawLabel = `front view turned slightly toward the ${side}`;
+    } else if (absYaw > 30 && absYaw <= 60) {
+      yawLabel = `three-quarter view from the ${side} side`;
+    } else if (absYaw > 60 && absYaw <= 100) {
+      yawLabel = `near-profile view from the ${side} side`;
+    } else if (absYaw > 100 && absYaw <= 140) {
+      yawLabel = `full side profile view from the ${side}`;
+    } else if (absYaw > 140) {
+      yawLabel = `rear three-quarter view from the ${side}, seen mostly from behind`;
     }
 
     let pitchLabel = 'eye-level shot';
@@ -1310,6 +1316,13 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 🔄 รีเซ็ตมุมกล้องปกติ
               </button>
 
+              {Math.abs(yaw) > 100 && (
+                <p className="mt-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed">
+                  ⚠️ มุมกว้างเกินราว 100° โมเดลมักหมุนให้ไม่ครบ เพราะไม่เห็นด้านหลังของตัวแบบ —
+                  ช่วง <b>20°–90°</b> ให้ผลตรงที่สุด
+                </p>
+              )}
+
               <label className="mt-2 flex items-start gap-2 cursor-pointer text-left">
                 <input
                   type="checkbox"
@@ -1318,8 +1331,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                   className="mt-0.5 accent-[#D4AF37]"
                 />
                 <span className="text-[10px] text-text-muted leading-relaxed">
-                  <b className="text-text-secondary">คืนใบหน้าต้นฉบับหลังหมุน</b> — ทับใบหน้าเดิมกลับลงบนภาพที่หมุนแล้ว
-                  ทำให้หน้าเหมือนต้นฉบับมากขึ้น (ใช้เวลาเพิ่มเล็กน้อย)
+                  <b className="text-text-secondary">คืนใบหน้าต้นฉบับหลังหมุน</b> — ทับใบหน้าเดิมลงบนภาพที่หมุนแล้ว
+                  หน้าจะเหมือนต้นฉบับมากขึ้น แต่บางครั้งดูแข็งหรือไม่กลืนกับแสงในภาพ
+                  ถ้าอยากได้ภาพที่ดูเป็นธรรมชาติกว่า ให้ปิดตัวเลือกนี้
                 </span>
               </label>
 
