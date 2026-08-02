@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { downscaleImage, readJsonOrExplain } from '@/lib/image-utils';
 import { supabase } from '@/lib/supabase-db';
 import {
   Image as ImageIcon,
@@ -156,9 +157,12 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   };
 
   // Handle image upload
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (picked) {
+      // Shrink before anything else so the preview, the canvases and the upload
+      // all work from a size the server will accept
+      const file = await downscaleImage(picked);
       setUploadedImage(file);
       const url = URL.createObjectURL(file);
       setImagePreview(url);
@@ -193,7 +197,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         body: formData
       });
 
-      const resJson = await response.json();
+      const resJson = await readJsonOrExplain(response);
       if (!response.ok || !resJson.success) {
         throw new Error(resJson.error || 'ลบพื้นหลังล้มเหลว');
       }
@@ -931,7 +935,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         body: formData
       });
 
-      const resJson = await response.json();
+      const resJson = await readJsonOrExplain(response);
       if (!response.ok || !resJson.success) {
         throw new Error(resJson.error || 'เกิดข้อผิดพลาดในการสั่งงานไปยังระบบคลาวด์');
       }

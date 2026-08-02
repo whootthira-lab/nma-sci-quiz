@@ -21,6 +21,7 @@ import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
 import { ASPECT_RATIOS, THAI_VOICES } from '@/types';
 import { useAuth } from '@/lib/auth-context';
+import { downscaleImage } from '@/lib/image-utils';
 import { getCharacters, supabase } from '@/lib/supabase-db';
 
 interface Character {
@@ -301,17 +302,19 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const maxChars = 300;
   const estimatedDuration = Math.max(3, Math.ceil(charCount / 15));
 
-  const handleImageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
+  const handleImageChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+    if (!picked.type.startsWith('image/')) {
       setError('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setError('ขนาดไฟล์ต้องไม่เกิน 10MB');
+    if (picked.size > 30 * 1024 * 1024) {
+      setError('ขนาดไฟล์ต้องไม่เกิน 30MB');
       return;
     }
+    // Photos are shrunk here: the upload limit is well below a phone camera's output
+    const file = await downscaleImage(picked);
     setError(null);
 
     // Bypass cropper for motion-control
