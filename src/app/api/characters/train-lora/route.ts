@@ -110,6 +110,8 @@ export async function POST(req: NextRequest) {
     const steps = parseInt(formData.get('steps') as string || '1000', 10);
     const imageFiles = formData.getAll('images') as File[];
     const angles = formData.getAll('angles') as string[];
+    const imageEmotions = formData.getAll('image_emotions') as string[];
+    const imageEmotionCustoms = formData.getAll('image_emotion_customs') as string[];
     const expressionImages = formData.getAll('expression_images') as File[];
     const expressionCategories = formData.getAll('expression_categories') as string[];
     const expressionCustomTags = formData.getAll('expression_custom_tags') as string[];
@@ -259,7 +261,11 @@ export async function POST(req: NextRequest) {
       zip.file(`${baseName}.${ext}`, buffer);
       
       // Save caption file (.txt)
-      const caption = `a photo of ${triggerWord}, ${analysis.angle}, ${analysis.description}`;
+      // Tagging the expression on the same photo keeps caption and picture in agreement;
+      // a separate close-up set would tie the expression to a framing instead.
+      const emo = imageEmotions[i];
+      const emoTags = emo ? emotionTagsById(emo, imageEmotionCustoms[i]) : '';
+      const caption = `a photo of ${triggerWord}, ${analysis.angle}${emoTags ? ', ' + emoTags : ''}, ${analysis.description}`;
       zip.file(`${baseName}.txt`, caption);
     }
 

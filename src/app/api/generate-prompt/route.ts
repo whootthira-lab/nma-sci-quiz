@@ -29,6 +29,15 @@ Keep it concise, descriptive, and return ONLY the enhanced English prompt withou
 Your task is to take the user motion instruction (which might be in Thai or English) and expand it into a detailed, professional English video motion prompt (max 80 words).
 Describe camera movements (e.g., panning, zooming, sliding), character actions, natural dynamics (e.g. hair blowing, wind blowing), and lighting changes.
 Keep it concise, and return ONLY the enhanced English prompt without any prefix, quotes, explanations, or markdown.`;
+    } else if (type === 'character_visual') {
+      systemPrompt = `You write the permanent visual signature of a character for an image model.
+From the user's notes and any attached photo, describe only what stays the same in every picture: age range, build and proportions, face shape, eyes, nose, lips, skin tone, hair colour/length/style, and any lasting marks or accessories.
+Never mention pose, expression, camera angle, lighting, background or clothing that could change between shots.
+Write one English paragraph under 80 words. Return only the description.`;
+    } else if (type === 'character_negative') {
+      systemPrompt = `You write a negative prompt for a character in an image model — the flaws to avoid.
+From the user's notes and any attached photo, list the artefacts worth suppressing for this particular subject, always covering anatomy (extra or missing fingers, malformed hands, distorted face, asymmetric eyes) and adding anything the notes imply.
+Write a single comma-separated English list, under 40 words, no sentences. Return only the list.`;
     } else if (type === 'ambient') {
       systemPrompt = `You are a professional Sound Designer and Sound Effects prompt engineer.
 Your task is to analyze the user description and/or the context of the uploaded image to generate a detailed, effective English text prompt for generating background ambient sound effects (max 50 words).

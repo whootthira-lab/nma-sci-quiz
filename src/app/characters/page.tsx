@@ -48,7 +48,7 @@ export default function CharactersPage() {
   const [negativePrompt, setNegativePrompt] = useState('');
   
   const [isDragging, setIsDragging] = useState(false);
-  const [bulkUploadedFiles, setBulkUploadedFiles] = useState<{ file: File; preview: string; mappedSlot: 'front' | '45' | 'side' | 'none' }[]>([]);
+  const [bulkUploadedFiles, setBulkUploadedFiles] = useState<{ file: File; preview: string; mappedSlot: 'front' | '45' | 'side' | 'none'; emotion?: string; emotionCustom?: string }[]>([]);
 
   const bulkInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,7 +56,7 @@ export default function CharactersPage() {
   const [activeLoraCharId, setActiveLoraCharId] = useState<string | null>(null);
   const [loraTriggerWord, setLoraTriggerWord] = useState('');
   const [loraSteps, setLoraSteps] = useState(1000);
-  const [loraFiles, setLoraFiles] = useState<{ file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]>([]);
+  const [loraFiles, setLoraFiles] = useState<{ file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side'; emotion?: string; emotionCustom?: string }[]>([]);
   const [expressionFiles, setExpressionFiles] = useState<{ file: File; preview: string; category: string; customTag?: string }[]>([]);
   const [submittingLora, setSubmittingLora] = useState<string | null>(null);
   const loraInputRef = useRef<HTMLInputElement>(null);
@@ -139,6 +139,44 @@ export default function CharactersPage() {
     }));
   };
 
+  const [writingField, setWritingField] = useState<'visual' | 'negative' | null>(null);
+
+  /** Ask the AI to draft one of the character fields, using the notes already typed and,
+   *  when one has been attached, the first reference photo as context. */
+  const draftCharacterField = async (field: 'visual' | 'negative') => {
+    setWritingField(field);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('type', field === 'visual' ? 'character_visual' : 'character_negative');
+      fd.append('prompt', [name, visualDesc, field === 'negative' ? negativePrompt : ''].filter(Boolean).join('\n'));
+      const firstPhoto = bulkUploadedFiles[0]?.file;
+      if (firstPhoto) fd.append('image', firstPhoto);
+
+      const res = await fetch('/api/generate-prompt', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!data.success || !data.prompt) throw new Error(data.error || 'ให้ AI ช่วยเขียนไม่สำเร็จ');
+      if (field === 'visual') setVisualDesc(data.prompt);
+      else setNegativePrompt(data.prompt);
+    } catch (err: any) {
+      setError(err.message || 'ให้ AI ช่วยเขียนไม่สำเร็จ');
+    } finally {
+      setWritingField(null);
+    }
+  };
+
+  const setImageEmotion = (file: File, emotion: string) => {
+    setBulkUploadedFiles(prev =>
+      prev.map(item => (item.file === file ? { ...item, emotion } : item))
+    );
+  };
+
+  const setImageEmotionCustom = (file: File, emotionCustom: string) => {
+    setBulkUploadedFiles(prev =>
+      prev.map(item => (item.file === file ? { ...item, emotionCustom } : item))
+    );
+  };
+
   const processImageFiles = (files: File[]) => {
     const newItems = files.map(file => {
       const preview = URL.createObjectURL(file);
@@ -152,7 +190,7 @@ export default function CharactersPage() {
       } else if (lowerName.includes('side') || lowerName.includes('ข้าง') || lowerName.includes('3.')) {
         mappedSlot = 'side';
       }
-      return { file, preview, mappedSlot };
+      return { file, preview, mappedSlot, emotion: '', emotionCustom: '' };
     });
 
     setBulkUploadedFiles(prev => [...prev, ...newItems]);
@@ -384,7 +422,7 @@ export default function CharactersPage() {
     charId: string, 
     triggerWord: string, 
     steps: number, 
-    files: { file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side' }[]
+    files: { file: File; preview: string; angle: 'auto' | 'front' | '45' | 'side'; emotion?: string; emotionCustom?: string }[]
   ) => {
     if (!triggerWord.trim()) {
       alert('กรุณากรอก Trigger Word สำหรับโมเดลตัวละคร');
@@ -411,6 +449,9 @@ export default function CharactersPage() {
     files.forEach(item => {
       formData.append('images', item.file);
       formData.append('angles', item.angle);
+      // Expression of this same photo, so the caption describes what is actually in it
+      formData.append('image_emotions', item.emotion || '');
+      formData.append('image_emotion_customs', item.emotionCustom || '');
     });
 
     expressionFiles.forEach(item => {
@@ -554,9 +595,19 @@ export default function CharactersPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Visual Description */}
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-text-secondary font-thai">
-                  บรรยายลักษณะภายนอกที่คงเดิม (Visual Description) <span className="text-accent-danger">*</span>
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-text-secondary font-thai">
+                    บรรยายลักษณะภายนอกที่คงเดิม (Visual Description) <span className="text-accent-danger">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => draftCharacterField('visual')}
+                    disabled={writingField !== null}
+                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
+                  >
+                    {writingField === 'visual' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
+                  </button>
+                </div>
                 <textarea
                   required
                   value={visualDesc}
@@ -569,9 +620,19 @@ export default function CharactersPage() {
 
               {/* Negative Prompt */}
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-text-secondary font-thai">
-                  สิ่งที่ไม่ต้องการให้เกิดกับตัวละคร (Character Negative Prompt)
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-text-secondary font-thai">
+                    สิ่งที่ไม่ต้องการให้เกิดกับตัวละคร (Character Negative Prompt)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => draftCharacterField('negative')}
+                    disabled={writingField !== null}
+                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
+                  >
+                    {writingField === 'negative' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
+                  </button>
+                </div>
                 <textarea
                   value={negativePrompt}
                   onChange={e => setNegativePrompt(e.target.value)}
@@ -650,6 +711,31 @@ export default function CharactersPage() {
                           <option value="45">📐 มุม 45° (45° View)</option>
                           <option value="side">👥 มุมข้าง (Side)</option>
                         </select>
+
+                        {/* Expression of this very photo — the face is already in it, so
+                            tagging it here avoids uploading the same shot again elsewhere. */}
+                        <select
+                          value={item.emotion || ''}
+                          onChange={(e) => setImageEmotion(item.file, e.target.value)}
+                          className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[10px] rounded px-1 py-0.5 outline-none cursor-pointer text-center"
+                          title="อารมณ์/สีหน้าในรูปนี้ (ไม่บังคับ)"
+                        >
+                          <option value="">🙂 ไม่ระบุอารมณ์</option>
+                          {CHARACTER_EMOTIONS.map((em) => (
+                            <option key={em.id} value={em.id}>{em.label}</option>
+                          ))}
+                          <option value="custom">🎭 พิมพ์เอง</option>
+                        </select>
+
+                        {item.emotion === 'custom' && (
+                          <input
+                            type="text"
+                            value={item.emotionCustom || ''}
+                            onChange={(e) => setImageEmotionCustom(item.file, e.target.value)}
+                            placeholder="เช่น หัวเราะ, ขบขัน"
+                            className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[10px] rounded px-1 py-0.5 outline-none text-center"
+                          />
+                        )}
 
                         <button
                           type="button"
