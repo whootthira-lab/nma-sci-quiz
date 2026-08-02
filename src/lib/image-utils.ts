@@ -5,6 +5,9 @@
  * keeps uploads inside the limit; 2048px is already more detail than the image
  * models use.
  */
+/** Keep well under the ~4.5MB request body limit, leaving room for the other fields. */
+const SIZE_BUDGET = 3 * 1024 * 1024;
+
 export async function downscaleImage(
   file: File,
   maxDimension = 2048,
@@ -42,9 +45,35 @@ export async function downscaleImage(
     const keepPng = file.type === 'image/png' && (await hasTransparency(ctx, targetW, targetH));
     const mime = keepPng ? 'image/png' : 'image/jpeg';
 
-    const blob = await new Promise<Blob | null>((resolve) =>
+    let blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, mime, mime === 'image/jpeg' ? quality : undefined)
     );
+
+    // A 2048px PNG can still be several megabytes. Since the picture has to survive a
+    // request body limit, fall back to JPEG and then to smaller sizes until it fits.
+    if (blob && blob.size > SIZE_BUDGET) {
+      let w = targetW;
+      let h = targetH;
+      let q = quality;
+      for (let attempt = 0; attempt < 4 && blob && blob.size > SIZE_BUDGET; attempt++) {
+        q = Math.max(0.6, q - 0.1);
+        if (attempt >= 1) {
+          w = Math.max(512, Math.round(w * 0.75));
+          h = Math.max(512, Math.round(h * 0.75));
+          canvas.width = w;
+          canvas.height = h;
+          const bmp = await createImageBitmap(file);
+          ctx.drawImage(bmp, 0, 0, w, h);
+          bmp.close?.();
+        }
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', q));
+      }
+      if (blob) {
+        const base = file.name.replace(/\.[^.]+$/, '');
+        return new File([blob], `${base}.jpg`, { type: 'image/jpeg' });
+      }
+    }
+
     if (!blob || blob.size >= file.size) return file; // no gain, keep the original
 
     const base = file.name.replace(/\.[^.]+$/, '');

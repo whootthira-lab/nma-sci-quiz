@@ -910,18 +910,25 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
       // A phone photo alone can exceed the request body limit and come back as 413, so move
       // any image out of the request: upload it to storage here and send its URL instead.
+      // Storage upload rules may not grant the browser write access, so this is an
+      // optimisation, not a requirement: if it doesn't work the picture rides along in
+      // the request as before, which is safe because it has already been shrunk.
       const moveFileToStorage = async (field: 'image' | 'mask') => {
         const file = formData.get(field);
         if (!(file instanceof File) || file.size === 0 || !supabase) return;
-        const ext = file.name.split('.').pop() || 'png';
-        const storagePath = `images/${user?.email || 'unknown'}/${Date.now()}_${field}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from('kruth-ai-assets')
-          .upload(storagePath, file, { upsert: true, contentType: file.type });
-        if (upErr) throw new Error(`อัปโหลดรูปไม่สำเร็จ: ${upErr.message}`);
-        const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
-        formData.delete(field);
-        formData.set(`${field}_url`, publicUrl);
+        try {
+          const ext = file.name.split('.').pop() || 'png';
+          const storagePath = `images/${user?.email || 'unknown'}/${Date.now()}_${field}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from('kruth-ai-assets')
+            .upload(storagePath, file, { upsert: true, contentType: file.type });
+          if (upErr) throw upErr;
+          const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
+          formData.delete(field);
+          formData.set(`${field}_url`, publicUrl);
+        } catch (err: any) {
+          console.warn(`[${field}] browser upload unavailable, sending the file instead:`, err?.message || err);
+        }
       };
 
       setProgressMessage('กำลังอัปโหลดรูปภาพ...');
