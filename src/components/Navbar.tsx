@@ -21,8 +21,8 @@ export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navItems = [
-    { href: '/dashboard', label: 'สร้างวิดีโอ', icon: Film },
-    { href: '/gallery', label: 'คลังวิดีโอ', icon: LayoutGrid },
+    { href: '/dashboard', label: 'สร้างสื่อ', icon: Film },
+    { href: '/gallery', label: 'คลังผลงาน', icon: LayoutGrid },
     { href: '/characters', label: 'คลังตัวละคร', icon: Users },
     ...(isAdmin ? [{ href: '/admin', label: 'ผู้ดูแลระบบ', icon: ShieldCheck }] : []),
   ];

@@ -64,7 +64,7 @@ export default function DashboardPage() {
             }`}
           >
             <Film className="w-4 h-4" />
-            <span className="font-thai">สร้างวิดีโอ (Video Gen)</span>
+            <span className="font-thai">สร้างสื่อ (Media Gen)</span>
           </button>
           
           <button

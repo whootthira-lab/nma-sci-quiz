@@ -140,9 +140,16 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
   // Reset states when switching mode
   const handleModeChange = (mode: typeof imageMode) => {
+    // Switching between modes that all edit the same uploaded picture should keep it —
+    // discarding it made the preview go blank when moving to another editing mode.
+    const editsAnImage = (m: typeof imageMode) => m !== 'text_to_image';
+    const keepSource = editsAnImage(imageMode) && editsAnImage(mode);
+
     setImageMode(mode);
-    setUploadedImage(null);
-    setImagePreview('');
+    if (!keepSource) {
+      setUploadedImage(null);
+      setImagePreview('');
+    }
     setOffsetX(0);
     setOffsetY(0);
     setScale(1.0);
