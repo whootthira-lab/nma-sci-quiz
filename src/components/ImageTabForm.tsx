@@ -174,6 +174,25 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     setSuccessMsg('');
   };
 
+  /** Clear the attached picture so another can be chosen. The bin used to call
+   *  handleModeChange, which now deliberately keeps the source when the mode still
+   *  edits an image — so the button had stopped removing anything. */
+  const clearUploadedImage = () => {
+    if (imagePreview?.startsWith('blob:')) URL.revokeObjectURL(imagePreview);
+    setUploadedImage(null);
+    setImagePreview('');
+    setOverlayFile(null);
+    setOverlayImagePreview('');
+    setOffsetX(0);
+    setOffsetY(0);
+    setScale(1.0);
+    setErrorMsg('');
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+  };
+
   // Handle image upload
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0];
@@ -1503,8 +1522,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 /* Interactive Canvas containers */
                 <div className="space-y-3 w-full self-center flex flex-col items-center">
                   <div className={`relative border border-white/10 rounded-2xl bg-[#0F0F11] overflow-hidden flex items-center justify-center p-4 transition-all duration-300 w-full self-center ${getContainerAspectClass()}`}>
-                    {/* Mode: Standard Image to Image */}
-                    {imageMode === 'image_to_image' && (
+                    {/* Modes that edit the picture as a whole simply show it. Only the
+                        mask-based modes below need their own canvas. */}
+                    {['image_to_image', 'kontext', 'camera', 'relight', 'colorgrade', 'bgreplace', 'upscale'].includes(imageMode) && (
                       <img 
                         src={imagePreview} 
                         alt="Preview" 
@@ -1579,7 +1599,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
                     <button
                       type="button"
-                      onClick={() => handleModeChange(imageMode)}
+                      onClick={clearUploadedImage}
                       className="absolute top-3 right-3 p-2 rounded-lg bg-black/60 hover:bg-black text-text-muted hover:text-white border border-white/10 transition-colors"
                       title="ลบรูปภาพ"
                     >
