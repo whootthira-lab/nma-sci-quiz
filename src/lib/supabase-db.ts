@@ -209,21 +209,16 @@ export async function uploadToStorage(
   file: File | Blob,
   path: string
 ): Promise<string> {
-  const { data, error } = await supabase.storage
-    .from('kruth-ai-assets')
-    .upload(path, file, {
-      upsert: true,
-      contentType: file.type
-    });
+  // Storage rules refuse writes from the browser ("new row violates row-level security
+  // policy"), so the file goes through the server, which holds credentials that may write.
+  const formData = new FormData();
+  formData.append('file', file instanceof File ? file : new File([file], 'upload.png', { type: file.type }));
+  formData.append('path', path);
 
-  if (error) throw error;
-
-  // Get Public URL
-  const { data: { publicUrl } } = supabase.storage
-    .from('kruth-ai-assets')
-    .getPublicUrl(path);
-
-  return publicUrl;
+  const res = await fetch('/api/characters/upload', { method: 'POST', body: formData });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error || 'อัปโหลดรูปไม่สำเร็จ');
+  return json.url as string;
 }
 
 export async function uploadBufferToStorage(
