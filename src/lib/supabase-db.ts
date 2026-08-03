@@ -238,29 +238,17 @@ export async function uploadBufferToStorage(
 // ─── Character Helpers ──────────────────────────────
 
 export async function getCharacters(email: string) {
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('email', email)
-    .single();
-
-  if (profileError || !profile) {
-    console.warn('Profile not found for email when fetching characters:', email);
+  // Permission lives on the server: a character carries someone's face, so the caller
+  // gets their own, the ones shared with their address, and everything only if admin.
+  try {
+    const res = await fetch(`/api/characters/access?email=${encodeURIComponent(email)}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'load failed');
+    return json.characters || [];
+  } catch (err) {
+    console.error('Error fetching characters:', err);
     return [];
   }
-
-  const { data, error } = await supabase
-    .from('characters')
-    .select('*')
-    .eq('user_id', profile.id)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('Error fetching characters:', error);
-    return [];
-  }
-
-  return data;
 }
 
 export async function createCharacter(characterData: Record<string, any>) {

@@ -124,24 +124,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const loadCharacters = async () => {
     setLoadingCharacters(true);
     try {
-      // Fetch successful trained characters from database
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', user?.email)
-        .single();
-      
-      if (profile) {
-        const { data, error } = await supabase
-          .from('characters')
-          .select('*')
-          .eq('user_id', profile.id)
-          .eq('lora_status', 'succeeded')
-          .order('created_at', { ascending: false });
-        if (!error && data) {
-          setCharacters(data);
-        }
-      }
+      const res = await fetch(`/api/characters/access?email=${encodeURIComponent(user?.email || '')}&trained_only=true`);
+      const json = await res.json();
+      if (json.success) setCharacters(json.characters || []);
     } catch (e) {
       console.warn('Failed to load characters:', e);
     } finally {

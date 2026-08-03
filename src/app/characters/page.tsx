@@ -10,6 +10,10 @@ import { getCharacters, createCharacter, deleteCharacter, uploadToStorage } from
 import JSZip from 'jszip';
 
 interface Character {
+  is_owner?: boolean;
+  shared_with?: string[];
+  is_disabled?: boolean;
+  disabled_reason?: string;
   id: string;
   name: string;
   code: string;
@@ -31,7 +35,7 @@ interface Character {
 }
 
 export default function CharactersPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
 
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -140,6 +144,50 @@ export default function CharactersPage() {
   };
 
   const [writingField, setWritingField] = useState<'visual' | 'negative' | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const [shareInput, setShareInput] = useState('');
+  const [savingShare, setSavingShare] = useState(false);
+
+  /** Replace who a character is shared with. Enforced on the server too — a character
+   *  carries someone's face, so the browser is not trusted with that decision. */
+  /** Admin-only: withdraw a character from use (or restore it) without destroying it. */
+  const moderateCharacter = async (charId: string, disabled: boolean) => {
+    const reason = disabled
+      ? prompt('เหตุผลในการระงับ (จะบันทึกไว้):', 'ละเมิดลิขสิทธิ์หรือไม่ได้รับความยินยอม') || undefined
+      : undefined;
+    if (disabled && !reason) return;
+    try {
+      const res = await fetch('/api/characters/access', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: charId, user_email: user?.email || '', disabled, reason })
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'ดำเนินการไม่สำเร็จ');
+      await fetchCharactersList();
+    } catch (err: any) {
+      setError(err.message || 'ดำเนินการไม่สำเร็จ');
+    }
+  };
+
+  const saveSharing = async (charId: string, emails: string[]) => {
+    setSavingShare(true);
+    try {
+      const res = await fetch('/api/characters/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: charId, user_email: user?.email || '', shared_with: emails })
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'บันทึกการแชร์ไม่สำเร็จ');
+      await fetchCharactersList();
+      setShareInput('');
+    } catch (err: any) {
+      setError(err.message || 'บันทึกการแชร์ไม่สำเร็จ');
+    } finally {
+      setSavingShare(false);
+    }
+  };
 
   /** Ask the AI to draft one of the character fields, using the notes already typed and,
    *  when one has been attached, the first reference photo as context. */
@@ -496,7 +544,13 @@ export default function CharactersPage() {
     if (!confirm('ยืนยันลบตัวละครนี้พร้อมไฟล์รูปภาพอ้างอิงและชุดข้อมูล LoRA ทั้งหมดหรือไม่? (การกระทำนี้ไม่สามารถกู้คืนได้)')) return;
     setDeletingId(id);
     try {
-      await deleteCharacter(id);
+      const res = await fetch('/api/characters/access', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: id, user_email: user?.email || '' })
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'ลบไม่สำเร็จ');
       setCharacters(prev => prev.filter(c => c.id !== id));
     } catch (err) {
       console.error('Failed to delete character:', err);
@@ -806,6 +860,73 @@ export default function CharactersPage() {
               <div key={char.id} className="glow-card p-6 border border-white/5 rounded-2xl space-y-4 flex flex-col justify-between">
                 <div>
                   {/* Header Title */}
+                  {sharingId === char.id && (
+                    <div className="mb-3 p-3 rounded-xl bg-surface-2 border border-white/10 space-y-2 font-thai">
+                      <p className="text-[11px] font-bold text-text-secondary">
+                        👥 แชร์ตัวละครนี้ให้ใครใช้ได้บ้าง
+                      </p>
+                      <p className="text-[10px] text-amber-300 leading-relaxed">
+                        ⚠️ ตัวละครนี้คือใบหน้าของคนจริง — แชร์เมื่อได้รับความยินยอมจากเจ้าของใบหน้าแล้วเท่านั้น
+                      </p>
+
+                      {(char.shared_with?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {char.shared_with!.map((em) => (
+                            <span key={em} className="inline-flex items-center gap-1 text-[10px] bg-white/5 border border-white/10 rounded-md px-2 py-0.5">
+                              {em}
+                              <button
+                                type="button"
+                                onClick={() => saveSharing(char.id, (char.shared_with || []).filter((x) => x !== em))}
+                                disabled={savingShare}
+                                className="text-red-400 hover:text-red-300"
+                                title="เอาออก"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={shareInput}
+                          onChange={(e) => setShareInput(e.target.value)}
+                          placeholder="กรอกอีเมลผู้ที่จะให้ใช้ได้"
+                          className="flex-1 bg-surface-3 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => saveSharing(char.id, [...(char.shared_with || []), shareInput])}
+                          disabled={savingShare || !shareInput.trim()}
+                          className="px-3 py-1.5 rounded-lg bg-[#D4AF37] text-black text-[11px] font-bold disabled:opacity-40"
+                        >
+                          {savingShare ? '...' : 'เพิ่ม'}
+                        </button>
+                      </div>
+
+                      {isAdmin && !char.is_owner && (
+                        <div className="pt-2 border-t border-white/10 space-y-1.5">
+                          <p className="text-[10px] text-text-muted">เครื่องมือผู้ดูแลระบบ</p>
+                          <button
+                            type="button"
+                            onClick={() => moderateCharacter(char.id, !char.is_disabled)}
+                            className="text-[11px] font-bold text-amber-300 hover:text-amber-200 underline"
+                          >
+                            {char.is_disabled ? '↩︎ ยกเลิกการระงับ' : '⛔ ระงับการใช้งาน (กรณีละเมิดลิขสิทธิ์/ไม่ได้รับความยินยอม)'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {char.is_disabled && (
+                    <div className="mb-3 text-[10px] text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-2 py-1.5 font-thai">
+                      ⛔ ถูกระงับการใช้งาน{char.disabled_reason ? ` — ${char.disabled_reason}` : ''}
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between border-b border-white/5 pb-3">
                     <div>
                       <h3 className="text-base font-bold text-text-primary font-display flex items-center gap-1.5">
@@ -814,7 +935,25 @@ export default function CharactersPage() {
                       <span className="text-[10px] bg-accent-primary/10 text-accent-primary border border-accent-primary/20 px-2 py-0.5 rounded-md font-mono mt-1 inline-block">
                         Code: {char.code}
                       </span>
+                      {!char.is_owner && (
+                        <span className="ml-1.5 text-[10px] bg-white/5 text-text-muted border border-white/10 px-2 py-0.5 rounded-md inline-block font-thai">
+                          👥 แชร์มาให้
+                        </span>
+                      )}
+                      {char.is_owner && (char.shared_with?.length ?? 0) > 0 && (
+                        <span className="ml-1.5 text-[10px] bg-accent-primary/10 text-accent-primary border border-accent-primary/20 px-2 py-0.5 rounded-md inline-block font-thai">
+                          แชร์อยู่ {char.shared_with?.length ?? 0} คน
+                        </span>
+                      )}
                     </div>
+                    <button
+                      onClick={() => { setSharingId(sharingId === char.id ? null : char.id); setShareInput(''); }}
+                      disabled={!char.is_owner && !isAdmin}
+                      className="p-2.5 rounded-xl text-text-muted hover:text-accent-primary hover:bg-accent-primary/10 transition-all self-start"
+                      title="แชร์ให้ผู้อื่นใช้"
+                    >
+                      <Users className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => handleDeleteClick(char.id)}
                       disabled={deletingId === char.id}
