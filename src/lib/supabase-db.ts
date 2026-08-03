@@ -205,18 +205,54 @@ export async function deleteGeneration(id: string, storagePath: string) {
 
 // ─── Storage Helpers ────────────────────────────────
 
+/** A failed request often answers in plain text, and parsing that as JSON buries the reason. */
+async function readJson(res: Response, fallback: string) {
+  const body = await res.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    const hint = /entity too large|413/i.test(body) || res.status === 413
+      ? 'ไฟล์ใหญ่เกินกว่าที่เซิร์ฟเวอร์รับได้'
+      : body.slice(0, 120).trim();
+    throw new Error(`${fallback}${hint ? ` (${hint})` : ''}`);
+  }
+}
+
 export async function uploadToStorage(
   file: File | Blob,
   path: string
 ): Promise<string> {
-  // Storage rules refuse writes from the browser ("new row violates row-level security
-  // policy"), so the file goes through the server, which holds credentials that may write.
+  const asFile = file instanceof File ? file : new File([file], 'upload.png', { type: file.type });
+
+  // The browser cannot write to the bucket on its own — its rules refuse the write — so
+  // the server issues a one-shot permit for this exact filename and the photo then goes
+  // straight to storage. Sending the bytes through the server instead would cap them at
+  // ~4.5 MB, which an ordinary phone photo passes without trouble.
+  try {
+    const signRes = await fetch('/api/characters/upload', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path })
+    });
+    const signed = await readJson(signRes, 'ขอสิทธิ์อัปโหลดไม่สำเร็จ');
+    if (signed.success && signed.token) {
+      const { error } = await supabase.storage
+        .from('kruth-ai-assets')
+        .uploadToSignedUrl(path, signed.token, asFile, { contentType: asFile.type || 'image/png' });
+      if (error) throw error;
+      return signed.url as string;
+    }
+  } catch (err) {
+    console.warn('[uploadToStorage] direct upload unavailable, relaying through server:', err);
+  }
+
+  // Fallback for when no permit could be issued. Small files only, by the limit above.
   const formData = new FormData();
-  formData.append('file', file instanceof File ? file : new File([file], 'upload.png', { type: file.type }));
+  formData.append('file', asFile);
   formData.append('path', path);
 
   const res = await fetch('/api/characters/upload', { method: 'POST', body: formData });
-  const json = await res.json();
+  const json = await readJson(res, 'อัปโหลดรูปไม่สำเร็จ');
   if (!json.success) throw new Error(json.error || 'อัปโหลดรูปไม่สำเร็จ');
   return json.url as string;
 }
