@@ -645,58 +645,6 @@ export default function CharactersPage() {
               </div>
             </div>
 
-            {/* Prompt fields */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Visual Description */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="block text-sm font-medium text-text-secondary font-thai">
-                    บรรยายลักษณะภายนอกที่คงเดิม (Visual Description) <span className="text-accent-danger">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => draftCharacterField('visual')}
-                    disabled={writingField !== null}
-                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
-                  >
-                    {writingField === 'visual' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
-                  </button>
-                </div>
-                <textarea
-                  required
-                  value={visualDesc}
-                  onChange={e => setVisualDesc(e.target.value)}
-                  rows={4}
-                  placeholder="เช่น a 30-year-old Thai man, short black hair, wearing thin black glasses and a dark blue denim jacket. (แนะนำเขียนภาษาอังกฤษเพื่อความแม่นยำ)"
-                  className="w-full bg-surface-3 border border-white/5 p-3.5 rounded-xl text-sm text-text-primary placeholder-text-muted outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai resize-none"
-                />
-              </div>
-
-              {/* Negative Prompt */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="block text-sm font-medium text-text-secondary font-thai">
-                    สิ่งที่ไม่ต้องการให้เกิดกับตัวละคร (Character Negative Prompt)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => draftCharacterField('negative')}
-                    disabled={writingField !== null}
-                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
-                  >
-                    {writingField === 'negative' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
-                  </button>
-                </div>
-                <textarea
-                  value={negativePrompt}
-                  onChange={e => setNegativePrompt(e.target.value)}
-                  rows={4}
-                  placeholder="เช่น hat, cap, mustache, beard, blurry, deformed face, wrong clothes"
-                  className="w-full bg-surface-3 border border-white/5 p-3.5 rounded-xl text-sm text-text-primary placeholder-text-muted outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai resize-none"
-                />
-              </div>
-            </div>
-
             {/* Images upload section */}
             <div className="space-y-3">
               <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -814,6 +762,63 @@ export default function CharactersPage() {
                 </div>
               )}
             </div>
+            {/* Prompt fields */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Visual Description */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-text-secondary font-thai">
+                    บรรยายลักษณะภายนอกที่คงเดิม (Visual Description) <span className="text-accent-danger">*</span>
+                    {bulkUploadedFiles.length === 0 && (
+                      <span className="block text-[10px] text-text-muted font-normal mt-0.5">
+                        แนบรูปด้านบนก่อน แล้ว AI จะเขียนจากรูปจริงได้
+                      </span>
+                    )}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => draftCharacterField('visual')}
+                    disabled={writingField !== null}
+                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
+                  >
+                    {writingField === 'visual' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
+                  </button>
+                </div>
+                <textarea
+                  required
+                  value={visualDesc}
+                  onChange={e => setVisualDesc(e.target.value)}
+                  rows={4}
+                  placeholder="เช่น a 30-year-old Thai man, short black hair, wearing thin black glasses and a dark blue denim jacket. (แนะนำเขียนภาษาอังกฤษเพื่อความแม่นยำ)"
+                  className="w-full bg-surface-3 border border-white/5 p-3.5 rounded-xl text-sm text-text-primary placeholder-text-muted outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai resize-none"
+                />
+              </div>
+
+              {/* Negative Prompt */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-text-secondary font-thai">
+                    สิ่งที่ไม่ต้องการให้เกิดกับตัวละคร (Character Negative Prompt)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => draftCharacterField('negative')}
+                    disabled={writingField !== null}
+                    className="text-[11px] font-bold text-[#D4AF37] hover:text-amber-300 disabled:opacity-50 font-thai whitespace-nowrap"
+                  >
+                    {writingField === 'negative' ? '⏳ กำลังเขียน...' : '✨ ให้ AI ช่วยเขียน'}
+                  </button>
+                </div>
+                <textarea
+                  value={negativePrompt}
+                  onChange={e => setNegativePrompt(e.target.value)}
+                  rows={4}
+                  placeholder="เช่น hat, cap, mustache, beard, blurry, deformed face, wrong clothes"
+                  className="w-full bg-surface-3 border border-white/5 p-3.5 rounded-xl text-sm text-text-primary placeholder-text-muted outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai resize-none"
+                />
+              </div>
+            </div>
+
 
             {/* Form Footer Actions */}
             <div className="flex gap-3 pt-3 border-t border-white/5">
