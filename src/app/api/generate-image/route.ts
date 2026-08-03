@@ -415,7 +415,10 @@ export async function POST(req: NextRequest) {
     if (imageMode === 'image_to_image') {
       modelEndpoint = 'fal-ai/flux/dev/image-to-image';
     } else if (imageMode === 'inpainting' || imageMode === 'outpainting') {
-      modelEndpoint = 'fal-ai/flux/dev/fill';
+      // fal-ai/flux/dev/fill does not exist: the queue accepts the job and the worker
+      // then answers "Path /dev/fill not found" when the result is fetched. Verified
+      // through to a returned image that this one works.
+      modelEndpoint = 'fal-ai/flux-pro/v1/fill';
     } else if (imageMode === 'camera') {
       modelEndpoint = chosenEditor.endpoint;
     } else if (imageMode === 'upscale') {
