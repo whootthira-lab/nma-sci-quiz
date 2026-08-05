@@ -529,27 +529,47 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     const absYaw = Math.abs(yaw);
     
     // Wording beats numbers here: asking for "25 degrees" turns the subject only slightly
-    // and "70 degrees" barely turns it at all, while a named framing lands reliably. So the
-    // dial maps to finer named steps instead of four wide buckets.
-    const side = yaw > 0 ? 'right' : 'left';
-    let yawLabel = 'front view';
-    if (absYaw > 10 && absYaw <= 30) {
-      yawLabel = `front view turned slightly toward the ${side}`;
-    } else if (absYaw > 30 && absYaw <= 60) {
-      yawLabel = `three-quarter view from the ${side} side`;
-    } else if (absYaw > 60 && absYaw <= 100) {
-      yawLabel = `near-profile view from the ${side} side`;
-    } else if (absYaw > 100 && absYaw <= 140) {
-      yawLabel = `full side profile view from the ${side}`;
-    } else if (absYaw > 140) {
-      yawLabel = `rear three-quarter view from the ${side}, seen mostly from behind`;
+    // and "70 degrees" barely turns it at all, while a named framing lands reliably. Two
+    // things make a named step land on the angle the dial shows:
+    //  - the steps sit where the photographic terms actually are (45° is the three-quarter,
+    //    90° the profile, 180° the back of the head), so the dial and the result agree;
+    //  - each one says what becomes VISIBLE at that angle. A model renders what it can
+    //    picture, and "one ear and the line of the nose" is far easier to picture than
+    //    "near-profile", which it tends to round back toward a face-on shot.
+    // Which way the face ends up pointing IN THE FRAME, rather than which side the camera
+    // stands on. Both readings of "from the right side" are defensible, and the model was
+    // picking its own — measured side by side, naming the edge of the frame the nose points
+    // at flips the result every time. Orbiting the camera toward the viewer's right (the
+    // dot dragged right, yaw negative) leaves the subject facing the left edge.
+    const facing = yaw > 0 ? 'right' : 'left';
+    const cheek = yaw > 0 ? 'left' : 'right';
+    let yawLabel = 'straight-on front view, the face square to the camera';
+    if (absYaw > 12 && absYaw <= 35) {
+      yawLabel = `front view with the head turned slightly toward the ${facing} edge of the frame, both eyes still fully visible`;
+    } else if (absYaw > 35 && absYaw <= 65) {
+      yawLabel = `classic three-quarter view, the face angled toward the ${facing} edge of the frame so the camera sees the ${cheek} cheek, about three quarters of the face showing and the nose breaking the line of the far cheek`;
+    } else if (absYaw > 65 && absYaw <= 115) {
+      yawLabel = `full 90-degree side profile in which the subject faces the ${facing} edge of the frame — the nose, lips and chin point that way and the camera sees the ${cheek} ear and ${cheek} cheek, with the outline of the forehead, nose and chin drawn against the background`;
+    } else if (absYaw > 115 && absYaw <= 155) {
+      yawLabel = `rear three-quarter view, seen mostly from behind with the head turned toward the ${facing} edge of the frame: the back and ${cheek} side of the head fill the frame, only a sliver of cheek and eyelash showing past it`;
+    } else if (absYaw > 155) {
+      yawLabel = `view from directly behind the subject, the back of the head and the shoulders facing the camera, the face not visible at all`;
     }
 
-    let pitchLabel = 'eye-level shot';
-    if (pitch > 15) {
-      pitchLabel = 'low angle shot, camera looking up at the subject';
-    } else if (pitch < -15) {
-      pitchLabel = 'high angle shot, camera looking down at the subject';
+    // Graded the same way, for the same reason: "looking down" alone lands as a faint tilt.
+    const absPitch = Math.abs(pitch);
+    let pitchLabel = 'camera at eye level';
+    if (absPitch > 12) {
+      const up = pitch > 0;
+      if (absPitch <= 40) {
+        pitchLabel = up
+          ? 'camera slightly below eye level, looking gently up at the subject'
+          : 'camera slightly above eye level, looking gently down at the subject';
+      } else {
+        pitchLabel = up
+          ? 'strong low angle, camera near chest height aimed steeply up so the jawline and underside of the chin are visible'
+          : 'strong high angle, camera well above the head aimed steeply down so the top of the head and the shoulders dominate';
+      }
     }
 
     if (yaw !== 0 || pitch !== 0) {
@@ -1346,10 +1366,10 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 </p>
               </div>
 
-              {Math.abs(yaw) > 100 && (
+              {Math.abs(yaw) > 115 && (
                 <p className="mt-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed">
-                  ⚠️ มุมกว้างเกินราว 100° โมเดลมักหมุนให้ไม่ครบ เพราะไม่เห็นด้านหลังของตัวแบบ —
-                  ช่วง <b>20°–90°</b> ให้ผลตรงที่สุด
+                  ⚠️ เกิน 115° จะเห็นหน้าเพียงเสี้ยวเดียวหรือไม่เห็นเลย ภาพจะหมุนตามจริง
+                  แต่<b>เทียบความเหมือนไม่ได้</b> เพราะด้านหลังศีรษะไม่มีอยู่ในรูปต้นฉบับ โมเดลจะเดาเอง
                 </p>
               )}
 

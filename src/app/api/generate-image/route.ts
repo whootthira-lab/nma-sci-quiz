@@ -327,9 +327,15 @@ export async function POST(req: NextRequest) {
         // that genuinely moves the viewpoint — phrase the angle as something to do, and
         // tell it to hold the subject steady while doing it.
         // Naming what must NOT change matters more than naming the new angle: without it
-        // the model quietly restyles the face and body while turning the view.
+        // the model quietly restyles the face and body while turning the view. But the
+        // list of what to hold must not include the background: a camera that orbits
+        // MUST see the scene from somewhere else, so demanding an identical background
+        // contradicts the move, and the contradiction was being settled by leaving the
+        // camera where it was and restyling the face instead — the exact complaint. So
+        // the background is now pinned as the same place seen from the new position, and
+        // the no-op is ruled out explicitly.
         combinedPrompt = (imageMode === 'camera' || imageMode === 'kontext')
-          ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Change only the camera viewpoint to ${cameraAngle}. Keep the exact same person, identical facial features, identical body shape and proportions, identical hairstyle, identical clothing and identical background. Do not restyle, beautify or reshape anything.`
+          ? `${combinedPrompt ? combinedPrompt + '. ' : ''}Orbit the camera around the subject to this exact viewpoint: ${cameraAngle}. The subject does not move, turn or re-pose — only the camera moves, so this is the same room, same background and same lighting seen from the new position, with the perspective shifting accordingly. Keep the exact same person: identical facial features, identical skin tone, identical body shape and proportions, identical hairstyle and identical clothing. Do not restyle, beautify, slim or reshape anything. Do not keep the original camera angle.`
           : `${combinedPrompt}, ${cameraAngle}`;
       }
     }
