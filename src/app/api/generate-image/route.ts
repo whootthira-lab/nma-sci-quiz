@@ -163,7 +163,15 @@ export async function POST(req: NextRequest) {
       grok:     { endpoint: 'xai/grok-imagine-image/edit', credits: 30 },  // ~$0.022
       grokq:    { endpoint: 'xai/grok-imagine-image/quality/edit', credits: 70 } // ~$0.06
     };
-    const chosenEditor = EDIT_MODELS[editModel] || EDIT_MODELS.flux2;
+    // Every one of these takes an image and an instruction, so they can serve any mode that
+    // works that way — not just the viewpoint turn they were first added for. Left alone
+    // ("auto") each mode keeps the purpose-built endpoint it has always used, which is
+    // still the cheaper and steadier choice for the narrow jobs like relight or cut-out.
+    const EDIT_CAPABLE_MODES = ['camera', 'kontext', 'image_to_image', 'relight', 'colorgrade', 'bgreplace'];
+    const pickedEditor = EDIT_MODELS[editModel]; // undefined when the caller said 'auto'
+    // The viewpoint turn has no purpose-built endpoint to fall back on.
+    const chosenEditor = imageMode === 'camera' ? (pickedEditor || EDIT_MODELS.flux2) : pickedEditor;
+    const useChosenEditor = !!chosenEditor && EDIT_CAPABLE_MODES.includes(imageMode);
 
     if (!prompt || !userEmail) {
       return NextResponse.json(
@@ -209,11 +217,12 @@ export async function POST(req: NextRequest) {
     // price meant the cheap modes subsidised the expensive ones. Credits are stored x10.
     const creditsForMode = (): number => {
       if (imageMode === 'upscale') return 60;                    // heaviest by a wide margin
-      if (imageMode === 'camera') return chosenEditor.credits;          // priced per editor
+      if (useChosenEditor) return chosenEditor!.credits;    // charge for the model picked
       if (imageMode === 'kontext') return 40;
       if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 30;
       if (modelType === 'flux_schnell' && !characterId) return 10;       // fast draft
       if (modelType === 'grok') return 30;                        // ~$0.02 per image at 1k
+      if (modelType === 'flux2pro') return 40;                    // ~$0.03 for the first megapixel
       return 20;                                                  // Flux dev and the mask flows
     };
     const cost = creditsForMode();
@@ -348,7 +357,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Enhance prompt (Gemini Flash → OpenAI), unless the user opted out
     let enhancedPrompt = combinedPrompt;
-    if (skipEnhance || ['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
+    if (skipEnhance || useChosenEditor || ['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
       console.log('[IMAGE GEN API] Skipping enhancer (opt-out or edit-mode instruction) → using original prompt');
     } else {
       console.log('[IMAGE GEN API] Enhancing prompt (Gemini Flash → OpenAI fallback)...');
@@ -429,7 +438,7 @@ export async function POST(req: NextRequest) {
       // through to a returned image that this one works.
       modelEndpoint = 'fal-ai/flux-pro/v1/fill';
     } else if (imageMode === 'camera') {
-      modelEndpoint = chosenEditor.endpoint;
+      modelEndpoint = chosenEditor!.endpoint;
     } else if (imageMode === 'upscale') {
       modelEndpoint = 'fal-ai/clarity-upscaler';
     } else if (imageMode === 'bgreplace') {
@@ -442,15 +451,24 @@ export async function POST(req: NextRequest) {
       modelEndpoint = 'fal-ai/image-editing/color-correction'; // color/tone correction
     } else if (modelType === 'grok' && !loraModelUrl) {
       modelEndpoint = 'xai/grok-imagine-image';
+    } else if (modelType === 'flux2pro' && !loraModelUrl) {
+      modelEndpoint = 'fal-ai/flux-2-pro';
     } else if (modelType === 'flux_schnell' && !loraModelUrl) {
       modelEndpoint = 'fal-ai/flux/schnell';
     }
 
+    // An explicit pick overrides the mode's own endpoint, for every mode that works by
+    // handing a model an image and an instruction.
+    if (useChosenEditor) {
+      modelEndpoint = chosenEditor!.endpoint;
+    }
+
     // A trained character is a Flux LoRA, and only a Flux model can load it. Refusing here
     // beats quietly generating a stranger with the character's name on the bill.
-    if (modelType === 'grok' && loraModelUrl) {
+    if ((modelType === 'grok' || modelType === 'flux2pro') && loraModelUrl) {
+      const name = modelType === 'grok' ? 'Grok' : 'Flux 2 Pro';
       return NextResponse.json(
-        { success: false, error: 'Grok ยังใช้ตัวละครที่เทรนไว้ (LoRA) ไม่ได้ กรุณาเลือกโมเดล Flux Dev หรือเอาตัวละครออกก่อน' },
+        { success: false, error: `${name} ยังใช้ตัวละครที่เทรนไว้ (LoRA) ไม่ได้ กรุณาเลือกโมเดล Flux Dev หรือเอาตัวละครออกก่อน` },
         { status: 400 }
       );
     }
@@ -482,14 +500,18 @@ export async function POST(req: NextRequest) {
     }
 
     // Edit modes operate on the uploaded image directly (keep its native dimensions)
-    if (['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
+    if (['kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode) || useChosenEditor) {
       requestBody.image_url = imageUrl;
-      // These editors take a list of sources rather than a single url
-      if (imageMode === 'camera' || modelEndpoint.startsWith('fal-ai/nano-banana')) {
+      delete requestBody.image_size; // the source sets the dimensions
+      // These editors take a list of sources rather than a single url. Keyed off the model
+      // rather than the mode now that any edit mode can be pointed at one of them.
+      if (useChosenEditor || modelEndpoint.startsWith('fal-ai/nano-banana')) {
         delete requestBody.image_url;
         requestBody.image_urls = [imageUrl];
         delete requestBody.enable_safety_checker;
         delete requestBody.sync_mode;
+        delete requestBody.aspect_ratio;
+        delete requestBody.resolution;
       }
       // The upscaler takes no prompt and safety flags it does not know about
       if (imageMode === 'upscale') {
@@ -499,8 +521,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Attach reference image for I2I
-    if (imageMode === 'image_to_image') {
+    // Attach reference image for I2I. An instruction editor has no strength dial — it is
+    // told what to change instead of how far to drift, so the slider does not apply.
+    if (imageMode === 'image_to_image' && !useChosenEditor) {
       requestBody.image_url = imageUrl;
       requestBody.strength = strength;
     }

@@ -48,7 +48,10 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const [restoreFace, setRestoreFace] = useState(false);
   // Which editor performs the rotation. Compared on one portrait: the pricier models are
   // sharper but drift the face, so the cheapest capable one leads.
-  const [editModel, setEditModel] = useState<'flux2' | 'nano' | 'nanopro' | 'gptimage' | 'grok' | 'grokq'>('flux2');
+  const [editModel, setEditModel] = useState<'auto' | 'flux2' | 'nano' | 'nanopro' | 'gptimage' | 'grok' | 'grokq'>('auto');
+  // Modes that work by handing a model an image and an instruction, so any of the editors
+  // below can serve them. Masked fills and the upscaler need a specific model and are out.
+  const EDIT_CAPABLE_MODES = ['camera', 'kontext', 'image_to_image', 'relight', 'colorgrade', 'bgreplace'];
   const EDIT_MODEL_OPTIONS = [
     { id: 'flux2',    label: '⚡ Flux 2 Pro — คมชัด คุ้มที่สุด', credits: 3 },
     { id: 'nano',     label: '🍌 Nano Banana — เหมือนต้นฉบับที่สุด', credits: 4 },
@@ -820,7 +823,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       formData.set('camera_angle', cameraAngle);
       formData.set('camera_zoom', cameraZoom);
       formData.set('restore_face', String(restoreFace));
-      formData.set('edit_model', editModel);
+      // The viewpoint turn has no purpose-built endpoint, so "ตามโหมด" means Flux 2 Pro there
+      formData.set('edit_model', imageMode === 'camera' && editModel === 'auto' ? 'flux2' : editModel);
       formData.set('character_id', characterId);
       formData.set('user_email', user?.email || '');
       formData.set('user_id', user?.id || '');
@@ -1270,6 +1274,17 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setModelType('flux2pro')}
+                  disabled={!!characterId}
+                  title={characterId ? 'Flux 2 Pro ยังใช้ตัวละครที่เทรนไว้ (LoRA ของ Flux 1) ไม่ได้' : undefined}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                    modelType === 'flux2pro' ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  ✨ Flux 2 Pro (รุ่นใหม่สุด)
+                </button>
+                <button
+                  type="button"
                   onClick={() => setModelType('grok')}
                   disabled={!!characterId}
                   title={characterId ? 'Grok ยังใช้ตัวละครที่เทรนไว้ไม่ได้' : undefined}
@@ -1325,7 +1340,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                     setCharacterId(e.target.value);
                     // Grok cannot load a Flux LoRA, so picking a character while it is
                     // selected would be refused on submit. Step back to Dev instead.
-                    if (e.target.value && modelType === 'grok') setModelType('flux_dev');
+                    if (e.target.value && (modelType === 'grok' || modelType === 'flux2pro')) setModelType('flux_dev');
                   }}
                   className="w-full bg-[#1C1C1E] border border-white/10 p-3 rounded-xl text-xs sm:text-sm text-white outline-none cursor-pointer"
                 >
@@ -1381,6 +1396,34 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
             </div>
           )}
 
+          {/* One picker for every mode that works by instructing a model, rather than one
+              that only the viewpoint turn could reach. Left on "ตามโหมด" each mode keeps
+              the purpose-built endpoint it has always used. */}
+          {EDIT_CAPABLE_MODES.includes(imageMode) && (
+            <div className="space-y-1.5 p-4 rounded-xl bg-[#1C1C1E] border border-white/10">
+              <label className="block text-xs font-semibold text-text-secondary uppercase">
+                🤖 โมเดล AI ที่ใช้แก้ภาพ (Editing Model)
+              </label>
+              <select
+                value={imageMode === 'camera' && editModel === 'auto' ? 'flux2' : editModel}
+                onChange={(e) => setEditModel(e.target.value as typeof editModel)}
+                className="w-full bg-black border border-white/10 p-2.5 rounded-lg text-xs text-white outline-none cursor-pointer"
+              >
+                {imageMode !== 'camera' && (
+                  <option value="auto">🎯 ตามโหมด — โมเดลเฉพาะทาง (แนะนำ / ถูกที่สุด)</option>
+                )}
+                {EDIT_MODEL_OPTIONS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label} ({m.credits} เครดิต)</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-text-muted leading-relaxed">
+                {imageMode === 'camera'
+                  ? <>รุ่นแพงกว่าให้ภาพคมกว่า แต่จากที่ทดสอบมัก<b>ปรับหน้าให้สวยขึ้นจนเหมือนต้นฉบับน้อยลง</b></>
+                  : <>โหมดนี้มีโมเดลเฉพาะทางอยู่แล้วซึ่งถูกและนิ่งกว่า — เลือกรุ่นอื่นเมื่อ<b>ผลออกมาไม่ถูกใจ หรือคำสั่งซับซ้อนกว่าที่โมเดลเดิมรับไหว</b></>}
+              </p>
+            </div>
+          )}
+
           {/* Orbit controls belong to the mode that can actually turn a viewpoint */}
           {imageMode === 'camera' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-[#1C1C1E] border border-white/10">
@@ -1403,22 +1446,6 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               >
                 🔄 รีเซ็ตมุมกล้องปกติ
               </button>
-
-              <div className="w-full mt-2 text-left">
-                <label className="block text-[10px] font-bold text-text-muted mb-1">โมเดลที่ใช้หมุนภาพ</label>
-                <select
-                  value={editModel}
-                  onChange={(e) => setEditModel(e.target.value as typeof editModel)}
-                  className="w-full bg-surface-2 border border-white/10 text-text-secondary text-[11px] rounded-lg px-2 py-1.5 outline-none cursor-pointer"
-                >
-                  {EDIT_MODEL_OPTIONS.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label} ({m.credits} เครดิต)</option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-text-muted mt-1 leading-relaxed">
-                  รุ่นแพงกว่าให้ภาพคมกว่า แต่จากที่ทดสอบมัก<b>ปรับหน้าให้สวยขึ้นจนเหมือนต้นฉบับน้อยลง</b>
-                </p>
-              </div>
 
               {Math.abs(yaw) > 115 && (
                 <p className="mt-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2 py-1.5 leading-relaxed">
