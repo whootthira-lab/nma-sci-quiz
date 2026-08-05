@@ -48,12 +48,14 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   const [restoreFace, setRestoreFace] = useState(false);
   // Which editor performs the rotation. Compared on one portrait: the pricier models are
   // sharper but drift the face, so the cheapest capable one leads.
-  const [editModel, setEditModel] = useState<'flux2' | 'nano' | 'nanopro' | 'gptimage'>('flux2');
+  const [editModel, setEditModel] = useState<'flux2' | 'nano' | 'nanopro' | 'gptimage' | 'grok' | 'grokq'>('flux2');
   const EDIT_MODEL_OPTIONS = [
     { id: 'flux2',    label: '⚡ Flux 2 Pro — คมชัด คุ้มที่สุด', credits: 3 },
     { id: 'nano',     label: '🍌 Nano Banana — เหมือนต้นฉบับที่สุด', credits: 4 },
     { id: 'nanopro',  label: '🍌 Nano Banana Pro — ละเอียดสูง', credits: 15 },
     { id: 'gptimage', label: '🧠 GPT Image — เก่งคำสั่งซับซ้อน/ตัวหนังสือ', credits: 14 },
+    { id: 'grok',     label: '🤖 Grok Imagine — ราคาเท่า Flux 2', credits: 3 },
+    { id: 'grokq',    label: '🤖 Grok Imagine Quality — คมกว่า', credits: 7 },
   ] as const;
   const [imagePreview, setImagePreview] = useState<string>('');
   
@@ -1266,7 +1268,23 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 >
                   👑 Dev (สมจริงระดับโปร)
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setModelType('grok')}
+                  disabled={!!characterId}
+                  title={characterId ? 'Grok ยังใช้ตัวละครที่เทรนไว้ไม่ได้' : undefined}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                    modelType === 'grok' ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white'
+                  }`}
+                >
+                  🤖 Grok (ฉากไทยสมจริง)
+                </button>
               </div>
+              {modelType === 'grok' && (
+                <p className="text-[10px] text-text-muted leading-relaxed">
+                  จากที่ทดสอบ Grok ทำ<b>ฉากห้องเรียนไทยและตัวอักษรไทยได้เป็นธรรมชาติกว่า</b> แต่ใช้ร่วมกับตัวละครที่เทรนไว้ไม่ได้
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -1303,7 +1321,12 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               ) : (
                 <select
                   value={characterId}
-                  onChange={(e) => setCharacterId(e.target.value)}
+                  onChange={(e) => {
+                    setCharacterId(e.target.value);
+                    // Grok cannot load a Flux LoRA, so picking a character while it is
+                    // selected would be refused on submit. Step back to Dev instead.
+                    if (e.target.value && modelType === 'grok') setModelType('flux_dev');
+                  }}
                   className="w-full bg-[#1C1C1E] border border-white/10 p-3 rounded-xl text-xs sm:text-sm text-white outline-none cursor-pointer"
                 >
                   <option value="">👤 เจนใบหน้าตัวละครใหม่ทั่วไป (None)</option>

@@ -159,7 +159,9 @@ export async function POST(req: NextRequest) {
       flux2:    { endpoint: 'fal-ai/flux-2-pro/edit',     credits: 30 },   // ~$0.023
       nano:     { endpoint: 'fal-ai/nano-banana/edit',    credits: 40 },   // ~$0.03
       nanopro:  { endpoint: 'fal-ai/nano-banana-pro/edit', credits: 150 }, // ~$0.15
-      gptimage: { endpoint: 'fal-ai/gpt-image-1/edit-image', credits: 140 } // ~$0.14
+      gptimage: { endpoint: 'fal-ai/gpt-image-1/edit-image', credits: 140 }, // ~$0.14
+      grok:     { endpoint: 'xai/grok-imagine-image/edit', credits: 30 },  // ~$0.022
+      grokq:    { endpoint: 'xai/grok-imagine-image/quality/edit', credits: 70 } // ~$0.06
     };
     const chosenEditor = EDIT_MODELS[editModel] || EDIT_MODELS.flux2;
 
@@ -211,6 +213,7 @@ export async function POST(req: NextRequest) {
       if (imageMode === 'kontext') return 40;
       if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 30;
       if (modelType === 'flux_schnell' && !characterId) return 10;       // fast draft
+      if (modelType === 'grok') return 30;                        // ~$0.02 per image at 1k
       return 20;                                                  // Flux dev and the mask flows
     };
     const cost = creditsForMode();
@@ -437,8 +440,19 @@ export async function POST(req: NextRequest) {
       modelEndpoint = 'fal-ai/iclight-v2'; // relighting from a lighting-description prompt
     } else if (imageMode === 'colorgrade') {
       modelEndpoint = 'fal-ai/image-editing/color-correction'; // color/tone correction
+    } else if (modelType === 'grok' && !loraModelUrl) {
+      modelEndpoint = 'xai/grok-imagine-image';
     } else if (modelType === 'flux_schnell' && !loraModelUrl) {
       modelEndpoint = 'fal-ai/flux/schnell';
+    }
+
+    // A trained character is a Flux LoRA, and only a Flux model can load it. Refusing here
+    // beats quietly generating a stranger with the character's name on the bill.
+    if (modelType === 'grok' && loraModelUrl) {
+      return NextResponse.json(
+        { success: false, error: 'Grok ยังใช้ตัวละครที่เทรนไว้ (LoRA) ไม่ได้ กรุณาเลือกโมเดล Flux Dev หรือเอาตัวละครออกก่อน' },
+        { status: 400 }
+      );
     }
 
     // 6. Build Fal.ai request body
@@ -452,11 +466,19 @@ export async function POST(req: NextRequest) {
     // Fal flux expects image_size as an object { width, height } (or one of its enum strings) —
     // sending a "1024x1024" string fails validation with HTTP 422.
     if (!['inpainting', 'outpainting', 'kontext', 'relight', 'colorgrade', 'camera', 'upscale', 'bgreplace'].includes(imageMode)) {
-      requestBody.image_size = aspectRatio === '16:9'
-        ? { width: 1280, height: 720 }
-        : (aspectRatio === '9:16'
-            ? { width: 720, height: 1280 }
-            : { width: 1024, height: 1024 });
+      if (modelEndpoint.startsWith('xai/')) {
+        // Grok sizes by ratio and a quality tier instead of pixel dimensions, and has no
+        // safety flag of its own to pass — xAI moderates its own model.
+        requestBody.aspect_ratio = ['1:1', '16:9', '9:16'].includes(aspectRatio) ? aspectRatio : '1:1';
+        requestBody.resolution = '1k';
+        delete requestBody.enable_safety_checker;
+      } else {
+        requestBody.image_size = aspectRatio === '16:9'
+          ? { width: 1280, height: 720 }
+          : (aspectRatio === '9:16'
+              ? { width: 720, height: 1280 }
+              : { width: 1024, height: 1024 });
+      }
     }
 
     // Edit modes operate on the uploaded image directly (keep its native dimensions)
