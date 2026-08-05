@@ -451,6 +451,33 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   };
 
   // --- Orbit Camera Circular Control logic ---
+  // The dial clicks into the angles that were actually checked against the model, so every
+  // position it can rest at is one that produces the framing it names. In between those
+  // stops the wording is the same anyway — a free 37° and a free 52° both come out as the
+  // three-quarter shot — so a dial that stopped there would only promise a precision the
+  // result does not have.
+  const YAW_STOPS = [-180, -135, -90, -45, -25, 0, 25, 45, 90, 135, 180];
+  const PITCH_STOPS = [-75, -45, -20, 0, 20, 45, 75]; // −75 bird's-eye · +75 ant's-eye
+  const YAW_PRESETS = [
+    { deg: 0, th: 'หน้าตรง' },
+    { deg: 25, th: 'หันเล็กน้อย' },
+    { deg: 45, th: 'สามส่วนสี่' },
+    { deg: 90, th: 'ด้านข้าง' },
+    { deg: 135, th: 'ค่อนไปหลัง' },
+    { deg: 180, th: 'ด้านหลัง' },
+  ];
+  const PITCH_PRESETS = [
+    { deg: -75, th: '🦅 Bird’s eye' },
+    { deg: -45, th: 'มุมสูง' },
+    { deg: -20, th: 'ก้มเล็กน้อย' },
+    { deg: 0, th: '👁 ระดับสายตา' },
+    { deg: 20, th: 'เงยเล็กน้อย' },
+    { deg: 45, th: 'มุมต่ำ' },
+    { deg: 75, th: '🐜 Ant’s eye' },
+  ];
+  const snapTo = (value: number, stops: number[]) =>
+    stops.reduce((best, s) => (Math.abs(s - value) < Math.abs(best - value) ? s : best), stops[0]);
+
   const handleSphereMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     setIsDraggingSphere(true);
     sphereDragStart.current = { x: e.clientX, y: e.clientY, yaw, pitch };
@@ -482,8 +509,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       if (newYaw < -180) newYaw += 360;
       newPitch = Math.max(-80, Math.min(80, newPitch));
 
-      setYaw(newYaw);
-      setPitch(newPitch);
+      setYaw(snapTo(newYaw, YAW_STOPS));
+      setPitch(snapTo(newPitch, PITCH_STOPS));
     };
 
     const handleGlobalTouchMove = (e: TouchEvent) => {
@@ -499,9 +526,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       if (newYaw < -180) newYaw += 360;
       newPitch = Math.max(-80, Math.min(80, newPitch));
 
-      setYaw(newYaw);
-      setPitch(newPitch);
-      
+      setYaw(snapTo(newYaw, YAW_STOPS));
+      setPitch(snapTo(newPitch, PITCH_STOPS));
+
       if (e.cancelable) e.preventDefault();
     };
 
@@ -557,19 +584,23 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     }
 
     // Graded the same way, for the same reason: "looking down" alone lands as a faint tilt.
+    // The two extremes name what ends up behind the subject — floor for the bird's-eye,
+    // ceiling for the ant's-eye — which is what tells the model how far the camera moved.
     const absPitch = Math.abs(pitch);
+    const up = pitch > 0; // the camera is below the subject, aimed upward
     let pitchLabel = 'camera at eye level';
-    if (absPitch > 12) {
-      const up = pitch > 0;
-      if (absPitch <= 40) {
-        pitchLabel = up
-          ? 'camera slightly below eye level, looking gently up at the subject'
-          : 'camera slightly above eye level, looking gently down at the subject';
-      } else {
-        pitchLabel = up
-          ? 'strong low angle, camera near chest height aimed steeply up so the jawline and underside of the chin are visible'
-          : 'strong high angle, camera well above the head aimed steeply down so the top of the head and the shoulders dominate';
-      }
+    if (absPitch > 10 && absPitch <= 32) {
+      pitchLabel = up
+        ? 'camera slightly below eye level, looking gently up at the subject'
+        : 'camera slightly above eye level, looking gently down at the subject';
+    } else if (absPitch > 32 && absPitch <= 60) {
+      pitchLabel = up
+        ? 'strong low angle, the camera around chest height aimed steeply up so the jawline and the underside of the chin are visible'
+        : 'strong high angle, the camera well above the head aimed steeply down so the top of the head and the shoulders dominate the frame';
+    } else if (absPitch > 60) {
+      pitchLabel = up
+        ? "extreme worm's-eye (ant's-eye) view: the camera is down near floor level looking steeply up at the subject, so the underside of the chin and jawline are visible and the ceiling appears behind the head"
+        : "extreme bird's-eye view: the camera is high above the subject looking steeply down, the top of the head and the shoulders dominating the frame, the face strongly foreshortened, the floor visible behind the subject";
     }
 
     if (yaw !== 0 || pitch !== 0) {
@@ -1391,13 +1422,77 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
 
             <div className="space-y-4 flex flex-col justify-center">
               <div>
-                <span className="text-[10px] text-text-muted font-bold block mb-1">สถานะทิศทางมุมกล้องที่ตรวจจับได้:</span>
-                <span className="text-xs text-[#D4AF37] font-semibold block bg-black/40 p-2 rounded-lg border border-white/5">
-                  {cameraAngle === 'default' ? '📸 หน้าตรงปกติ (Default)' : `📸 ${cameraAngle}`}
+                <span className="text-[10px] text-text-muted font-bold block mb-1">มุมกล้องที่เลือกอยู่:</span>
+                <span
+                  title={cameraAngle}
+                  className="text-xs text-[#D4AF37] font-semibold block bg-black/40 p-2 rounded-lg border border-white/5"
+                >
+                  📸 {YAW_PRESETS.find((p) => p.deg === Math.abs(yaw))?.th ?? 'หน้าตรง'}
+                  {yaw !== 0 && (yaw > 0 ? ' (หันไปทางขวา)' : ' (หันไปทางซ้าย)')}
+                  {' · '}
+                  {PITCH_PRESETS.find((p) => p.deg === pitch)?.th ?? 'ระดับสายตา'}
                 </span>
                 <span className="text-[9px] text-text-muted mt-1 block font-mono">
                   Yaw (หมุนซ้าย-ขวา): {Math.round(yaw)}° | Pitch (ก้ม-เงย): {Math.round(pitch)}°
                 </span>
+              </div>
+
+              {/* Every chip is a stop the dial can rest at, and each one was checked against
+                  the model before being offered here. */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10px] font-bold text-text-secondary uppercase">
+                    ↔️ หมุนซ้าย–ขวา (Yaw)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setYaw(-yaw)}
+                    disabled={yaw === 0}
+                    className="text-[10px] text-text-muted hover:text-white disabled:opacity-30 transition-colors"
+                  >
+                    ⇄ สลับด้าน
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {YAW_PRESETS.map((p) => (
+                    <button
+                      key={p.deg}
+                      type="button"
+                      onClick={() => setYaw(yaw < 0 ? -p.deg : p.deg)}
+                      className={`px-1.5 py-1.5 rounded-lg text-[10px] leading-tight border transition-colors ${
+                        Math.abs(yaw) === p.deg
+                          ? 'bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#D4AF37] font-semibold'
+                          : 'bg-black border-white/10 text-text-muted hover:text-white hover:border-white/25'
+                      }`}
+                    >
+                      {p.th}
+                      <span className="block font-mono text-[9px] opacity-60">{p.deg}°</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-text-secondary uppercase">
+                  ↕️ ก้ม–เงย (Pitch)
+                </label>
+                <div className="grid grid-cols-3 gap-1">
+                  {PITCH_PRESETS.map((p) => (
+                    <button
+                      key={p.deg}
+                      type="button"
+                      onClick={() => setPitch(p.deg)}
+                      className={`px-1.5 py-1.5 rounded-lg text-[10px] leading-tight border transition-colors ${
+                        pitch === p.deg
+                          ? 'bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#D4AF37] font-semibold'
+                          : 'bg-black border-white/10 text-text-muted hover:text-white hover:border-white/25'
+                      }`}
+                    >
+                      {p.th}
+                      <span className="block font-mono text-[9px] opacity-60">{p.deg}°</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-1.5">
