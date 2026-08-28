@@ -836,6 +836,22 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   };
 
   // --- Submit & API Generation logic ---
+  // Mirrors the server's creditsForMode, so the button quotes the price actually charged
+  const displayCost = (): number => {
+    if (imageMode === 'upscale') return 6;
+    const editorPicked = EDIT_CAPABLE_MODES.includes(imageMode) && (imageMode === 'camera' || editModel !== 'auto');
+    if (editorPicked) {
+      const m = EDIT_MODEL_OPTIONS.find((o) => o.id === (editModel === 'auto' ? 'flux2' : editModel));
+      if (m) return m.credits;
+    }
+    if (imageMode === 'kontext') return 4;
+    if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 3;
+    if (modelType === 'grok') return 3;
+    if (modelType === 'flux2pro') return 4;
+    if (modelType === 'flux_schnell' && !characterId) return 1;
+    return 2;
+  };
+
   const generateImage = async () => {
     setErrorMsg('');
     setSuccessMsg('');
@@ -1648,7 +1664,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
             ) : (
               <>
                 <Sparkles className="w-5 h-5" />
-                <span>สร้างรูปภาพผลลัพธ์ (หัก 2 เครดิต)</span>
+                <span>สร้างรูปภาพผลลัพธ์ (หัก {displayCost()} เครดิต)</span>
               </>
             )}
           </button>

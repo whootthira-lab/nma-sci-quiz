@@ -307,9 +307,14 @@ export async function POST(req: NextRequest) {
               })
               .eq('fal_request_id', requestId);
 
+            // The commonest rejection deserves a message in the user's language with a way
+            // forward, not a relayed English validator string.
+            const contentFlagged = /content checker|flagged|could not be processed/i.test(why);
             return NextResponse.json({
               status: 'FAILED',
-              error: `ระบบ AI ปฏิเสธคำสั่งนี้ — ${why}`,
+              error: contentFlagged
+                ? 'รูปต้นฉบับไม่ผ่านระบบคัดกรองเนื้อหาของโมเดลนี้ (เจอได้กับรูปคนจริงแม้เนื้อหาปกติ) — ลองครอปรูปใหม่ให้เห็นเฉพาะช่วงไหล่ขึ้นไป เปลี่ยนรูปอื่น หรือเปลี่ยนโมเดลในเมนู "โมเดล AI ที่ใช้แก้ภาพ" เพราะแต่ละค่ายคัดกรองต่างกัน'
+                : `ระบบ AI ปฏิเสธคำสั่งนี้ — ${why}`,
               progressMessage: '❌ ล้มเหลว'
             });
           }
