@@ -34,9 +34,11 @@ export default function LoginPage() {
         <div className="glow-card glow-border p-8 sm:p-10">
           {/* Logo */}
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center shadow-xl shadow-accent-primary/20 mb-5">
-              <Sparkles className="w-8 h-8 text-white" />
-            </div>
+            <img
+              src="/logo-inowok.png"
+              alt="INOWOK CORP.,LTD."
+              className="w-20 h-20 object-contain drop-shadow-xl mb-5"
+            />
             <h1 className="text-2xl font-display font-bold text-text-primary tracking-tight">
               AI Video Studio
             </h1>

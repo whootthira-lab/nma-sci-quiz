@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   ShieldCheck,
   LogOut,
-  Sparkles,
   Menu,
   X,
   Users,
@@ -33,9 +32,11 @@ export default function Navbar() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/dashboard" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center shadow-lg shadow-accent-primary/20 group-hover:shadow-accent-primary/40 transition-shadow">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
+            <img
+              src="/logo-inowok.png"
+              alt="INOWOK CORP.,LTD."
+              className="w-9 h-9 object-contain drop-shadow-lg group-hover:drop-shadow-[0_0_10px_rgba(212,175,55,0.35)] transition-[filter]"
+            />
             <span className="font-display font-bold text-lg tracking-tight text-text-primary">
               AI Video <span className="text-accent-primary">Studio</span>
             </span>

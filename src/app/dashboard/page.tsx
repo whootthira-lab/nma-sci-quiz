@@ -41,7 +41,7 @@ export default function DashboardPage() {
         {/* KRUTH Brand Header */}
         <div className="mb-8 flex flex-col items-center sm:items-start text-center sm:text-left">
           <div className="flex items-center gap-4 mb-2">
-            <img src="/logo-kruth.png" alt="KRUTH Logo" className="w-16 h-16 object-contain" />
+            <img src="/logo-inowok.png" alt="INOWOK CORP.,LTD." className="w-16 h-16 object-contain" />
             <div>
               <h1 className="text-3xl font-display font-bold text-[#1A1A1A] tracking-wider uppercase">
                 KRUTH AI Studio
