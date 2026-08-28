@@ -76,8 +76,12 @@ export default function AdminPage() {
   useEffect(() => {
     loadStats();
     loadConfig();
-    loadWhitelist();
   }, []);
+
+  // The role lookup inside needs to say who is asking, so wait until the login resolves
+  useEffect(() => {
+    if (user?.email) loadWhitelist();
+  }, [user?.email]);
 
   const loadConfig = async () => {
     try {
@@ -259,9 +263,21 @@ export default function AdminPage() {
         }
       });
 
+      // Who holds the admin role lives in profiles, behind the server — the anon key
+      // this page runs on cannot read it
+      let adminEmails: string[] = [];
+      try {
+        const roleRes = await fetch(`/api/admin/role?email=${encodeURIComponent(user?.email || '')}`);
+        const roleJson = await roleRes.json();
+        if (roleJson.success) adminEmails = roleJson.admin_emails || [];
+      } catch (e) {
+        console.warn('Failed to load admin roles:', e);
+      }
+
       const processedWhitelist = (whitelistData || []).map((item: any) => ({
         ...item,
-        used_today: usageMap[item.email.toLowerCase()] || 0
+        used_today: usageMap[item.email.toLowerCase()] || 0,
+        is_admin_role: adminEmails.includes(item.email.toLowerCase()) || item.email.toLowerCase() === 'whootthira@gmail.com'
       }));
 
       setWhitelist(processedWhitelist);
@@ -349,6 +365,28 @@ export default function AdminPage() {
       await loadStats();
     } catch (err) {
       console.error('Failed to delete whitelist user:', err);
+    }
+  };
+
+  const handleToggleAdmin = async (email: string, makeAdmin: boolean) => {
+    const q = makeAdmin
+      ? `ตั้ง ${email} เป็นแอดมิน? จะเห็นและจัดการข้อมูลของผู้ใช้ทุกคนได้`
+      : `ถอดสิทธิ์แอดมินของ ${email}?`;
+    if (!confirm(q)) return;
+    try {
+      const res = await fetch('/api/admin/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_email: user?.email, target_email: email, make_admin: makeAdmin })
+      });
+      const json = await res.json();
+      if (!json.success) {
+        alert(json.error || 'เปลี่ยนสิทธิ์ไม่สำเร็จ');
+        return;
+      }
+      await loadWhitelist();
+    } catch (err: any) {
+      alert(err?.message || 'เปลี่ยนสิทธิ์ไม่สำเร็จ');
     }
   };
 
@@ -876,6 +914,7 @@ export default function AdminPage() {
                     <th className="py-3 px-4 font-thai">วันหมดอายุ (Expires At)</th>
                     <th className="py-3 px-4 font-thai">ระยะเวลาคงเหลือ (Time Left)</th>
                     <th className="py-3 px-4 text-center font-thai">เครดิตสะสมคงเหลือ (Credits)</th>
+                    <th className="py-3 px-4 text-center font-thai">สิทธิ์ (Role)</th>
                     <th className="py-3 px-4 text-right font-thai">การจัดการ</th>
                   </tr>
                 </thead>
@@ -904,8 +943,30 @@ export default function AdminPage() {
                         <td className="py-3.5 px-4 text-center font-mono text-text-primary font-bold">
                           {credits.toFixed(1).replace('.0', '')} เครดิต
                         </td>
+                        <td className="py-3.5 px-4 text-center">
+                          {item.email.toLowerCase() === 'whootthira@gmail.com' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-accent-warm/15 text-accent-warm border border-accent-warm/20">Super Admin</span>
+                          ) : item.is_admin_role ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/25">Admin</span>
+                          ) : (
+                            <span className="text-[10px] text-text-muted font-thai">ผู้ใช้ทั่วไป</span>
+                          )}
+                        </td>
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex justify-end gap-2">
+                            {item.email.toLowerCase() !== 'whootthira@gmail.com' &&
+                              item.email.toLowerCase() !== (user?.email || '').toLowerCase() && (
+                              <button
+                                onClick={() => handleToggleAdmin(item.email, !item.is_admin_role)}
+                                className={`text-xs px-2 py-1 rounded transition-colors font-thai ${
+                                  item.is_admin_role
+                                    ? 'text-amber-400 hover:bg-amber-500/10'
+                                    : 'text-text-muted hover:text-[#D4AF37] hover:bg-[#D4AF37]/5'
+                                }`}
+                              >
+                                {item.is_admin_role ? 'ถอดแอดมิน' : 'ตั้งเป็นแอดมิน'}
+                              </button>
+                            )}
                             <button
                               onClick={() => openEditModal(item)}
                               className="text-xs text-text-muted hover:text-white px-2 py-1 rounded hover:bg-white/5 transition-colors font-thai"

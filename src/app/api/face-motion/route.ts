@@ -283,24 +283,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Count daily generations
-    const dailyLimit = isSuperAdmin ? 99999 : Math.floor((whitelistUser?.generation_limit || 100) / 10);
-    if (finalUserId) {
-      const localStartOfDay = new Date();
-      localStartOfDay.setHours(0, 0, 0, 0);
-
-      const { count: todaysGensCount } = await supabase
-        .from('generations')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', finalUserId)
-        .gte('created_at', localStartOfDay.toISOString());
-
-      if (todaysGensCount !== null && todaysGensCount >= dailyLimit) {
-        return NextResponse.json(
-          { success: false, error: `ขออภัย คุณใช้งานเกินขีดจำกัดประจำวันแล้ว (${todaysGensCount}/${dailyLimit} คลิป)` },
-          { status: 403 }
-        );
-      }
+    // Credits here work the way they do everywhere else: a balance that the job draws
+    // down. This route used to read the same number as a daily clip allowance and never
+    // charged for anything, so a 10-credit account quietly meant ten free clips a day.
+    const FACE_MOTION_COST = 30; // stored x10, so 3 credits — in line with a short video job
+    const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
+    if (!isSuperAdmin && userCredits < FACE_MOTION_COST) {
+      return NextResponse.json(
+        { success: false, error: `ขออภัย เครดิตคงเหลือของคุณไม่เพียงพอสำหรับการสร้างคลิปนี้ (ต้องการ ${FACE_MOTION_COST / 10} เครดิต, คงเหลือ ${(userCredits / 10).toFixed(1).replace('.0', '')} เครดิต) กรุณาติดต่อแอดมินเพื่อเติมโควต้า` },
+        { status: 403 }
+      );
     }
 
     // Fetch system provider config
@@ -401,6 +393,19 @@ export async function POST(req: NextRequest) {
             storage_provider: storageProvider
           }
         });
+    }
+
+    // Charged only past this point, so a failed run costs nothing
+    if (!isSuperAdmin && whitelistUser) {
+      const newCredits = Math.max(0, (whitelistUser.generation_limit || 0) - FACE_MOTION_COST);
+      console.log(`[Credits-FaceMotion] Deducting ${FACE_MOTION_COST} from ${userEmail}. Old: ${whitelistUser.generation_limit}, New: ${newCredits}`);
+      const { error: deductError } = await supabase
+        .from('whitelist')
+        .update({ generation_limit: newCredits })
+        .eq('email', userEmail);
+      if (deductError) {
+        console.error('[Credits-FaceMotion] Failed to deduct credits:', deductError);
+      }
     }
 
     return NextResponse.json({
