@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage, readJsonOrExplain } from '@/lib/image-utils';
 import { supabase } from '@/lib/supabase-db';
+import { takeRegen, storageUrl, urlToFile } from '@/lib/regen';
 import {
   Image as ImageIcon,
   Sparkles,
@@ -125,6 +126,41 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       loadCharacters();
     }
   }, [user]);
+
+  // "สร้างอีกครั้ง" from the gallery: refill the form the way it was submitted. Everything
+  // is best-effort — whatever an older record never stored simply keeps its default.
+  useEffect(() => {
+    const regen = takeRegen('image');
+    if (!regen) return;
+    const md = regen.metadata || {};
+
+    const mode = (regen.mode || '').replace(/^image-/, '');
+    const KNOWN_MODES = ['text_to_image', 'image_to_image', 'kontext', 'camera', 'relight', 'colorgrade', 'bgreplace', 'upscale', 'inpainting', 'outpainting'];
+    if (KNOWN_MODES.includes(mode)) setImageMode(mode as typeof imageMode);
+
+    if (regen.prompt) setPrompt(regen.prompt);
+    if (['flux_dev', 'flux_schnell', 'grok', 'flux2pro'].includes(regen.model_name)) setModelType(regen.model_name);
+    if (['1:1', '16:9', '9:16'].includes(regen.aspect_ratio)) setAspectRatio(regen.aspect_ratio);
+    if (md.visual_style) setVisualStyle(md.visual_style);
+    if (md.camera_zoom) setCameraZoom(md.camera_zoom);
+    if (md.edit_model && md.edit_model !== 'auto') setEditModel(md.edit_model);
+    if (typeof md.strength === 'number') setStrength(md.strength);
+    if (typeof md.camera_yaw === 'number') setYaw(md.camera_yaw);
+    if (typeof md.camera_pitch === 'number') setPitch(md.camera_pitch);
+    if (md.character_id) setCharacterId(md.character_id);
+
+    // Re-attach the source photo as if just picked; the stored input beats the output URL
+    const src = md.image_path ? storageUrl(md.image_path) : (md.face_restore_source || regen.source_image_url);
+    if (src && mode !== 'text_to_image') {
+      urlToFile(src, 'source.png').then((file) => {
+        if (file) {
+          setUploadedImage(file);
+          setImagePreview(URL.createObjectURL(file));
+        }
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadCharacters = async () => {
     setLoadingCharacters(true);
@@ -830,6 +866,9 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       formData.set('user_id', user?.id || '');
       formData.set('aspect_ratio', aspectRatio);
       formData.set('strength', strength.toString());
+      // The dial position itself, so "สร้างอีกครั้ง" can put the dial back where it was
+      formData.set('camera_yaw', String(yaw));
+      formData.set('camera_pitch', String(pitch));
 
       // Prepare Inpainting Blobs
       if (imageMode === 'inpainting') {

@@ -145,6 +145,7 @@ export async function getUserGenerations(email: string) {
     expires_at: { toDate: () => new Date(new Date(row.created_at).getTime() + 24 * 60 * 60 * 1000) },
     aspect_ratio: row.metadata?.aspect_ratio || '16:9',
     duration_estimate: row.metadata?.duration_estimate || 0,
+    metadata: row.metadata || {}, // everything "สร้างอีกครั้ง" needs to refill the form
   }));
 }
 

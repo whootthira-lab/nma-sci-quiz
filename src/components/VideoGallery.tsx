@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2, Copy, Check, Cpu } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2, Copy, Check, Cpu, Repeat } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { getUserGenerations, deleteGeneration } from '@/lib/supabase-db';
+import { stashRegen } from '@/lib/regen';
 import type { GenerationDoc } from '@/types';
 
 interface VideoGalleryProps {
@@ -12,6 +14,23 @@ interface VideoGalleryProps {
 
 export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
   const { user } = useAuth();
+  const router = useRouter();
+
+  // Hand this item back to the studio with everything it was created from
+  const handleRegenerate = (gen: any) => {
+    stashRegen({
+      mode: gen.mode || '',
+      prompt: gen.prompt || '',
+      script_text: gen.script_text || '',
+      situation_prompt: gen.situation_prompt || '',
+      model_name: gen.model_name || '',
+      voice_id: gen.voice_id || '',
+      aspect_ratio: gen.aspect_ratio || '16:9',
+      source_image_url: gen.image_url || null,
+      metadata: gen.metadata || {}
+    });
+    router.push('/dashboard');
+  };
   const [generations, setGenerations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -245,6 +264,14 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
               </div>
 
               {/* Actions */}
+              <button
+                onClick={() => handleRegenerate(gen)}
+                className="w-full flex items-center gap-1.5 justify-center text-xs py-2 rounded-xl bg-[#D4AF37]/10 border border-[#D4AF37]/25 text-[#D4AF37] hover:bg-[#D4AF37]/20 transition-colors font-thai font-semibold"
+                title="เปิดหน้าสร้างพร้อมข้อมูลเดิมของงานนี้ แก้ไขได้ก่อนกดสร้าง"
+              >
+                <Repeat className="w-3.5 h-3.5" />
+                สร้างอีกครั้ง
+              </button>
               <div className="flex items-center gap-2 pt-1">
                 {gen.status === 'completed' && gen.video_url && (
                   <button

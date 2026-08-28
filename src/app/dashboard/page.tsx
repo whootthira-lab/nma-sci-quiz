@@ -9,6 +9,7 @@ import Mode2Form from '@/components/Mode2Form';
 import ImageTabForm from '@/components/ImageTabForm';
 import DialogueTabForm from '@/components/DialogueTabForm';
 import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare } from 'lucide-react';
+import { peekRegen, regenTab } from '@/lib/regen';
 
 export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
@@ -18,6 +19,13 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [user, loading, router]);
+
+  // Arriving via "สร้างอีกครั้ง": open the tab that made the item. The payload stays put —
+  // the form claims it when it mounts.
+  useEffect(() => {
+    const pending = peekRegen();
+    if (pending?.mode) setActiveTab(regenTab(pending.mode));
+  }, []);
 
   if (loading) {
     return (

@@ -18,6 +18,7 @@ import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
 import { FACE_MOTION_MODELS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
+import { takeRegen, storageUrl, urlToFile } from '@/lib/regen';
 
 interface Mode2FormProps {
   onVideoGenerated: () => void;
@@ -45,6 +46,41 @@ export default function Mode2Form({ onVideoGenerated }: Mode2FormProps) {
   const [error, setError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  // "สร้างอีกครั้ง" from the gallery: re-attach the photo and driving clip this row was
+  // made from. A file that has since been cleaned up is skipped, not fatal.
+  useEffect(() => {
+    const regen = takeRegen('mode2');
+    if (!regen) return;
+    const md = regen.metadata || {};
+
+    const matched = FACE_MOTION_MODELS.find(
+      (m) => m.id === regen.model_name || m.name === regen.model_name
+    );
+    if (matched) setSelectedModel(matched.id);
+    if (md.storage_provider === 'firebase' || md.storage_provider === 'supabase') {
+      setStorageProvider(md.storage_provider);
+    }
+
+    const imgSrc = md.image_path ? storageUrl(md.image_path) : regen.source_image_url;
+    if (imgSrc) {
+      urlToFile(imgSrc, 'source.png').then((file) => {
+        if (file) {
+          setImageFile(file);
+          setImagePreview(URL.createObjectURL(file));
+        }
+      });
+    }
+    if (md.driving_path) {
+      urlToFile(storageUrl(md.driving_path), 'driving.mp4', 'video/mp4').then((file) => {
+        if (file) {
+          setDrivingVideo(file);
+          setDrivingVideoName('คลิปต้นแบบจากงานเดิม (driving.mp4)');
+        }
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Stage changes based on progress
   useEffect(() => {

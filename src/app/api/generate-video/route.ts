@@ -1211,6 +1211,7 @@ export async function POST(req: NextRequest) {
                     )
                 ),
             api_provider: isSiliconFlow ? 'siliconflow' : 'fal',
+            model_type: modelType, // the form's own value, so "สร้างอีกครั้ง" restores it exactly
             voice_id: isNoSpeech ? '' : (isMotionControl && motionAudioSource === 'video' ? '' : voiceId),
             tts_provider: isNoSpeech ? 'none' : (customAudioFile ? 'custom_upload' : ttsProvider),
             storage_provider: storageProvider,

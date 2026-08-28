@@ -23,6 +23,7 @@ import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage } from '@/lib/image-utils';
 import { getCharacters, supabase } from '@/lib/supabase-db';
+import { takeRegen, storageUrl } from '@/lib/regen'; // this file already has its own urlToFile
 
 interface Character {
   id: string;
@@ -170,6 +171,66 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       setSelectedDuration(5);
     }
   }, [modelType, selectedDuration]);
+
+  // "สร้างอีกครั้ง" from the gallery: refill everything the record still carries. Fields an
+  // older row never stored simply keep their defaults, and a source file that has since
+  // been cleaned up is skipped rather than failing the whole restore.
+  useEffect(() => {
+    const regen = takeRegen('mode1');
+    if (!regen) return;
+    const md = regen.metadata || {};
+
+    if (regen.mode === 'motion-control') {
+      setActiveTab('motion_control');
+    } else if (regen.mode === 'text_to_video') {
+      setActiveTab('text_to_video');
+    } else {
+      setActiveTab(regen.script_text ? 'voice_image_to_video' : 'image_to_video');
+    }
+
+    if (regen.script_text) setScriptText(regen.script_text);
+    if (regen.situation_prompt) setSituationPrompt(regen.situation_prompt);
+    if (md.end_situation_prompt) setEndSituationPrompt(md.end_situation_prompt);
+    if (regen.voice_id && THAI_VOICES.some((v) => v.id === regen.voice_id)) setSelectedVoice(regen.voice_id);
+    if (['16:9', '9:16', '1:1'].includes(regen.aspect_ratio)) setAspectRatio(regen.aspect_ratio);
+    if (md.visual_style) setVisualStyle(md.visual_style);
+    if (typeof md.speed_factor === 'number') setSpeedFactor(md.speed_factor);
+    if (md.character_id) setSelectedCharacterId(md.character_id);
+    if (typeof md.duration_estimate === 'number' && md.duration_estimate > 0) {
+      setIsAutoDuration(false);
+      setSelectedDuration(md.duration_estimate);
+    }
+
+    // The row stores the display name; newer rows also carry the form's own model_type
+    const NAME_TO_TYPE: Record<string, string> = {
+      'veo-3-fast': 'veo3', 'sora-2': 'sora2', 'kling-1.6-elements': 'elements',
+      'seedance-1.0-pro': 'seedance', 'hunyuan-video': 'hunyuan', 'ltx-video': 'ltx-video',
+      'kling-2.6-motion-control': 'motion-control', 'wan-2.5-cinema': 'cinema',
+      'wan-2.5-cinema-sf': 'cinema', 'grok-1.5-imagine-video': 'grok-video', 'kling-2.5-turbo': 'fast'
+    };
+    const restoredType = md.model_type || NAME_TO_TYPE[regen.model_name];
+    if (restoredType && regen.mode !== 'motion-control') setModelType(restoredType);
+
+    if (md.image_path) {
+      urlToFile(storageUrl(md.image_path), 'source.png', 'image/png').then((file) => {
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+      }).catch(() => { /* source file cleaned up since — start without it */ });
+    }
+    if (md.end_image_path) {
+      urlToFile(storageUrl(md.end_image_path), 'end.png', 'image/png').then((file) => {
+        setEndImageFile(file);
+        setEndImagePreview(URL.createObjectURL(file));
+      }).catch(() => { /* likewise */ });
+    }
+    if (md.driving_path) {
+      urlToFile(storageUrl(md.driving_path), 'reference.mp4', 'video/mp4').then((file) => {
+        setVideoFile(file);
+        setVideoPreview(URL.createObjectURL(file));
+      }).catch(() => { /* likewise */ });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load characters list on mount
   useEffect(() => {
