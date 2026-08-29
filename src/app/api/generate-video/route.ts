@@ -1114,8 +1114,21 @@ export async function POST(req: NextRequest) {
 
       if (!submitResponse.ok) {
         const errText = await submitResponse.text();
-        console.error(`[Fal.ai Submit Error]`, errText);
-        throw new Error('ส่งคำสั่งสร้างวิดีโอไปยัง Fal.ai ไม่สำเร็จ');
+        console.error(`[Fal.ai Submit Error]`, submitResponse.status, errText);
+        // Say what the provider actually answered — the bare version of this message left
+        // an exhausted balance, a revoked key and a bad parameter all looking identical.
+        let why = errText.slice(0, 200);
+        try {
+          const parsed = JSON.parse(errText);
+          if (typeof parsed?.detail === 'string') why = parsed.detail.slice(0, 200);
+          else if (Array.isArray(parsed?.detail)) {
+            why = parsed.detail.map((d: any) => `${(d.loc || []).filter((p: any) => p !== 'body').join('.')}: ${d.msg}`).join(' | ').slice(0, 200);
+          }
+        } catch { /* keep raw text */ }
+        if (/exhausted balance|user is locked/i.test(why)) {
+          throw new Error('บัญชี Fal.ai ของระบบยอดเงินหมด/ถูกล็อก — แจ้งผู้ดูแลระบบให้เติมเงินที่ fal.ai/dashboard/billing แล้วลองใหม่');
+        }
+        throw new Error(`ส่งคำสั่งสร้างวิดีโอไปยัง Fal.ai ไม่สำเร็จ (HTTP ${submitResponse.status}: ${why})`);
       }
 
       const submitResult = await submitResponse.json();
