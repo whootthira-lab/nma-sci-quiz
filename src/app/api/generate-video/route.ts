@@ -645,17 +645,20 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
+      // The speech can arrive as typed script OR an uploaded voice-over file — requiring
+      // the script regardless rejected every clip made from an audio file.
+      const hasSpeech = isNoSpeech || !!scriptText || !!(customAudioFile && customAudioFile.size > 0);
       if (videoMode === 'image_to_video') {
-        if ((!imageFile && !characterImageUrl && !directImageUrl && !useLoraModel) || (!isNoSpeech && !scriptText) || !userEmail) {
+        if ((!imageFile && !characterImageUrl && !directImageUrl && !useLoraModel) || !hasSpeech || !userEmail) {
           return NextResponse.json(
-            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและข้อความให้ครบ' },
+            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณาแนบรูปภาพ พร้อมบทพากย์หรือไฟล์เสียงอย่างใดอย่างหนึ่ง' },
             { status: 400 }
           );
         }
       } else {
-        if ((!isNoSpeech && !scriptText) || !userEmail) {
+        if (!hasSpeech || !userEmail) {
           return NextResponse.json(
-            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์และข้อมูลผู้ใช้' },
+            { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกบทพากย์หรือแนบไฟล์เสียง' },
             { status: 400 }
           );
         }
