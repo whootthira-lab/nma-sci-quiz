@@ -1,8 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
+
+/**
+ * One second of silence before the first word and after the last. The clip length already
+ * reserves this (+2s in the auto duration), but the speech itself always started at 0:00,
+ * so every video opened mid-breath — the lip-sync places audio exactly where it sits in
+ * the file, which makes the file the one honest place to put the pause. Runs on every
+ * voice source alike (all four TTS vendors and uploaded files); output is normalised MP3.
+ * If padding fails the original audio is used — a clip without the pause beats no clip.
+ */
+async function padSpeechWithSilence(input: Buffer, tag: string): Promise<Buffer> {
+  const dir = os.tmpdir();
+  const inPath = path.join(dir, `pad_in_${tag}_${Date.now()}`);
+  const outPath = path.join(dir, `pad_out_${tag}_${Date.now()}.mp3`);
+  try {
+    fs.writeFileSync(inPath, input);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inPath)
+        .audioFilters(['adelay=1000:all=1', 'apad=pad_dur=1'])
+        .outputOptions(['-c:a libmp3lame', '-b:a 128k', '-ar 44100'])
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(err))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } catch (err) {
+    console.warn('[Audio Pad] Failed to pad speech, using unpadded audio:', err);
+    return input;
+  } finally {
+    for (const p of [inPath, outPath]) {
+      try { fs.unlinkSync(p); } catch { /* already gone */ }
+    }
+  }
+}
 
 async function uploadToSupabaseStorage(
   buffer: Buffer,
@@ -772,10 +812,10 @@ export async function POST(req: NextRequest) {
       
       if (needTTS) {
         if (customAudioFile) {
-          console.log('[STEP 2] Custom audio file uploaded. Saving to Supabase...');
-          const audioBuffer = Buffer.from(await customAudioFile.arrayBuffer());
-          audioPath = `audio/${userEmail}/${timestamp}_custom_tts.${customAudioFile.type.split('/')[1] || 'mp3'}`;
-          audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, customAudioFile.type);
+          console.log('[STEP 2] Custom audio file uploaded. Padding with lead-in/out silence...');
+          const audioBuffer = await padSpeechWithSilence(Buffer.from(await customAudioFile.arrayBuffer()), 'custom');
+          audioPath = `audio/${userEmail}/${timestamp}_custom_tts.mp3`; // normalised to MP3 by the padding pass
+          audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
           console.log('[STEP 2] Custom audio uploaded:', audioUrl);
         } else if (scriptText) {
           console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId} with speed: ${speedFactor}...`);
@@ -789,9 +829,10 @@ export async function POST(req: NextRequest) {
           } else {
             audioBuffer = await generateTTS(scriptText, voiceId, speedFactor);
           }
+          audioBuffer = await padSpeechWithSilence(audioBuffer, 'tts');
           audioPath = `audio/${userEmail}/${timestamp}_tts.mp3`;
           audioUrl = await uploadToSupabaseStorage(audioBuffer, audioPath, 'audio/mpeg');
-          console.log('[STEP 2] TTS audio uploaded:', audioUrl);
+          console.log('[STEP 2] TTS audio uploaded (padded 1s head/tail):', audioUrl);
         }
       }
       return { audioUrl, audioPath };
