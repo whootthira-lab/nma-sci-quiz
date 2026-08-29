@@ -36,6 +36,36 @@ function baseAppId(endpoint: string): string {
   return parts.length <= 2 ? parts.join('/') : parts.slice(0, 2).join('/');
 }
 
+/** Remux with the audio held back by `seconds`; video copied bit-for-bit. On any failure
+ *  the original clip goes through — slightly early sound beats a failed generation. */
+async function delayAudioTrack(input: Buffer, seconds: number): Promise<any> {
+  const dir = os.tmpdir();
+  const inPath = path.join(dir, `avshift_in_${Date.now()}.mp4`);
+  const outPath = path.join(dir, `avshift_out_${Date.now()}.mp4`);
+  try {
+    fs.writeFileSync(inPath, input);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(inPath)
+        .input(inPath)
+        // fluent-ffmpeg applies inputOptions to the most recently added input — the audio one
+        .inputOptions([`-itsoffset ${seconds}`])
+        .outputOptions(['-map 0:v', '-map 1:a', '-c:v copy', '-c:a aac', '-ar 44100', '-shortest'])
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(err))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } catch (err) {
+    console.warn('[AV Shift] Failed to delay audio, keeping original clip:', err);
+    return input;
+  } finally {
+    for (const p of [inPath, outPath]) {
+      try { fs.unlinkSync(p); } catch { /* already gone */ }
+    }
+  }
+}
+
 async function uploadToFirebaseStorage(
   buffer: Buffer,
   path: string,
@@ -491,7 +521,16 @@ export async function POST(req: NextRequest) {
       console.log(`⏳ [KRUTH Status] AI ทำงานเสร็จแล้ว! กำลังโหลด${fileTypeLabel}มาเก็บที่ ${finalStorageProvider}...`);
 
       const videoRes = await fetch(tempUrl);
-      const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+      let videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+
+      // Kling's lip-sync draws the mouth a steady ~0.25s behind the sound — measured by
+      // frame-stepping around the speech onset (audio at 1.14s, lips parting at 1.3–1.4s)
+      // and confirmed at the tail. A constant lag has a constant cure: hold the audio back
+      // by the same amount at mux time. Video stream is copied untouched; only here, on
+      // the finished lip-synced clip, never for other phases.
+      if (isLipsyncPhase && !isImage) {
+        videoBuffer = await delayAudioTrack(videoBuffer, 0.25);
+      }
 
       let publicUrl = '';
       if (finalStorageProvider === 'firebase') {
