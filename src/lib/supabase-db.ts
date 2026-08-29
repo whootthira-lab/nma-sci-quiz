@@ -12,13 +12,21 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
 export async function checkWhitelistUser(email: string) {
   // Query profiles to check if the user is registered (meaning whitelisted and signed up)
   // or query whitelist table directly if they are just logging in.
+  // maybeSingle so that "no row" comes back as data:null with NO error — a real error here
+  // means the lookup itself failed (network drop, timeout) and MUST NOT read as "not
+  // whitelisted": the auth layer signs people out over that answer, and this check re-runs
+  // on every token refresh, so one bad moment of connectivity was ejecting active users.
   const { data, error } = await supabase
     .from('whitelist')
     .select('email, display_name, expires_at, generation_limit')
     .eq('email', email)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
+  if (error) {
+    throw new Error(`whitelist lookup failed: ${error.message}`);
+  }
+
+  if (!data) {
     // If not in whitelist, check if they are the super admin
     if (email === 'whootthira@gmail.com') {
       return { 
@@ -33,12 +41,13 @@ export async function checkWhitelistUser(email: string) {
     return null;
   }
 
-  // Also fetch profile role if they already signed up
+  // Also fetch profile role if they already signed up (best-effort: role only affects
+  // which menus render, so a failed read must not fail the whole check)
   const { data: profile } = await supabase
     .from('profiles')
     .select('role')
     .eq('email', email)
-    .single();
+    .maybeSingle();
 
   return {
     email: data.email,

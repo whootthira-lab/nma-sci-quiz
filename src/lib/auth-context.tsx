@@ -49,8 +49,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const valid = isSuperAdmin ? true : await isSessionValid(email);
       
       if (valid) {
-        const userData = await checkWhitelistUser(email);
-        
+        // This runs again on every token refresh and tab re-focus, not just at login. A
+        // lookup that FAILED (network blip while a big upload hogs the line, a slow moment
+        // on the database) says nothing about whether the person is allowed in — so keep
+        // the session exactly as it is and let the next event re-check. Only a lookup that
+        // SUCCEEDED and answered "no such user" may sign someone out.
+        let userData: any = null;
+        try {
+          userData = await checkWhitelistUser(email);
+        } catch (err) {
+          console.warn('[auth] whitelist re-check failed, keeping current session:', err);
+          setLoading(false);
+          return;
+        }
+
         // 🛡️ Super Admin เข้าได้เสมอ แม้จะไม่มีรายชื่อใน Whitelist Database
         if (userData || isSuperAdmin) {
           setUser(supabaseUser);
