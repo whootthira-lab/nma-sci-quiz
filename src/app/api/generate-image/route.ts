@@ -216,7 +216,10 @@ export async function POST(req: NextRequest) {
     // a fraction of a cent while an upscale runs tens of times that, so charging one flat
     // price meant the cheap modes subsidised the expensive ones. Credits are stored x10.
     const creditsForMode = (): number => {
-      if (imageMode === 'upscale') return 60;                    // heaviest by a wide margin
+      // The fill model bills per megapixel of input AND output — August usage shows
+      // ~$0.117 per real-world call, not the $0.02 these modes were charged.
+      if (imageMode === 'inpainting' || imageMode === 'outpainting') return 120;
+      if (imageMode === 'upscale') return 100;                   // $0.03/MP × a typical 3MP+ output
       if (useChosenEditor) return chosenEditor!.credits;    // charge for the model picked
       if (imageMode === 'kontext') return 40;
       if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 30;

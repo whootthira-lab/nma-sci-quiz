@@ -838,7 +838,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   // --- Submit & API Generation logic ---
   // Mirrors the server's creditsForMode, so the button quotes the price actually charged
   const displayCost = (): number => {
-    if (imageMode === 'upscale') return 6;
+    if (imageMode === 'inpainting' || imageMode === 'outpainting') return 12;
+    if (imageMode === 'upscale') return 10;
     const editorPicked = EDIT_CAPABLE_MODES.includes(imageMode) && (imageMode === 'camera' || editModel !== 'auto');
     if (editorPicked) {
       const m = EDIT_MODEL_OPTIONS.find((o) => o.id === (editModel === 'auto' ? 'flux2' : editModel));
