@@ -661,12 +661,11 @@ export async function POST(req: NextRequest) {
       modelType === 'veo3' || (modelType === 'fast' && klingResolution === '1080p');
     const needsAmbientPass = ambientAudioEnabled && isNoSpeech && !modelScoresItself;
 
-    // Lip-sync runs over the full clip whenever there is speech, and at $8/minute it is
-    // the single largest line in the August bill — 59% of everything spent, more than the
-    // video models themselves — yet it was never priced in. 14 credits/second ≈ its
-    // $0.1333/second billed rate.
+    // Lip-sync runs over the full clip whenever there is speech. The old engine billed
+    // $8/minute — 59% of the whole August bill, never priced in; the switch to Kling's
+    // lip-sync ($0.014/second, same measured quality) brings the surcharge down to 2.
     const willLipsync = !isNoSpeech && (!isMotionControl || motionAudioSource === 'botnoi' || motionAudioSource === 'tts');
-    const LIPSYNC_RATE = 14;
+    const LIPSYNC_RATE = 2;
     const requiredCredits = (((ratePerSecond + (willLipsync ? LIPSYNC_RATE : 0)) * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0); // Scaled x10 (Base cost + 1 credit GPT fee)
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 

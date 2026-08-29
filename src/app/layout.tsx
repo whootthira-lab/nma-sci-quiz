@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { AuthProvider } from '@/lib/auth-context';
+import StaleBuildReloader from '@/components/StaleBuildReloader';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -16,6 +17,7 @@ export default function RootLayout({
     <html lang="th" className="dark">
       <body className="min-h-screen bg-surface-0 font-body antialiased">
         <AuthProvider>
+          <StaleBuildReloader />
           <div className="min-h-screen bg-grid-pattern">
             {children}
           </div>

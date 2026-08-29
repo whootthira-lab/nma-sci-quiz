@@ -15,7 +15,11 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-const LIPSYNC_ENDPOINT = 'fal-ai/sync-lipsync/v3';
+// Kling's own lip-sync: measured head-to-head against sync-lipsync v3 on the same base
+// video and audio — mouth closed through both silent paddings, open mid-word during
+// speech, same facial fidelity, fuller frame — at $0.014/second against v3's $0.1333,
+// which alone was 59% of the August bill.
+const LIPSYNC_ENDPOINT = 'fal-ai/kling-video/lipsync/audio-to-video';
 const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2';
 const FACE_RESTORE_ENDPOINT = 'fal-ai/face-swap';
 
@@ -438,8 +442,7 @@ export async function POST(req: NextRequest) {
             },
             body: JSON.stringify({
               video_url: tempUrl,
-              audio_url: audioUrl,
-              sync_mode: 'cut_off'
+              audio_url: audioUrl
             })
           });
 
