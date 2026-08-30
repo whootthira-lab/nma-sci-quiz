@@ -183,18 +183,33 @@ export async function POST(req: NextRequest) {
     // Verify Whitelist and Credits Balance
     const isSuperAdmin = userEmail === 'whootthira@gmail.com';
     let whitelistUser: any = null;
+    // "The lookup failed" and "no such row" must part ways here: maybeSingle answers
+    // data:null with NO error when the row is absent, so a thrown/returned error can only
+    // mean the lookup itself broke — and that says nothing about the person's permission.
+    // Conflating them told legitimate users "Not Whitelisted" whenever the database
+    // stuttered for a moment. The email is matched lowercase, the way the admin page
+    // stores it.
+    let whitelistLookupFailed = false;
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('whitelist')
         .select('generation_limit, expires_at')
-        .eq('email', userEmail)
-        .single();
+        .eq('email', (userEmail || '').trim().toLowerCase())
+        .maybeSingle();
+      if (error) throw error;
       whitelistUser = data;
     } catch (e) {
-      console.warn('Error reading whitelist entry:', e);
+      whitelistLookupFailed = true;
+      console.warn('Whitelist lookup failed (transient):', e);
     }
 
     if (!isSuperAdmin) {
+      if (whitelistLookupFailed) {
+        return NextResponse.json(
+          { success: false, error: 'ระบบตรวจสอบสิทธิ์ขัดข้องชั่วขณะ กรุณากดสร้างใหม่อีกครั้ง (สิทธิ์ของคุณไม่ได้ถูกเพิกถอน)' },
+          { status: 503 }
+        );
+      }
       if (!whitelistUser) {
         return NextResponse.json(
           { success: false, error: 'ขออภัย บัญชีของคุณไม่อยู่ในรายชื่อผู้ได้รับอนุญาตให้ใช้งาน (Not Whitelisted)' },
