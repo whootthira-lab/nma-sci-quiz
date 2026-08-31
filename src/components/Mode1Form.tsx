@@ -19,7 +19,7 @@ import {
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
-import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS , VOICE_EMOTIONS } from '@/types';
+import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS , VOICE_EMOTIONS , voiceInstructionByEmotionId } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage } from '@/lib/image-utils';
 import { getCharacters, supabase } from '@/lib/supabase-db';
@@ -132,7 +132,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
   const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice' | 'gemini'>('google');
-  const [voiceEmotion, setVoiceEmotion] = useState('none');
+  const [voiceEmotion, setVoiceEmotion] = useState('auto');
 
   // Safety filter and legal liability modal states
   const [showLiabilityModal, setShowLiabilityModal] = useState<boolean>(false);
@@ -706,9 +706,12 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         }
         formData.append('tts_provider', ttsProvider);
         formData.append('voice_id', selectedVoice);
-        const chosenEmotion = VOICE_EMOTIONS.find((em) => em.id === voiceEmotion);
-        if (ttsProvider === 'gemini' && chosenEmotion?.instruction) {
-          formData.append('voice_emotion_instruction', chosenEmotion.instruction);
+        if (ttsProvider === 'gemini') {
+          // 'auto' = the face and the voice act the same emotion, picked once up top
+          const instruction = voiceEmotion === 'auto'
+            ? voiceInstructionByEmotionId(characterEmotion, customEmotionText)
+            : (VOICE_EMOTIONS.find((em) => em.id === voiceEmotion)?.instruction || '');
+          if (instruction) formData.append('voice_emotion_instruction', instruction);
         }
       } else {
         formData.append('tts_provider', 'none');
