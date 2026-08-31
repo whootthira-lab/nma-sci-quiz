@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     out.tone = 'ok';
     await new Promise<void>((resolve, reject) => {
       ffmpeg(tone)
-        .audioFilters(['aformat=channel_layouts=mono', 'adelay=1000', 'apad=pad_dur=1'])
+        .audioFilters(['aformat=channel_layouts=mono', 'aresample=44100', 'adelay=1000', 'apad=pad_len=44100'])
         .outputOptions(['-c:a libmp3lame', '-b:a 128k', '-ar 44100'])
         .on('end', () => resolve())
         .on('error', (err: any) => reject(err))

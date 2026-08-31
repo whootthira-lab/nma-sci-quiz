@@ -26,12 +26,14 @@ async function padSpeechWithSilence(input: Buffer, tag: string): Promise<Buffer>
   try {
     fs.writeFileSync(inPath, input);
     await new Promise<void>((resolve, reject) => {
-      // No `adelay=...:all=1` here: that option needs ffmpeg 4.2 and the linux binary the
-      // deployment runs is 4.1, where it fails — silently, through the fallback below, so
-      // production clips shipped unpadded while local (darwin, 4.4) tests passed. Folding
-      // to mono first makes a bare `adelay=1000` delay every channel on any version.
+      // The deployed linux ffmpeg is a 2018 static build (verified via the diag endpoint:
+      // N-47683), which predates adelay's all=1 AND apad's pad_dur — both failed there
+      // through the silent fallback, so production clips shipped unpadded while local
+      // (darwin 4.4) tests passed. This chain sticks to options that old build has:
+      // fold to mono, fix the rate, delay the (single) channel, pad a rate's worth of
+      // samples at the tail.
       ffmpeg(inPath)
-        .audioFilters(['aformat=channel_layouts=mono', 'adelay=1000', 'apad=pad_dur=1'])
+        .audioFilters(['aformat=channel_layouts=mono', 'aresample=44100', 'adelay=1000', 'apad=pad_len=44100'])
         .outputOptions(['-c:a libmp3lame', '-b:a 128k', '-ar 44100'])
         .on('end', () => resolve())
         .on('error', (err: any) => reject(err))
