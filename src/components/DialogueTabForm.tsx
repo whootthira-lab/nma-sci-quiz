@@ -43,7 +43,7 @@ interface Character {
   // Optional columns: when present, a character always speaks with the same voice.
   // Absent on older databases — the UI falls back to reusing the voice from other cards.
   default_voice_id?: string;
-  default_tts_provider?: 'google' | 'openai' | 'cosyvoice';
+  default_tts_provider?: 'google' | 'openai' | 'cosyvoice' | 'gemini';
 }
 // A scene owns its own background image and face tags, so a project can change location.
 // Clips within a scene are composited onto that scene's image; scenes are then joined.
@@ -63,7 +63,7 @@ interface DialogueCardData {
   sceneId: string;
   characterId: string;
   voiceId: string;
-  ttsProvider: 'google' | 'openai' | 'cosyvoice'; // per-card voice provider (overrides the global default)
+  ttsProvider: 'google' | 'openai' | 'cosyvoice' | 'gemini'; // per-card voice provider (overrides the global default)
   audioFile?: File | null; // optional uploaded audio → used instead of TTS for this line
   audioName?: string;
   scriptText: string;
@@ -150,7 +150,7 @@ export default function DialogueTabForm() {
   // Project settings
   const [projectTitle, setProjectTitle] = useState('บทสนทนาของฉัน');
   const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice'>('google');
+  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice' | 'gemini'>('google');
   
   // List of characters from DB
   const [characterList, setCharacterList] = useState<Character[]>([]);
@@ -1043,6 +1043,11 @@ export default function DialogueTabForm() {
       } else {
         formData.append('tts_provider', card.ttsProvider);
         formData.append('voice_id', card.voiceId);
+        // Gemini reads tone from words: hand the card's acting emotion to the voice too,
+        // so a line marked "ตื่นเต้น" is also SPOKEN excitedly, not just mimed.
+        if (card.ttsProvider === 'gemini' && finalEmotion && finalEmotion !== 'none') {
+          formData.append('voice_emotion_instruction', `พูดด้วยน้ำเสียงตามอารมณ์นี้: ${finalEmotion}. `);
+        }
       }
       formData.append('aspect_ratio', aspectRatio);
       formData.append('user_email', user?.email || '');
@@ -1456,6 +1461,7 @@ export default function DialogueTabForm() {
               <option value="google">🌐 Google Cloud Neural2</option>
               <option value="openai">🧠 OpenAI Speech</option>
               <option value="cosyvoice">🔥 SiliconFlow CosyVoice2</option>
+              <option value="gemini">🧪 Gemini (สั่งอารมณ์ได้)</option>
             </select>
           </div>
         </div>
@@ -1725,6 +1731,7 @@ export default function DialogueTabForm() {
                           >
                             <option value="google">🌐 Google</option>
                             <option value="cosyvoice">🔥 CosyVoice</option>
+                            <option value="gemini">🧪 Gemini</option>
                             <option value="openai">🧠 OpenAI</option>
                           </select>
                           <select
@@ -1888,7 +1895,7 @@ export default function DialogueTabForm() {
                                 <select
                                   value={card.ttsProvider}
                                   onChange={(e) => {
-                                    const p = e.target.value as 'google' | 'openai' | 'cosyvoice';
+                                    const p = e.target.value as 'google' | 'openai' | 'cosyvoice' | 'gemini';
                                     const first = THAI_VOICES.find((v) => v.provider === p);
                                     updateCard(card.id, { ttsProvider: p, voiceId: first ? first.id : '' });
                                   }}
@@ -1896,6 +1903,7 @@ export default function DialogueTabForm() {
                                 >
                                   <option value="google">🌐 Google (ไทยแท้)</option>
                                   <option value="cosyvoice">🔥 CosyVoice</option>
+                            <option value="gemini">🧪 Gemini</option>
                                   <option value="openai">🧠 OpenAI</option>
                                 </select>
                                 <div className="flex gap-2">

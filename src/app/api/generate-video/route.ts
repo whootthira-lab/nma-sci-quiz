@@ -132,6 +132,62 @@ async function generateTTS(text: string, voiceId: string, speedFactor: number = 
   return Buffer.from(arrayBuffer);
 }
 
+/**
+ * Gemini TTS: the whole point over the Cloud voices is that tone is steerable with plain
+ * Thai ("พูดอย่างอบอุ่น...") — the emotion arrives as an instruction prefixed to the text.
+ * The model answers raw PCM (s16le mono 24kHz), converted here to the MP3 the rest of the
+ * pipeline expects. Speed has no parameter either, so a large deviation is asked for in
+ * words; small ones are left alone rather than fought over.
+ */
+async function generateGeminiTTS(text: string, voiceId: string, speedFactor: number = 1.0, emotionInstruction: string = ''): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('ไม่พบ GEMINI_API_KEY ในระบบ สำหรับการใช้งานเสียง Gemini');
+
+  let prefix = emotionInstruction || '';
+  if (speedFactor <= 0.85) prefix = `พูดช้าลงกว่าปกติ ${prefix}`;
+  else if (speedFactor >= 1.15) prefix = `พูดเร็วขึ้นกว่าปกติเล็กน้อย ${prefix}`;
+  const fullText = prefix ? `${prefix}${prefix.endsWith(': ') ? '' : ': '}${text}` : text;
+
+  console.log(`[Gemini TTS] voice=${voiceId} emotion="${emotionInstruction.slice(0, 40)}"`);
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: fullText }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId } } }
+      }
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini TTS ล้มเหลว (${res.status}): ${errText.slice(0, 150)}`);
+  }
+  const data = await res.json();
+  const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!b64) throw new Error('Gemini TTS ไม่ได้ส่งเสียงกลับมา');
+  const pcm = Buffer.from(b64, 'base64');
+
+  const dir = os.tmpdir();
+  const inPath = path.join(dir, `gtts_${Date.now()}.pcm`);
+  const outPath = path.join(dir, `gtts_${Date.now()}.mp3`);
+  try {
+    fs.writeFileSync(inPath, pcm);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inPath)
+        .inputOptions(['-f s16le', '-ar 24000', '-ac 1'])
+        .outputOptions(['-c:a libmp3lame', '-b:a 128k'])
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(err))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath) as Buffer;
+  } finally {
+    for (const p of [inPath, outPath]) { try { fs.unlinkSync(p); } catch { /* gone */ } }
+  }
+}
+
 async function generateGoogleTTS(text: string, voiceId: string, speedFactor: number = 1.0): Promise<Buffer> {
   const apiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   if (!apiKey) throw new Error('ไม่พบ GOOGLE_API_KEY ในระบบ สำหรับการใช้งาน Google TTS');
@@ -497,6 +553,8 @@ export async function POST(req: NextRequest) {
     const imageFile = formData.get('image') as File | null;
     const endImageFile = formData.get('end_image') as File | null;
     const customAudioFile = formData.get('custom_audio') as File | null;
+    const voiceEmotionInstruction = (formData.get('voice_emotion_instruction') as string) || '';
+    const isAutoDuration = formData.get('is_auto_duration') === 'true';
     const isNoSpeech = formData.get('is_no_speech') === 'true';
     const visualStyle = formData.get('visual_style') as string || 'none';
     const videoFile = formData.get('video') as File;
@@ -669,7 +727,7 @@ export async function POST(req: NextRequest) {
       ratePerSecond = 8;
     }
 
-    const duration = isMotionControl ? 5 : selectedDuration;
+    let duration = isMotionControl ? 5 : selectedDuration;
     // Veo 3 and Kling 2.6 Pro can score themselves; every other engine returns a silent clip,
     // so a soundtrack has to be added after the video exists.
     const modelScoresItself =
@@ -681,7 +739,7 @@ export async function POST(req: NextRequest) {
     // lip-sync ($0.014/second, same measured quality) brings the surcharge down to 2.
     const willLipsync = !isNoSpeech && (!isMotionControl || motionAudioSource === 'botnoi' || motionAudioSource === 'tts');
     const LIPSYNC_RATE = 2;
-    const requiredCredits = (((ratePerSecond + (willLipsync ? LIPSYNC_RATE : 0)) * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0); // Scaled x10 (Base cost + 1 credit GPT fee)
+    let requiredCredits = (((ratePerSecond + (willLipsync ? LIPSYNC_RATE : 0)) * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0); // Scaled x10 (Base cost + 1 credit GPT fee)
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
 
     if (!isSuperAdmin && userCredits < requiredCredits) {
@@ -841,7 +899,9 @@ export async function POST(req: NextRequest) {
         } else if (scriptText) {
           console.log(`[STEP 2] Generating TTS audio using provider: ${ttsProvider}, voice ID: ${voiceId} with speed: ${speedFactor}...`);
           let audioBuffer: Buffer;
-          if (ttsProvider === 'google') {
+          if (ttsProvider === 'gemini') {
+            audioBuffer = await generateGeminiTTS(scriptText, voiceId, speedFactor, voiceEmotionInstruction);
+          } else if (ttsProvider === 'google') {
             audioBuffer = await generateGoogleTTS(scriptText, voiceId, speedFactor);
           } else if (ttsProvider === 'openai') {
             audioBuffer = await generateOpenAITTS(scriptText, voiceId, speedFactor);
@@ -856,7 +916,37 @@ export async function POST(req: NextRequest) {
           console.log('[STEP 2] TTS audio uploaded (padded 1s head/tail):', audioUrl);
         }
       }
-      return { audioUrl, audioPath };
+      // The padded file's real length: the one number that makes duration a fact
+      // instead of a guess from character counts.
+      let audioSeconds = 0;
+      if (audioUrl) {
+        try {
+          const probeIn = path.join(os.tmpdir(), `dur_${Date.now()}.mp3`);
+          const resp = await fetch(audioUrl);
+          fs.writeFileSync(probeIn, Buffer.from(await resp.arrayBuffer()));
+          audioSeconds = await new Promise<number>((resolve) => {
+            ffmpeg.ffprobe ? ffmpeg.ffprobe(probeIn, (err: any, meta: any) => {
+              resolve(err ? 0 : (meta?.format?.duration || 0));
+            }) : resolve(0);
+          });
+          if (!audioSeconds) {
+            // no ffprobe binary in this environment — read duration from ffmpeg's banner
+            audioSeconds = await new Promise<number>((resolve) => {
+              let stderr = '';
+              const proc = require('child_process').spawn(ffmpegInstaller.path, ['-i', probeIn]);
+              proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+              proc.on('close', () => {
+                const m = stderr.match(/Duration: (\d+):(\d+):([\d.]+)/);
+                resolve(m ? (+m[1] * 3600 + +m[2] * 60 + +m[3]) : 0);
+              });
+            });
+          }
+          try { fs.unlinkSync(probeIn); } catch { /* gone */ }
+        } catch (e) {
+          console.warn('[TTS] Could not measure audio duration:', e);
+        }
+      }
+      return { audioUrl, audioPath, audioSeconds };
     })();
 
     // Await all independent tasks concurrently to minimize Vercel API Timeout risks
@@ -944,6 +1034,29 @@ export async function POST(req: NextRequest) {
     const endImagePath = endImgResult?.endImagePath || '';
     const audioUrl = ttsResult?.audioUrl || '';
     const audioPath = ttsResult?.audioPath || '';
+
+    // With the padded audio in hand its true length is known, so on auto-duration the
+    // clip length becomes a measurement, not an estimate from counting characters — the
+    // estimate routinely bought 10 seconds of video for 4 seconds of speech, or clipped
+    // the ending. Only the tiered engines take the override; Veo and Sora render fixed
+    // lengths, and the charge is re-derived from the same number the video is bought at.
+    const measuredSecs = ttsResult?.audioSeconds || 0;
+    if (isAutoDuration && !isMotionControl && measuredSecs > 0) {
+      const target = measuredSecs + 0.3;
+      let fitted = duration;
+      if (modelType === 'cinema') {
+        fitted = target <= 5 ? 5 : target <= 10 ? 10 : target <= 15 ? 15 : 25;
+      } else if (modelType === 'grok-video') {
+        fitted = Math.max(1, Math.min(15, Math.ceil(target)));
+      } else if (modelType !== 'veo3' && modelType !== 'sora2') {
+        fitted = target <= 5 ? 5 : 10;
+      }
+      if (fitted !== duration) {
+        console.log(`[Auto Duration] measured ${measuredSecs.toFixed(1)}s of audio → ${fitted}s clip (was ${duration}s)`);
+        duration = fitted;
+        requiredCredits = (((ratePerSecond + (willLipsync ? LIPSYNC_RATE : 0)) * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0);
+      }
+    }
 
     // 3. Configure endpoint
     const isCinema = modelType === 'cinema';
@@ -1053,8 +1166,8 @@ export async function POST(req: NextRequest) {
       // 4. Build Fal.ai request body
       let requestBody: Record<string, any>;
       if (isCinema) {
-        const wanParams = getWanVideoParams(selectedDuration);
-        console.log(`[Wan 2.5 Cinema Params] Selected duration: ${selectedDuration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
+        const wanParams = getWanVideoParams(duration);
+        console.log(`[Wan 2.5 Cinema Params] Selected duration: ${duration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
         
         let negativePrompt = 'blurry, distorted, low quality, static, frozen';
         if (characterNegativePrompt) {
@@ -1090,7 +1203,7 @@ export async function POST(req: NextRequest) {
         requestBody = {
           prompt: videoPrompt,
           aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-          duration: selectedDuration,
+          duration: duration,
           resolution: grokResolution,
           enable_safety_checker: !safetyFilterDisabled,
           enable_safety_checks: !safetyFilterDisabled,
@@ -1127,7 +1240,7 @@ export async function POST(req: NextRequest) {
         requestBody = {
           prompt: videoPrompt,
           input_image_urls: [imageUrl, ...(extraImageUrls || [])].filter(Boolean).slice(0, 4),
-          duration: String(selectedDuration <= 5 ? 5 : 10),
+          duration: String(duration <= 5 ? 5 : 10),
           aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
         };
         if (characterNegativePrompt) {
@@ -1138,7 +1251,7 @@ export async function POST(req: NextRequest) {
         requestBody = {
           prompt: videoPrompt,
           resolution: seedanceResolution,
-          duration: String(selectedDuration <= 5 ? 5 : 10),
+          duration: String(duration <= 5 ? 5 : 10),
           camera_fixed: false,
         };
         if (videoMode === 'image_to_video') {
@@ -1150,7 +1263,7 @@ export async function POST(req: NextRequest) {
         requestBody = {
           prompt: videoPrompt,
           aspect_ratio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1',
-          duration: selectedDuration <= 5 ? 5 : 10,
+          duration: duration <= 5 ? 5 : 10,
         };
         if (modelEndpoint.includes('kling-video/v2.6/pro')) {
           requestBody.generate_audio = (klingAudioEnabled || ambientAudioEnabled) && isNoSpeech;
@@ -1303,7 +1416,7 @@ export async function POST(req: NextRequest) {
             tts_provider: isNoSpeech ? 'none' : (customAudioFile ? 'custom_upload' : ttsProvider),
             storage_provider: storageProvider,
             aspect_ratio: isMotionControl ? 'auto' : aspectRatio,
-            duration_estimate: selectedDuration,
+            duration_estimate: duration,
             storage_path: videoPath,
             image_path: imagePath,
             end_image_path: endImagePath || null,

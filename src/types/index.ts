@@ -36,12 +36,22 @@ export interface ThaiVoice {
   label: string;
   gender: 'male' | 'female';
   sample_url: string;
-  provider: 'botnoi' | 'google' | 'openai' | 'cosyvoice';
+  provider: 'botnoi' | 'google' | 'openai' | 'cosyvoice' | 'gemini';
   // 'native' = ออกเสียงไทยได้ถูกต้องตามธรรมชาติ, 'foreign' = โมเดลไม่ได้เทรนภาษาไทยโดยตรง จะมีสำเนียงต่างชาติเมื่ออ่านไทย
   accent?: 'native' | 'foreign';
 }
 
 export const THAI_VOICES: ThaiVoice[] = [
+  // Gemini TTS — เสียงกลุ่มทดลอง สั่งอารมณ์ด้วยข้อความได้ (คัดชุดสุดท้ายหลังทีมฟังจากห้องฟังเสียง)
+  { id: 'Kore', name: 'Kore', label: '🧪 คอรี (หญิง, Gemini สั่งอารมณ์ได้)', gender: 'female', sample_url: '', provider: 'gemini' },
+  { id: 'Aoede', name: 'Aoede', label: '🧪 อาอีดี (หญิง, Gemini สั่งอารมณ์ได้)', gender: 'female', sample_url: '', provider: 'gemini' },
+  { id: 'Leda', name: 'Leda', label: '🧪 ลีดา (หญิง, Gemini สั่งอารมณ์ได้)', gender: 'female', sample_url: '', provider: 'gemini' },
+  { id: 'Zephyr', name: 'Zephyr', label: '🧪 เซเฟอร์ (หญิง, Gemini สั่งอารมณ์ได้)', gender: 'female', sample_url: '', provider: 'gemini' },
+  { id: 'Charon', name: 'Charon', label: '🧪 คารอน (ชาย, Gemini สั่งอารมณ์ได้)', gender: 'male', sample_url: '', provider: 'gemini' },
+  { id: 'Puck', name: 'Puck', label: '🧪 พัค (ชาย, Gemini สั่งอารมณ์ได้)', gender: 'male', sample_url: '', provider: 'gemini' },
+  { id: 'Orus', name: 'Orus', label: '🧪 โอรัส (ชาย, Gemini สั่งอารมณ์ได้)', gender: 'male', sample_url: '', provider: 'gemini' },
+  { id: 'Fenrir', name: 'Fenrir', label: '🧪 เฟนเรียร์ (ชาย, Gemini สั่งอารมณ์ได้)', gender: 'male', sample_url: '', provider: 'gemini' },
+
   // Google Cloud TTS (Neural2, Standard, Chirp3) — เสียงไทยแท้ (native th-TH)
   { id: 'th-TH-Neural2-C', name: 'G-Neural-C', label: '🇹🇭 จี-เนอรัล C (หญิง, ไทยแท้ Neural2 สมจริง)', gender: 'female', sample_url: '/samples/g-neural-c.mp3', provider: 'google', accent: 'native' },
   { id: 'th-TH-Standard-A', name: 'G-Standard-A', label: '🇹🇭 จี-สแตนดาร์ด A (หญิง, ไทยแท้ คุ้มค่า)', gender: 'female', sample_url: '/samples/g-standard-a.mp3', provider: 'google', accent: 'native' },
@@ -171,3 +181,13 @@ export function estimateThaiDuration(text: string): number {
   const seconds = Math.ceil(charCount / 17);
   return Math.max(3, Math.min(seconds, 30)); // Clamp 3-30s
 }
+
+// น้ำเสียงที่สั่งได้เมื่อใช้เสียง Gemini — ข้อความนำหน้าคือคำสั่งจริงที่ส่งให้โมเดล
+export const VOICE_EMOTIONS: { id: string; label: string; instruction: string }[] = [
+  { id: 'none',      label: '🎙 โทนปกติ',              instruction: '' },
+  { id: 'warm',      label: '🤗 อบอุ่น ให้กำลังใจ',      instruction: 'พูดด้วยน้ำเสียงอบอุ่น อ่อนโยน ให้กำลังใจ เหมือนครูที่ใจดีที่สุด: ' },
+  { id: 'excited',   label: '🎉 ตื่นเต้น สนุกสนาน',      instruction: 'พูดด้วยน้ำเสียงตื่นเต้น สนุกสนาน มีพลัง ชวนให้อยากรู้: ' },
+  { id: 'serious',   label: '📰 จริงจัง ชัดถ้อยชัดคำ',    instruction: 'พูดด้วยน้ำเสียงจริงจัง ชัดถ้อยชัดคำ น่าเชื่อถือ แบบผู้ประกาศข่าว: ' },
+  { id: 'gentle',    label: '🌙 นุ่มนวล ผ่อนคลาย',       instruction: 'พูดด้วยน้ำเสียงนุ่มนวล ช้าๆ ผ่อนคลาย สบายหู: ' },
+  { id: 'storytale', label: '📖 เล่านิทาน',              instruction: 'พูดแบบนักเล่านิทาน มีจังหวะขึ้นลง ชวนติดตาม ใส่ความรู้สึกตามเนื้อเรื่อง: ' },
+];

@@ -7,7 +7,7 @@ import { THAI_VOICES, type ThaiVoice } from '@/types';
 interface VoicePreviewProps {
   selectedVoice: string;
   onSelect: (voiceId: string) => void;
-  ttsProvider?: 'google' | 'openai' | 'cosyvoice';
+  ttsProvider?: 'google' | 'openai' | 'cosyvoice' | 'gemini';
 }
 
 export default function VoicePreview({ selectedVoice, onSelect, ttsProvider = 'google' }: VoicePreviewProps) {

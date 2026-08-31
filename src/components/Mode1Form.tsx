@@ -19,7 +19,7 @@ import {
 import VoicePreview from './VoicePreview';
 import ProcessingOverlay from './ProcessingOverlay';
 import ImageCropperModal from './ImageCropperModal';
-import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS } from '@/types';
+import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS , VOICE_EMOTIONS } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage } from '@/lib/image-utils';
 import { getCharacters, supabase } from '@/lib/supabase-db';
@@ -131,7 +131,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   
   // Storage & TTS Providers
   const [storageProvider, setStorageProvider] = useState<'supabase' | 'firebase'>('supabase');
-  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice'>('google');
+  const [ttsProvider, setTtsProvider] = useState<'google' | 'openai' | 'cosyvoice' | 'gemini'>('google');
+  const [voiceEmotion, setVoiceEmotion] = useState('none');
 
   // Safety filter and legal liability modal states
   const [showLiabilityModal, setShowLiabilityModal] = useState<boolean>(false);
@@ -705,6 +706,10 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         }
         formData.append('tts_provider', ttsProvider);
         formData.append('voice_id', selectedVoice);
+        const chosenEmotion = VOICE_EMOTIONS.find((em) => em.id === voiceEmotion);
+        if (ttsProvider === 'gemini' && chosenEmotion?.instruction) {
+          formData.append('voice_emotion_instruction', chosenEmotion.instruction);
+        }
       } else {
         formData.append('tts_provider', 'none');
       }
@@ -716,6 +721,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('video_mode', videoMode);
       formData.append('storage_provider', storageProvider);
       formData.append('duration', String(selectedDuration));
+      formData.append('is_auto_duration', String(isAutoDuration));
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -1588,7 +1594,38 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 >
                   🎙️ CosyVoice
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsProvider('gemini');
+                    setSelectedVoice('Kore');
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    ttsProvider === 'gemini'
+                      ? 'bg-[#1A1A1A] text-[#D4AF37] border border-[#D4AF37] shadow-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 hover:border-[#1A1A1A]'
+                  }`}
+                >
+                  🧪 Gemini
+                </button>
               </div>
+              {ttsProvider === 'gemini' && (
+                <div className="space-y-1.5 animate-fade-in">
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
+                    🎭 น้ำเสียง/อารมณ์ของเสียงพากย์
+                  </label>
+                  <select
+                    value={voiceEmotion}
+                    onChange={(e) => setVoiceEmotion(e.target.value)}
+                    className="w-full max-w-md bg-white border border-gray-200 p-2.5 rounded-xl text-sm text-gray-800 outline-none cursor-pointer font-thai"
+                  >
+                    {VOICE_EMOTIONS.map((em) => (
+                      <option key={em.id} value={em.id}>{em.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-gray-400 font-thai">มีเฉพาะเสียงกลุ่ม Gemini — เสียงอื่นพูดโทนเดียวตลอด</p>
+                </div>
+              )}
             </div>
           )}
 
