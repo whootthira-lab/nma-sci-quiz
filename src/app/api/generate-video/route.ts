@@ -745,7 +745,9 @@ export async function POST(req: NextRequest) {
     // so a soundtrack has to be added after the video exists.
     const modelScoresItself =
       modelType === 'veo3' || (modelType === 'fast' && klingResolution === '1080p');
-    const needsAmbientPass = ambientAudioEnabled && isNoSpeech && !modelScoresItself;
+    // Ambient now serves speech clips too: for those the score is MIXED UNDER the voice
+    // in a later pass, instead of replacing the track.
+    const needsAmbientPass = ambientAudioEnabled && !modelScoresItself;
 
     // Lip-sync runs over the full clip whenever there is speech. The old engine billed
     // $8/minute — 59% of the whole August bill, never priced in; the switch to Kling's

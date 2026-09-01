@@ -97,6 +97,38 @@ async function muxNarration(video: Buffer, audioUrl: string): Promise<any> {
   }
 }
 
+/** Mix the scored clip's ambience UNDER the speech clip's own track — speech stays in
+ *  front, room tone sits at ~22%. Video stream copied from the speech clip untouched.
+ *  Any failure ships the speech-only clip. */
+async function mixAmbientUnder(speechClip: Buffer, ambientClip: Buffer): Promise<any> {
+  const dir = os.tmpdir();
+  const sPath = path.join(dir, `amb_s_${Date.now()}.mp4`);
+  const aPath = path.join(dir, `amb_a_${Date.now()}.mp4`);
+  const outPath = path.join(dir, `amb_out_${Date.now()}.mp4`);
+  try {
+    fs.writeFileSync(sPath, speechClip);
+    fs.writeFileSync(aPath, ambientClip);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(sPath)
+        .input(aPath)
+        .outputOptions([
+          '-filter_complex [1:a]volume=0.22[amb];[0:a][amb]amix=inputs=2:duration=first:dropout_transition=0[aout]',
+          '-map 0:v', '-map [aout]', '-c:v copy', '-c:a aac', '-ar 44100'
+        ])
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(err))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } catch (err) {
+    console.warn('[Ambient Mix] Failed, shipping the speech-only clip:', err);
+    return speechClip;
+  } finally {
+    for (const p of [sPath, aPath, outPath]) { try { fs.unlinkSync(p); } catch { /* gone */ } }
+  }
+}
+
 async function uploadToFirebaseStorage(
   buffer: Buffer,
   path: string,
@@ -181,9 +213,12 @@ export async function POST(req: NextRequest) {
     const queueNamespace = baseAppId(modelEndpoint);
 
     const lipsyncRequestId = genRow?.metadata?.lipsync_request_id;
-    const isLipsyncPhase = !!lipsyncRequestId;
     const ambientRequestId = genRow?.metadata?.ambient_request_id;
-    const isAmbientPhase = !isLipsyncPhase && !!ambientRequestId;
+    // Ambient outranks lip-sync: for speech clips the score is added AFTER the lip-synced
+    // clip is finished, so once its request id exists that is the phase being awaited —
+    // the old precedence would re-enter the completed lip-sync round forever.
+    const isAmbientPhase = !!ambientRequestId;
+    const isLipsyncPhase = !isAmbientPhase && !!lipsyncRequestId;
     const faceRestoreRequestId = genRow?.metadata?.face_restore_request_id;
     const isFaceRestorePhase = !isLipsyncPhase && !isAmbientPhase && !!faceRestoreRequestId;
 
@@ -493,7 +528,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Check if we need to run Lip-Sync Post-Processing
-      if (!isLipsyncPhase && !isNoSpeech && !isNarration && !isAvatar && audioUrl) {
+      if (!lipsyncRequestId && !isAmbientPhase && !isNoSpeech && !isNarration && !isAvatar && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
           const syncResponse = await fetch(`https://queue.fal.run/${LIPSYNC_ENDPOINT}`, {
@@ -567,8 +602,24 @@ export async function POST(req: NextRequest) {
 
       // Mode A: the narration was never lip-synced — it is laid over the finished scene
       // here, video stream untouched. The padded audio already carries its 1s of lead-in.
-      if (isNarration && !isImage && audioUrl) {
+      if (isNarration && !isAmbientPhase && !isImage && audioUrl) {
         videoBuffer = await muxNarration(videoBuffer, audioUrl);
+      }
+
+      // Speech + ambience: this ambient round scored the FINISHED speech clip, so the
+      // room tone goes underneath that clip's own voice track — never in place of it.
+      const finalSpeechUrl = genRow?.metadata?.final_speech_url;
+      if (isAmbientPhase && genRow?.metadata?.ambient_mix_speech === true && finalSpeechUrl && !isImage) {
+        try {
+          const speechRes = await fetch(finalSpeechUrl);
+          if (!speechRes.ok) throw new Error('speech clip fetch ' + speechRes.status);
+          const speechBuf = Buffer.from(await speechRes.arrayBuffer());
+          videoBuffer = await mixAmbientUnder(speechBuf, videoBuffer);
+        } catch (mixErr) {
+          // Shipping the mmaudio output as-is would REPLACE the voice — retry instead
+          console.warn('[Ambient Mix] speech clip unreachable, retrying next poll:', mixErr);
+          return NextResponse.json({ status: 'WAITING', progressPercent: 92, progressMessage: '🎵 กำลังผสมเสียงบรรยากาศ...' });
+        }
       }
 
       let publicUrl = '';
@@ -595,6 +646,40 @@ export async function POST(req: NextRequest) {
       }
 
       console.log(`✅ [KRUTH Status] บันทึกวิดีโอลง ${finalStorageProvider} สำเร็จ! URL: ${publicUrl}`);
+
+      // Speech clip finished and ambience was requested: score THIS clip, then a later
+      // round mixes that score underneath the voice. The clip already sits in storage, so
+      // if anything below fails the user still has their video.
+      if (ambientPending && !isAmbientPhase && !isNoSpeech && !isImage && (isLipsyncPhase || isNarration || (genRow?.metadata?.avatar_mode === true))) {
+        try {
+          const ambientPrompt = genRow?.metadata?.ambient_prompt || 'natural ambience matching the scene';
+          console.log(`⏳ [Ambient/Speech] Scoring finished speech clip: "${ambientPrompt}"`);
+          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_ENDPOINT}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Key ${falKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_url: publicUrl, prompt: ambientPrompt })
+          });
+          if (!ambRes.ok) throw new Error(`ambient submit failed: ${ambRes.status}`);
+          const ambJson = await ambRes.json();
+          if (!ambJson.request_id) throw new Error('ambient job returned no request id');
+          await supabase
+            .from('generations')
+            .update({
+              metadata: {
+                ...(genRow?.metadata || {}),
+                ambient_request_id: ambJson.request_id,
+                ambient_pending: false,
+                ambient_mix_speech: true,
+                final_speech_url: publicUrl
+              }
+            })
+            .eq('fal_request_id', requestId);
+          return NextResponse.json({ status: 'IN_QUEUE', progressPercent: 90, progressMessage: '🎵 กำลังเติมเสียงบรรยากาศ...' });
+        } catch (ambErr: any) {
+          console.error('[Ambient/Speech] skipped:', ambErr?.message || ambErr);
+          // fall through — the clip completes without ambience
+        }
+      }
 
       // Update generation status in Supabase
       const { error: dbError } = await supabase
