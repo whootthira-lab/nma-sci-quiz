@@ -74,7 +74,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [selectedVoice, setSelectedVoice] = useState(THAI_VOICES[0].id);
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [videoMode, setVideoMode] = useState<'image_to_video' | 'text_to_video'>('image_to_video');
-  const [activeTab, setActiveTab] = useState<'text_to_video' | 'voice_image_to_video' | 'image_to_video' | 'motion_control'>('voice_image_to_video');
+  const [activeTab, setActiveTab] = useState<'text_to_video' | 'voice_image_to_video' | 'narration' | 'image_to_video' | 'motion_control'>('voice_image_to_video');
 
   const [modelType, setModelType] = useState('fast'); 
   const isMotionControl = modelType === 'motion-control';
@@ -88,7 +88,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       if (modelType === 'motion-control' || modelType === 'ltx-video') {
         setModelType('fast');
       }
-    } else if (activeTab === 'voice_image_to_video') {
+    } else if (activeTab === 'voice_image_to_video' || activeTab === 'narration') {
       setVideoMode('image_to_video');
       setIsNoSpeech(false);
       if (modelType === 'motion-control' || modelType === 'ltx-video') {
@@ -725,6 +725,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('storage_provider', storageProvider);
       formData.append('duration', String(selectedDuration));
       formData.append('is_auto_duration', String(isAutoDuration));
+      // Mode A: เสียงบรรยายวางทับฉาก ไม่ lip-sync — ถูกกว่าราวสามเท่า
+      formData.append('narration_only', String(activeTab === 'narration'));
 
       const response = await fetch('/api/generate-video', {
         method: 'POST',
@@ -866,7 +868,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           <label className="block text-sm font-medium text-text-secondary font-thai">
             🎬 รูปแบบการสร้างวิดีโอ (Generation Mode)
           </label>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
             <button
               type="button"
               onClick={() => setActiveTab('text_to_video')}
@@ -888,6 +890,17 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               }`}
             >
               🎙️ เสียงพากย์และรูป (Voice + Image)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('narration')}
+              className={`flex items-center justify-center gap-1.5 py-3 rounded-lg text-xs font-semibold font-thai transition-all ${
+                activeTab === 'narration'
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              📻 เสียงบรรยาย+ฉาก (Narration)
             </button>
             <button
               type="button"
@@ -1359,7 +1372,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Audio Source Type Toggle */}
-        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && (
+        {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && (
           <div className="space-y-2 p-3 bg-gray-50 border border-gray-200 rounded-xl">
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
               การจัดเตรียมเสียงพากย์ (Voice Source Type)
@@ -1392,7 +1405,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Custom Audio Upload Field */}
-        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'upload' && (
+        {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'upload' && (
           <div className="space-y-2 animate-fade-in">
             <label className="block text-sm font-medium text-text-secondary font-thai">
               🎙️ ไฟล์เสียงพากย์ของคุณ (Custom Audio File)
@@ -1449,7 +1462,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         )}
 
         {/* Script Text */}
-        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
+        {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-text-secondary font-thai">
@@ -1549,7 +1562,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           </div>
 
           {/* TTS Provider Option */}
-          {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
+          {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
             <div className="space-y-2 border-t border-gray-200 pt-3">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
                 ผู้ให้บริการเสียงพากย์ (TTS Provider)
@@ -1633,7 +1646,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
           )}
 
           {/* Speech Speed Option */}
-          {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
+          {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
             <div className="space-y-2 border-t border-gray-200 pt-3 animate-fade-in">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider font-thai">
                 📈 ความเร็วในการพูด (Speech Speed)
@@ -1664,7 +1677,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
         </div>
 
         {/* Voice Selection */}
-        {(activeTab === 'voice_image_to_video' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
+        {(activeTab === 'voice_image_to_video' || activeTab === 'narration' || (activeTab === 'motion_control' && motionAudioSource === 'tts')) && audioSourceType === 'tts' && (
           <VoicePreview selectedVoice={selectedVoice} onSelect={setSelectedVoice} ttsProvider={ttsProvider} />
         )}
 

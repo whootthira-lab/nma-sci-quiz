@@ -66,6 +66,37 @@ async function delayAudioTrack(input: Buffer, seconds: number): Promise<any> {
   }
 }
 
+/** Lay the narration track over a silent scene clip; video copied bit-for-bit. Uses only
+ *  options the 2018 deployed ffmpeg has. On failure the silent clip ships — footage
+ *  without narration beats no footage. */
+async function muxNarration(video: Buffer, audioUrl: string): Promise<any> {
+  const dir = os.tmpdir();
+  const vPath = path.join(dir, `nar_v_${Date.now()}.mp4`);
+  const aPath = path.join(dir, `nar_a_${Date.now()}.mp3`);
+  const outPath = path.join(dir, `nar_out_${Date.now()}.mp4`);
+  try {
+    fs.writeFileSync(vPath, video);
+    const res = await fetch(audioUrl);
+    if (!res.ok) throw new Error('audio fetch ' + res.status);
+    fs.writeFileSync(aPath, Buffer.from(await res.arrayBuffer()));
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(vPath)
+        .input(aPath)
+        .outputOptions(['-map 0:v', '-map 1:a', '-c:v copy', '-c:a aac', '-ar 44100', '-shortest'])
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(err))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } catch (err) {
+    console.warn('[Narration Mux] Failed, shipping the silent clip:', err);
+    return video;
+  } finally {
+    for (const p of [vPath, aPath, outPath]) { try { fs.unlinkSync(p); } catch { /* gone */ } }
+  }
+}
+
 async function uploadToFirebaseStorage(
   buffer: Buffer,
   path: string,
@@ -369,6 +400,7 @@ export async function POST(req: NextRequest) {
 
       const audioUrl = genRow?.audio_prompt;
       const isNoSpeech = genRow?.metadata?.is_no_speech === true;
+      const isNarration = genRow?.metadata?.narration_only === true;
 
       // Turning a viewpoint drifts a likeness even with the strongest model, so put the
       // original face back over the result — as its own queued job, like the passes below.
@@ -460,7 +492,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Check if we need to run Lip-Sync Post-Processing
-      if (!isLipsyncPhase && !isNoSpeech && audioUrl) {
+      if (!isLipsyncPhase && !isNoSpeech && !isNarration && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
           const syncResponse = await fetch(`https://queue.fal.run/${LIPSYNC_ENDPOINT}`, {
@@ -530,6 +562,12 @@ export async function POST(req: NextRequest) {
       // the finished lip-synced clip, never for other phases.
       if (isLipsyncPhase && !isImage) {
         videoBuffer = await delayAudioTrack(videoBuffer, 0.25);
+      }
+
+      // Mode A: the narration was never lip-synced — it is laid over the finished scene
+      // here, video stream untouched. The padded audio already carries its 1s of lead-in.
+      if (isNarration && !isImage && audioUrl) {
+        videoBuffer = await muxNarration(videoBuffer, audioUrl);
       }
 
       let publicUrl = '';
