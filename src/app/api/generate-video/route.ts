@@ -563,6 +563,9 @@ export async function POST(req: NextRequest) {
     // Mode A: the speech is narration OVER the scene — no lip-sync, the audio is muxed
     // onto the finished video instead, which also makes it a third of the price.
     const narrationOnly = formData.get('narration_only') === 'true';
+    // Mode C: image + finished audio go to Kling AI Avatar, which draws mouth, face and
+    // gesture from the sound in one pass — no base video, no separate lip-sync.
+    const isAvatarMode = (formData.get('model_type') as string) === 'avatar';
     const isAutoDuration = formData.get('is_auto_duration') === 'true';
     const isNoSpeech = formData.get('is_no_speech') === 'true';
     const visualStyle = formData.get('visual_style') as string || 'none';
@@ -714,6 +717,7 @@ export async function POST(req: NextRequest) {
     // Rates are set from the August usage export — billed unit prices, not guesses — at
     // 1 displayed credit ≈ $0.01 of provider cost plus a sliver of headroom.
     let ratePerSecond = 5; // Default fallback
+    if (isAvatarMode) ratePerSecond = 13; // measured: $0.51 per 4.5s clip on Kling AI Avatar
     if (modelType === 'cinema') {
       ratePerSecond = wanResolution === '480p' ? 4 : 9;          // $0.04 / $0.08 per second
     } else if (modelType === 'grok-video') {
@@ -746,7 +750,7 @@ export async function POST(req: NextRequest) {
     // Lip-sync runs over the full clip whenever there is speech. The old engine billed
     // $8/minute — 59% of the whole August bill, never priced in; the switch to Kling's
     // lip-sync ($0.014/second, same measured quality) brings the surcharge down to 2.
-    const willLipsync = !isNoSpeech && !narrationOnly && (!isMotionControl || motionAudioSource === 'botnoi' || motionAudioSource === 'tts');
+    const willLipsync = !isNoSpeech && !narrationOnly && !isAvatarMode && (!isMotionControl || motionAudioSource === 'botnoi' || motionAudioSource === 'tts');
     const LIPSYNC_RATE = 2;
     let requiredCredits = (((ratePerSecond + (willLipsync ? LIPSYNC_RATE : 0)) * duration) + 1) * 10 + (needsAmbientPass ? 20 : 0); // Scaled x10 (Base cost + 1 credit GPT fee)
     const userCredits = isSuperAdmin ? 999999 : (whitelistUser?.generation_limit || 0);
@@ -801,7 +805,7 @@ export async function POST(req: NextRequest) {
     // Define parallel tasks to optimize response times and avoid Gateway Timeout (504)
     console.log('[STEP 0.5] Starting parallel asset processing (GPT, Image, Video, End Image, and TTS)...');
     
-    const promptTask = skipEnhance
+    const promptTask = (skipEnhance || isAvatarMode)
       ? Promise.resolve(situationPrompt || '')
       : enhancePromptWithGPT(
           situationPrompt,
@@ -1064,6 +1068,8 @@ export async function POST(req: NextRequest) {
         fitted = target <= 5 ? 5 : target <= 10 ? 10 : target <= 15 ? 15 : 25;
       } else if (modelType === 'grok-video') {
         fitted = Math.max(1, Math.min(15, Math.ceil(target)));
+      } else if (isAvatarMode) {
+        fitted = Math.ceil(target); // the avatar renders exactly as long as the audio
       } else if (modelType !== 'veo3' && modelType !== 'sora2') {
         fitted = target <= 5 ? 5 : 10;
       }
@@ -1158,7 +1164,10 @@ export async function POST(req: NextRequest) {
         throw new Error('ระบบ SiliconFlow ไม่ได้ส่งคืน Request ID');
       }
     } else {
-      modelEndpoint = isVeo
+      // Mode C outranks every other engine choice: it has its own endpoint and body shape
+      modelEndpoint = isAvatarMode
+          ? 'fal-ai/kling-video/v1/standard/ai-avatar'
+          : isVeo
           ? (videoMode === 'text_to_video' ? 'fal-ai/veo3/fast' : 'fal-ai/veo3/image-to-video')
           : isSora
           ? (videoMode === 'text_to_video' ? 'fal-ai/sora-2/text-to-video' : 'fal-ai/sora-2/image-to-video')
@@ -1181,7 +1190,15 @@ export async function POST(req: NextRequest) {
 
       // 4. Build Fal.ai request body
       let requestBody: Record<string, any>;
-      if (isCinema) {
+      if (isAvatarMode) {
+        // The avatar listens to the finished (already padded) narration and performs it —
+        // mouth, face and gesture in one pass. The prompt only sets the mood.
+        requestBody = {
+          image_url: imageUrl,
+          audio_url: audioUrl,
+          prompt: (situationPrompt || '').trim() || 'a warm, friendly teacher speaking to the camera with lively, expressive gestures',
+        };
+      } else if (isCinema) {
         const wanParams = getWanVideoParams(duration);
         console.log(`[Wan 2.5 Cinema Params] Selected duration: ${duration}s => Calculated frames: ${wanParams.num_frames}, FPS: ${wanParams.frames_per_second}`);
         
@@ -1404,6 +1421,7 @@ export async function POST(req: NextRequest) {
             end_situation_prompt: modelType === 'fast' ? endSituationPrompt : '',
             is_no_speech: isNoSpeech,
             narration_only: narrationOnly,
+            avatar_mode: isAvatarMode,
             ambient_pending: needsAmbientPass,
             ambient_prompt: ambientPrompt,
             visual_style: visualStyle,

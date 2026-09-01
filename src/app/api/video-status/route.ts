@@ -401,6 +401,7 @@ export async function POST(req: NextRequest) {
       const audioUrl = genRow?.audio_prompt;
       const isNoSpeech = genRow?.metadata?.is_no_speech === true;
       const isNarration = genRow?.metadata?.narration_only === true;
+      const isAvatar = genRow?.metadata?.avatar_mode === true;
 
       // Turning a viewpoint drifts a likeness even with the strongest model, so put the
       // original face back over the result — as its own queued job, like the passes below.
@@ -492,7 +493,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Check if we need to run Lip-Sync Post-Processing
-      if (!isLipsyncPhase && !isNoSpeech && !isNarration && audioUrl) {
+      if (!isLipsyncPhase && !isNoSpeech && !isNarration && !isAvatar && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
           const syncResponse = await fetch(`https://queue.fal.run/${LIPSYNC_ENDPOINT}`, {
