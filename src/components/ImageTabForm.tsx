@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage, readJsonOrExplain } from '@/lib/image-utils';
-import { supabase } from '@/lib/supabase-db';
+import { supabase, uploadToStorage } from '@/lib/supabase-db';
 import { takeRegen, storageUrl, urlToFile } from '@/lib/regen';
 import {
   Image as ImageIcon,
@@ -892,6 +892,18 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
         let finalImageFile: File = uploadedImage!;
         let finalMaskFile: File | null = null;
 
+        // A mask nobody painted is all black, and the fill model then changes nothing —
+        // which reads as "broken" rather than "unused". Say what is missing instead.
+        if (!overlayImagePreview && canvasRef.current) {
+          const probeCtx = canvasRef.current.getContext('2d')!;
+          const probe = probeCtx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height).data;
+          let painted = false;
+          for (let i = 3; i < probe.length; i += 4) { if (probe[i] > 0) { painted = true; break; } }
+          if (!painted) {
+            throw new Error('ยังไม่ได้ระบายบริเวณที่ต้องการแก้ไข — ใช้แปรงระบายทับส่วนที่อยากให้ AI แก้ก่อน แล้วกดสร้างอีกครั้ง');
+          }
+        }
+
         if (overlayImagePreview) {
           const mainImg = imageRef.current!;
           const overlayImg = new Image();
@@ -1058,19 +1070,19 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
       // the request as before, which is safe because it has already been shrunk.
       const moveFileToStorage = async (field: 'image' | 'mask') => {
         const file = formData.get(field);
-        if (!(file instanceof File) || file.size === 0 || !supabase) return;
+        if (!(file instanceof File) || file.size === 0) return;
         try {
+          // The signed-URL route — a direct anon write is refused by the bucket's rules
+          // every time, which used to silently drop this into the request body, where a
+          // full-size composite PNG then died on the ~4.5MB request cap. That was why
+          // the fill modes "failed often" while leaving no trace in the database.
           const ext = file.name.split('.').pop() || 'png';
           const storagePath = `images/${user?.email || 'unknown'}/${Date.now()}_${field}.${ext}`;
-          const { error: upErr } = await supabase.storage
-            .from('kruth-ai-assets')
-            .upload(storagePath, file, { upsert: true, contentType: file.type });
-          if (upErr) throw upErr;
-          const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(storagePath);
+          const publicUrl = await uploadToStorage(file, storagePath);
           formData.delete(field);
           formData.set(`${field}_url`, publicUrl);
         } catch (err: any) {
-          console.warn(`[${field}] browser upload unavailable, sending the file instead:`, err?.message || err);
+          console.warn(`[${field}] storage upload failed, sending the file instead:`, err?.message || err);
         }
       };
 
