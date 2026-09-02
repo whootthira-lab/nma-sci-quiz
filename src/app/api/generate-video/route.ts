@@ -313,9 +313,9 @@ async function generateCosyVoiceTTS(text: string, voiceId: string, speedFactor: 
  * Cheap by design (Gemini first, tiny output); falls back to the scene text itself
  * so a missing key never blocks generation.
  */
-async function buildAmbientPrompt(sceneDescription: string): Promise<string> {
+async function buildAmbientPrompt(sceneDescription: string, imageUrl?: string): Promise<string> {
   const fallback = (sceneDescription || 'quiet room tone').slice(0, 200);
-  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
   const instruction = `You are a sound designer. From the scene description, write ONE English prompt (max 40 words) describing only the ambient sound and diegetic sound effects that scene would have — room tone, weather, crowd, footsteps, objects. No music unless the scene clearly has music playing, and no speech or narration. Return only the prompt.
 
@@ -323,13 +323,27 @@ Scene: "${sceneDescription}"`;
 
   if (geminiKey) {
     try {
+      // Looking at the actual frame beats guessing from the text — the scene text says
+      // what happens, the picture says WHERE: indoors, seaside, street, rain.
+      const parts: any[] = [];
+      if (imageUrl) {
+        try {
+          const imgRes = await fetch(imageUrl);
+          if (imgRes.ok) {
+            const mime = imgRes.headers.get('content-type') || 'image/jpeg';
+            const b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
+            if (b64.length < 6_000_000) parts.push({ inline_data: { mime_type: mime.split(';')[0], data: b64 } });
+          }
+        } catch { /* ภาพดึงไม่ได้ ใช้ข้อความอย่างเดียว */ }
+      }
+      parts.push({ text: instruction });
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      const timeoutId = setTimeout(() => controller.abort(), 9000);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: instruction }] }],
+          contents: [{ parts }],
           generationConfig: { temperature: 0.6, maxOutputTokens: 80 },
         }),
         signal: controller.signal,
@@ -871,7 +885,7 @@ export async function POST(req: NextRequest) {
     }
     const ambientPromptTask = (async () => {
       if (!needsAmbientPass) return '';
-      return buildAmbientPrompt(situationPrompt || scriptText || 'a quiet scene');
+      return buildAmbientPrompt(situationPrompt || scriptText || 'a quiet scene', directImageUrl || undefined);
     })();
 
     const uploadExtraImagesTask = (async () => {

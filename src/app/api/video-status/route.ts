@@ -20,7 +20,12 @@ export const dynamic = 'force-dynamic';
 // speech, same facial fidelity, fuller frame — at $0.014/second against v3's $0.1333,
 // which alone was 59% of the August bill.
 const LIPSYNC_ENDPOINT = 'fal-ai/kling-video/lipsync/audio-to-video';
-const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2';
+const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2'; // scores SILENT clips from their visuals
+// Speech clips get their ambience from a pure text-to-audio model instead: mmaudio watches
+// the video, and a video of someone talking tempts it into murmurs and music that smear
+// into the voice. Stable Audio never sees the mouth — it renders the scene prompt alone,
+// and the mix keeps the voice untouched on top.
+const AMBIENT_TTA_ENDPOINT = 'fal-ai/stable-audio';
 const FACE_RESTORE_ENDPOINT = 'fal-ai/face-swap';
 
 /**
@@ -241,7 +246,8 @@ export async function POST(req: NextRequest) {
       currentStatus = statusData.status;
     } else if (isAmbientPhase) {
       // Scoring a silent clip runs as its own queued job, exactly like lip-sync
-      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}/status`, {
+      const ambientEndpointUsed = genRow?.metadata?.ambient_endpoint || AMBIENT_ENDPOINT;
+      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(ambientEndpointUsed)}/requests/${ambientRequestId}/status`, {
         headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
         cache: 'no-store'
       });
@@ -361,7 +367,7 @@ export async function POST(req: NextRequest) {
         const detailUrl = statusData.response_url || (isFaceRestorePhase
           ? `https://queue.fal.run/${baseAppId(FACE_RESTORE_ENDPOINT)}/requests/${faceRestoreRequestId}`
           : isAmbientPhase
-          ? `https://queue.fal.run/${baseAppId(AMBIENT_ENDPOINT)}/requests/${ambientRequestId}`
+          ? `https://queue.fal.run/${baseAppId(genRow?.metadata?.ambient_endpoint || AMBIENT_ENDPOINT)}/requests/${ambientRequestId}`
           : isLipsyncPhase
           ? `https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}`
           : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
@@ -423,7 +429,7 @@ export async function POST(req: NextRequest) {
         }
 
         const detailData = await detailResponse.json();
-        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.images?.[0]?.url || detailData.image?.url;
+        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.audio_file?.url || detailData.audio?.url || detailData.images?.[0]?.url || detailData.image?.url;
       }
 
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
@@ -654,10 +660,11 @@ export async function POST(req: NextRequest) {
         try {
           const ambientPrompt = genRow?.metadata?.ambient_prompt || 'natural ambience matching the scene';
           console.log(`⏳ [Ambient/Speech] Scoring finished speech clip: "${ambientPrompt}"`);
-          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_ENDPOINT}`, {
+          const secs = Math.min(45, Math.max(4, Math.ceil((genRow?.metadata?.duration_estimate || 10) + 1)));
+          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_TTA_ENDPOINT}`, {
             method: 'POST',
             headers: { 'Authorization': `Key ${falKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ video_url: publicUrl, prompt: ambientPrompt })
+            body: JSON.stringify({ prompt: ambientPrompt, seconds_total: secs })
           });
           if (!ambRes.ok) throw new Error(`ambient submit failed: ${ambRes.status}`);
           const ambJson = await ambRes.json();
@@ -668,6 +675,7 @@ export async function POST(req: NextRequest) {
               metadata: {
                 ...(genRow?.metadata || {}),
                 ambient_request_id: ambJson.request_id,
+                ambient_endpoint: AMBIENT_TTA_ENDPOINT,
                 ambient_pending: false,
                 ambient_mix_speech: true,
                 final_speech_url: publicUrl
