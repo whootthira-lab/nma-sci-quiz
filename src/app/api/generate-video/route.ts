@@ -584,6 +584,10 @@ export async function POST(req: NextRequest) {
     const isNoSpeech = formData.get('is_no_speech') === 'true';
     const visualStyle = formData.get('visual_style') as string || 'none';
     const videoFile = formData.get('video') as File;
+    // Phone videos blow straight past the platform's ~4.5MB request cap (413 before our
+    // code runs), so the browser uploads the reference video to storage itself and hands
+    // over a URL — the same cure the photos got.
+    const preUploadedVideoUrl = (formData.get('video_url') as string) || '';
     const motionAudioSource = formData.get('motion_audio_source') as string || 'video';
     const scriptText = formData.get('script_text') as string;
     const situationPrompt = formData.get('situation_prompt') as string || '';
@@ -780,7 +784,7 @@ export async function POST(req: NextRequest) {
 
 
     if (isMotionControl) {
-      if ((!imageFile && !characterImageUrl) || !videoFile || !userEmail) {
+      if ((!imageFile && !characterImageUrl) || (!videoFile && !preUploadedVideoUrl) || !userEmail) {
         return NextResponse.json(
           { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและวิดีโอต้นแบบให้ครบ' },
           { status: 400 }
@@ -862,7 +866,10 @@ export async function POST(req: NextRequest) {
     const uploadVideoTask = (async () => {
       let videoUrl = '';
       let refVideoPath = '';
-      if (isMotionControl && videoFile) {
+      if (isMotionControl && preUploadedVideoUrl && !videoFile) {
+        videoUrl = preUploadedVideoUrl;
+        try { refVideoPath = new URL(preUploadedVideoUrl).pathname.split('/kruth-ai-assets/')[1] || ''; } catch { refVideoPath = ''; }
+      } else if (isMotionControl && videoFile) {
         console.log('[STEP 1.5] Uploading reference video to Supabase...');
         const videoBuffer = Buffer.from(await videoFile.arrayBuffer());
         refVideoPath = `references/${userEmail}/${timestamp}_ref_video.${videoFile.type.split('/')[1] || 'mp4'}`;

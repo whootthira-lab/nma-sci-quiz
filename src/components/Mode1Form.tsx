@@ -22,7 +22,7 @@ import ImageCropperModal from './ImageCropperModal';
 import { ASPECT_RATIOS, THAI_VOICES, CHARACTER_EMOTIONS , VOICE_EMOTIONS , voiceInstructionByEmotionId } from '@/types';
 import { useAuth } from '@/lib/auth-context';
 import { downscaleImage } from '@/lib/image-utils';
-import { getCharacters, supabase } from '@/lib/supabase-db';
+import { getCharacters, supabase, uploadToStorage } from '@/lib/supabase-db';
 import { takeRegen, storageUrl } from '@/lib/regen'; // this file already has its own urlToFile
 
 interface Character {
@@ -653,7 +653,11 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       }
 
       if (modelType === 'motion-control') {
-        formData.append('video', videoFile!);
+        // วิดีโอเกินเพดาน ~4.5MB ของเซิร์ฟเวอร์ได้ง่าย — อัปโหลดตรงเข้า storage แล้วส่ง URL แทน
+        setProcessingStage('กำลังอัปโหลดวิดีโอต้นแบบ...');
+        const drvPath = `references/${user?.email}/${Date.now()}_ref_video.${videoFile!.type.split('/')[1] || 'mp4'}`;
+        const drvUrl = await uploadToStorage(videoFile!, drvPath);
+        formData.append('video_url', drvUrl);
         formData.append('motion_audio_source', motionAudioSource);
         formData.append('script_text', motionAudioSource === 'tts' ? scriptText : '');
       } else {
