@@ -64,7 +64,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, driven: 0 });
   }
 
-  const origin = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : req.nextUrl.origin;
+  // Call back through the PUBLIC host the request arrived on. The deployment-specific
+  // VERCEL_URL sits behind Vercel's deployment protection and answers 401 to itself.
+  const origin = process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin;
 
   const results = await Promise.allSettled(
     stuck
