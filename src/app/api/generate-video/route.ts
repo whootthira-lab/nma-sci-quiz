@@ -784,7 +784,7 @@ export async function POST(req: NextRequest) {
 
 
     if (isMotionControl) {
-      if ((!imageFile && !characterImageUrl) || (!videoFile && !preUploadedVideoUrl) || !userEmail) {
+      if ((!imageFile && !characterImageUrl && !directImageUrl) || (!videoFile && !preUploadedVideoUrl) || !userEmail) {
         return NextResponse.json(
           { success: false, error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกรูปภาพและวิดีโอต้นแบบให้ครบ' },
           { status: 400 }
