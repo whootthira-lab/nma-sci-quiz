@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/drive",
-      "schedule": "* * * * *"
+      "schedule": "30 20 * * *"
     }
   ]
 }

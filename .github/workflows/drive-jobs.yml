@@ -1,0 +1,16 @@
+name: drive-stuck-jobs
+# Vercel Hobby ให้ cron ได้แค่รายวัน — ตัวตั้งเวลาจริงจึงอยู่ที่นี่: ทุก 5 นาที
+# ปลุก /api/cron/drive ให้กวาดงานที่ค้างสถานะ processing (เจ้าของปิดแท็บไปแล้ว)
+# หมายเหตุ: GitHub หยุด schedule อัตโนมัติเมื่อ repo เงียบเกิน 60 วัน — push ใดๆ ปลุกกลับ
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Drive stuck generations
+        run: |
+          curl -s --max-time 290 "https://kruth-ai-video.vercel.app/api/cron/drive" | head -c 500
