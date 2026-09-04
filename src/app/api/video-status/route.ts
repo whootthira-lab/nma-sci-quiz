@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { baseAppId, falStatus, falResult, falSubmitCompat } from '@/lib/providers/fal';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
@@ -28,18 +29,6 @@ const AMBIENT_ENDPOINT = 'fal-ai/mmaudio-v2'; // scores SILENT clips from their 
 const AMBIENT_TTA_ENDPOINT = 'fal-ai/stable-audio';
 const FACE_RESTORE_ENDPOINT = 'fal-ai/face-swap';
 
-/**
- * Fal's queue lives on the application id, never on the sub-path a job was submitted to:
- * submitting `fal-ai/flux/schnell` means polling `fal-ai/flux/requests/{id}/status`, and
- * hitting the sub-path answers 405 — which this route used to report as "still waiting",
- * so the job appeared to hang forever. An application id is always the first two segments
- * (`owner/app`); everything after it is a variant. Verified against kling-video, flux,
- * bytedance, veo3, sora-2, image-editing, sync-lipsync and xai/grok-imagine-video.
- */
-function baseAppId(endpoint: string): string {
-  const parts = (endpoint || '').split('/').filter(Boolean);
-  return parts.length <= 2 ? parts.join('/') : parts.slice(0, 2).join('/');
-}
 
 /** Remux with the audio held back by `seconds`; video copied bit-for-bit. On any failure
  *  the original clip goes through — slightly early sound beats a failed generation. */
@@ -234,10 +223,8 @@ export async function POST(req: NextRequest) {
 
     if (isFaceRestorePhase) {
       // Putting the original face back runs as its own queued job, like the other passes
-      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(FACE_RESTORE_ENDPOINT)}/requests/${faceRestoreRequestId}/status`, {
-        headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
-        cache: 'no-store'
-      });
+      const st = await falStatus(FACE_RESTORE_ENDPOINT, faceRestoreRequestId);
+      const checkResponse = { ok: st.ok, status: st.httpStatus, json: async () => st.data } as any;
       if (!checkResponse.ok) {
         console.error(`[Face Restore Status Fail] status: ${checkResponse.status}`);
         return NextResponse.json({ status: 'WAITING' });
@@ -247,10 +234,8 @@ export async function POST(req: NextRequest) {
     } else if (isAmbientPhase) {
       // Scoring a silent clip runs as its own queued job, exactly like lip-sync
       const ambientEndpointUsed = genRow?.metadata?.ambient_endpoint || AMBIENT_ENDPOINT;
-      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(ambientEndpointUsed)}/requests/${ambientRequestId}/status`, {
-        headers: { 'Authorization': `Key ${falKey}`, 'Accept': 'application/json' },
-        cache: 'no-store'
-      });
+      const st = await falStatus(ambientEndpointUsed, ambientRequestId);
+      const checkResponse = { ok: st.ok, status: st.httpStatus, json: async () => st.data } as any;
       if (!checkResponse.ok) {
         console.error(`[Ambient Status Fail] status: ${checkResponse.status}`);
         if (checkResponse.status === 404 || checkResponse.status === 405) {
@@ -265,13 +250,8 @@ export async function POST(req: NextRequest) {
       currentStatus = statusData.status;
     } else if (isLipsyncPhase) {
       // 1. Fetch official queue status endpoint for Lipsync (always on Fal.ai)
-      const checkResponse = await fetch(`https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}/status`, {
-        headers: {
-          'Authorization': `Key ${falKey}`,
-          'Accept': 'application/json'
-        },
-        cache: 'no-store'
-      });
+      const st = await falStatus(LIPSYNC_ENDPOINT, lipsyncRequestId);
+      const checkResponse = { ok: st.ok, status: st.httpStatus, json: async () => st.data } as any;
 
       if (!checkResponse.ok) {
         console.error(`[Lipsync Status Fail] status: ${checkResponse.status}`);
@@ -327,13 +307,8 @@ export async function POST(req: NextRequest) {
     } else {
       // 3. Fetch Fal.ai status
       const checkUrl = `https://queue.fal.run/${queueNamespace}/requests/${requestId}/status`;
-      const checkResponse = await fetch(checkUrl, {
-        headers: {
-          'Authorization': `Key ${falKey}`,
-          'Accept': 'application/json'
-        },
-        cache: 'no-store'
-      });
+      const st = await falStatus(modelEndpoint, requestId);
+      const checkResponse = { ok: st.ok, status: st.httpStatus, json: async () => st.data } as any;
 
       if (!checkResponse.ok) {
         console.error(`[KRUTH Status Fail] ${checkUrl} → ${checkResponse.status}`);
@@ -372,13 +347,8 @@ export async function POST(req: NextRequest) {
           ? `https://queue.fal.run/${baseAppId(LIPSYNC_ENDPOINT)}/requests/${lipsyncRequestId}`
           : `https://queue.fal.run/${queueNamespace}/requests/${requestId}`);
 
-        const detailResponse = await fetch(detailUrl, {
-          headers: {
-            'Authorization': `Key ${falKey}`,
-            'Accept': 'application/json'
-          },
-          cache: 'no-store'
-        });
+        const dr = await falResult(modelEndpoint, requestId, detailUrl);
+        const detailResponse = { ok: dr.ok, status: dr.httpStatus, json: async () => dr.data, text: async () => dr.text } as any;
         
         if (!detailResponse.ok) {
           const errorText = await detailResponse.text();
@@ -451,15 +421,7 @@ export async function POST(req: NextRequest) {
       if (!isFaceRestorePhase && faceRestorePending && faceSource && tempUrl) {
         console.log('[Face Restore] Putting the original face back over the rotated result');
         try {
-          const fsRes = await fetch(`https://queue.fal.run/${FACE_RESTORE_ENDPOINT}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Key ${falKey}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({ base_image_url: tempUrl, swap_image_url: faceSource })
-          });
+          const fsRes = await falSubmitCompat(FACE_RESTORE_ENDPOINT, { base_image_url: tempUrl, swap_image_url: faceSource });
           if (!fsRes.ok) throw new Error(`face restore submit failed: ${fsRes.status}`);
           const fsJson = await fsRes.json();
           if (!fsJson.request_id) throw new Error('face restore job returned no request id');
@@ -496,15 +458,7 @@ export async function POST(req: NextRequest) {
         const ambientPrompt = genRow?.metadata?.ambient_prompt || 'natural ambience matching the scene';
         console.log(`⏳ [Ambient] Scoring silent clip via ${AMBIENT_ENDPOINT}: "${ambientPrompt}"`);
         try {
-          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_ENDPOINT}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Key ${falKey}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({ video_url: tempUrl, prompt: ambientPrompt })
-          });
+          const ambRes = await falSubmitCompat(AMBIENT_ENDPOINT, { video_url: tempUrl, prompt: ambientPrompt });
           if (!ambRes.ok) throw new Error(`ambient submit failed: ${ambRes.status}`);
           const ambJson = await ambRes.json();
           if (!ambJson.request_id) throw new Error('ambient job returned no request id');
@@ -537,18 +491,10 @@ export async function POST(req: NextRequest) {
       if (!lipsyncRequestId && !isAmbientPhase && !isNoSpeech && !isNarration && !isAvatar && audioUrl) {
         console.log(`⏳ [Lip-Sync Post-Processing] Submitting base video: ${tempUrl} with audio: ${audioUrl} to fal-ai/sync-lipsync/v3...`);
         try {
-          const syncResponse = await fetch(`https://queue.fal.run/${LIPSYNC_ENDPOINT}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Key ${falKey}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
+          const syncResponse = await falSubmitCompat(LIPSYNC_ENDPOINT, {
               video_url: tempUrl,
               audio_url: audioUrl
-            })
-          });
+            });
 
           if (!syncResponse.ok) {
             const syncError = await syncResponse.text();
@@ -661,11 +607,7 @@ export async function POST(req: NextRequest) {
           const ambientPrompt = genRow?.metadata?.ambient_prompt || 'natural ambience matching the scene';
           console.log(`⏳ [Ambient/Speech] Scoring finished speech clip: "${ambientPrompt}"`);
           const secs = Math.min(45, Math.max(4, Math.ceil((genRow?.metadata?.duration_estimate || 10) + 1)));
-          const ambRes = await fetch(`https://queue.fal.run/${AMBIENT_TTA_ENDPOINT}`, {
-            method: 'POST',
-            headers: { 'Authorization': `Key ${falKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: ambientPrompt, seconds_total: secs })
-          });
+          const ambRes = await falSubmitCompat(AMBIENT_TTA_ENDPOINT, { prompt: ambientPrompt, seconds_total: secs });
           if (!ambRes.ok) throw new Error(`ambient submit failed: ${ambRes.status}`);
           const ambJson = await ambRes.json();
           if (!ambJson.request_id) throw new Error('ambient job returned no request id');
@@ -755,13 +697,8 @@ export async function POST(req: NextRequest) {
       if (!isLipsyncPhase && (!logs || !Array.isArray(logs) || logs.length === 0)) {
         try {
           const detailUrl = statusData.response_url || `https://queue.fal.run/${queueNamespace}/requests/${requestId}`;
-          const detailResponse = await fetch(detailUrl, {
-            headers: {
-              'Authorization': `Key ${falKey}`,
-              'Accept': 'application/json'
-            },
-            cache: 'no-store'
-          });
+          const dr = await falResult(modelEndpoint, requestId, detailUrl);
+        const detailResponse = { ok: dr.ok, status: dr.httpStatus, json: async () => dr.data, text: async () => dr.text } as any;
           if (detailResponse.ok) {
             const detailData = await detailResponse.json();
             if (detailData.logs && Array.isArray(detailData.logs)) {

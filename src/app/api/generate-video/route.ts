@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { falSubmitCompat } from '@/lib/providers/fal';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
@@ -1338,19 +1339,7 @@ export async function POST(req: NextRequest) {
       // 5. Submit job to Fal.ai queue
       console.log(`[STEP 3] Submitting queue request to Fal.ai (${modelEndpoint})...`);
       console.log('[Fal.ai Request Payload]:', JSON.stringify(requestBody, null, 2));
-      const falController = new AbortController();
-      const falTimeoutId = setTimeout(() => falController.abort(), 20000); // 20s timeout
-
-      const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Key ${falKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-        signal: falController.signal
-      });
-      clearTimeout(falTimeoutId);
+      const submitResponse = await falSubmitCompat(modelEndpoint, requestBody, 20000);
 
       if (!submitResponse.ok) {
         const errText = await submitResponse.text();

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { falSubmitCompat } from '@/lib/providers/fal';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -569,14 +570,7 @@ export async function POST(req: NextRequest) {
     }
 
     console.log(`[IMAGE GEN API] Submitting request to Fal.ai (${modelEndpoint})...`);
-    const submitResponse = await fetch(`https://queue.fal.run/${modelEndpoint}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Key ${falKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
+    const submitResponse = await falSubmitCompat(modelEndpoint, requestBody);
 
     if (!submitResponse.ok) {
       const errText = await submitResponse.text();
