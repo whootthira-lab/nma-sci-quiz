@@ -263,7 +263,9 @@ async function generateBackgroundImage(prompt: string, w: number, h: number): Pr
 }
 
 function setLayerOutput(l: VfxLayer, output: VfxLayer['output'], params?: Record<string, any>) {
-  if (l.status === 'done' && Object.keys(l.output).length) {
+  // Any earlier artifact goes to history — regardless of the transient 'processing' status
+  // the caller set a moment ago (that check used to swallow every version; found 5 ก.ย.).
+  if (Object.keys(l.output).length) {
     l.history.unshift({ version: l.version, output: l.output, params: l.params, at: l.updated_at });
     l.history = l.history.slice(0, 5);
   }

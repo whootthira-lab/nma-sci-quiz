@@ -118,6 +118,35 @@ Guidelines:
   return prompt;
 }
 
+/**
+ * Ultra-tier text-to-image picks (5 ก.ย. 2569, each proved with a real render). Sizes are
+ * spelled per model: Flux Ultra takes a ratio, Nano Banana Pro a ratio + resolution tier,
+ * Seedream and Flux 2 Max a named size, GPT Image a fixed pixel size and a quality tier.
+ * Credits are per image (shown), list prices until the bill says otherwise.
+ */
+const TOP_T2I: Record<string, { endpoint: string; label: string; credits: number; body: (aspect: string) => Record<string, any> }> = {
+  flux_ultra: {
+    endpoint: 'fal-ai/flux-pro/v1.1-ultra', label: 'Flux 1.1 Pro Ultra', credits: 7,
+    body: (a) => ({ aspect_ratio: ['1:1', '16:9', '9:16'].includes(a) ? a : '1:1', safety_tolerance: '2', output_format: 'jpeg', enable_safety_checker: true })
+  },
+  nanopro_t2i: {
+    endpoint: 'fal-ai/nano-banana-pro', label: 'Nano Banana Pro', credits: 15,
+    body: (a) => ({ aspect_ratio: ['1:1', '16:9', '9:16'].includes(a) ? a : '1:1', resolution: '1K', output_format: 'jpeg', safety_tolerance: '3' })
+  },
+  seedream45: {
+    endpoint: 'fal-ai/bytedance/seedream/v4.5/text-to-image', label: 'Seedream 4.5', credits: 4,
+    body: (a) => ({ image_size: a === '16:9' ? 'landscape_16_9' : a === '9:16' ? 'portrait_16_9' : 'square_hd', enable_safety_checker: true })
+  },
+  gptimage15: {
+    endpoint: 'fal-ai/gpt-image-1.5', label: 'GPT Image 1.5', credits: 6,
+    body: (a) => ({ image_size: a === '16:9' ? '1536x1024' : a === '9:16' ? '1024x1536' : '1024x1024', quality: 'medium', output_format: 'jpeg' })
+  },
+  flux2max: {
+    endpoint: 'fal-ai/flux-2-max', label: 'Flux 2 Max', credits: 7,
+    body: (a) => ({ image_size: a === '16:9' ? 'landscape_16_9' : a === '9:16' ? 'portrait_16_9' : 'square_hd', enable_safety_checker: true, safety_tolerance: '2', output_format: 'jpeg' })
+  }
+};
+
 export async function POST(req: NextRequest) {
   try {
     console.log('\n==================================');
@@ -242,6 +271,7 @@ export async function POST(req: NextRequest) {
       if (modelType === 'flux_schnell' && !characterId) return 10;       // fast draft
       if (modelType === 'grok') return 30;                        // ~$0.02 per image at 1k
       if (modelType === 'flux2pro') return 40;                    // ~$0.03 for the first megapixel
+      if (TOP_T2I[modelType]) return TOP_T2I[modelType].credits * 10; // ultra-tier picks, see table
       return 20;                                                  // Flux dev and the mask flows
     };
     const cost = creditsForMode();
@@ -474,6 +504,8 @@ export async function POST(req: NextRequest) {
       modelEndpoint = 'fal-ai/flux-2-pro';
     } else if (modelType === 'flux_schnell' && !loraModelUrl) {
       modelEndpoint = 'fal-ai/flux/schnell';
+    } else if (TOP_T2I[modelType] && !loraModelUrl) {
+      modelEndpoint = TOP_T2I[modelType].endpoint;
     }
 
     // An explicit pick overrides the mode's own endpoint, for every mode that works by
@@ -484,8 +516,8 @@ export async function POST(req: NextRequest) {
 
     // A trained character is a Flux LoRA, and only a Flux model can load it. Refusing here
     // beats quietly generating a stranger with the character's name on the bill.
-    if ((modelType === 'grok' || modelType === 'flux2pro') && loraModelUrl) {
-      const name = modelType === 'grok' ? 'Grok' : 'Flux 2 Pro';
+    if ((modelType === 'grok' || modelType === 'flux2pro' || TOP_T2I[modelType]) && loraModelUrl) {
+      const name = modelType === 'grok' ? 'Grok' : modelType === 'flux2pro' ? 'Flux 2 Pro' : TOP_T2I[modelType].label;
       return NextResponse.json(
         { success: false, error: `${name} ยังใช้ตัวละครที่เทรนไว้ (LoRA) ไม่ได้ กรุณาเลือกโมเดล Flux Dev หรือเอาตัวละครออกก่อน` },
         { status: 400 }
@@ -509,6 +541,9 @@ export async function POST(req: NextRequest) {
         requestBody.aspect_ratio = ['1:1', '16:9', '9:16'].includes(aspectRatio) ? aspectRatio : '1:1';
         requestBody.resolution = '1k';
         delete requestBody.enable_safety_checker;
+      } else if (TOP_T2I[modelType] && modelEndpoint === TOP_T2I[modelType].endpoint) {
+        // Each top-tier model spells its size differently; the table knows how.
+        requestBody = { prompt: enhancedPrompt, ...TOP_T2I[modelType].body(aspectRatio) };
       } else {
         requestBody.image_size = aspectRatio === '16:9'
           ? { width: 1280, height: 720 }

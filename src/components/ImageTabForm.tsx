@@ -53,6 +53,14 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
   // Modes that work by handing a model an image and an instruction, so any of the editors
   // below can serve them. Masked fills and the upscaler need a specific model and are out.
   const EDIT_CAPABLE_MODES = ['camera', 'kontext', 'image_to_image', 'relight', 'colorgrade', 'bgreplace'];
+  // Ultra-tier text-to-image (film production pivot). None can load a Flux 1 LoRA character.
+  const TOP_MODELS = [
+    { id: 'flux_ultra',  label: '🏆 Flux 1.1 Pro Ultra', blurb: 'ภาพถ่ายสมจริง 4MP คมสุด', credits: 7 },
+    { id: 'seedream45',  label: '🌱 Seedream 4.5', blurb: 'หน้าคนเอเชียสมจริง คุ้มราคา', credits: 4 },
+    { id: 'nanopro_t2i', label: '🍌 Nano Banana Pro', blurb: 'Gemini 3 Pro — ตัวอักษร/คำสั่งซับซ้อน', credits: 15 },
+    { id: 'gptimage15',  label: '🧠 GPT Image 1.5', blurb: 'ตามคำสั่งแม่น ตัวหนังสือชัด', credits: 6 },
+    { id: 'flux2max',    label: '✨ Flux 2 Max', blurb: 'Flux 2 รุ่นสูงสุด', credits: 7 },
+  ] as const;
   const EDIT_MODEL_OPTIONS = [
     { id: 'flux2',    label: '⚡ Flux 2 Pro — คมชัด คุ้มที่สุด', credits: 3 },
     { id: 'nano',     label: '🍌 Nano Banana — เหมือนต้นฉบับที่สุด', credits: 4 },
@@ -139,7 +147,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     if (KNOWN_MODES.includes(mode)) setImageMode(mode as typeof imageMode);
 
     if (regen.prompt) setPrompt(regen.prompt);
-    if (['flux_dev', 'flux_schnell', 'grok', 'flux2pro'].includes(regen.model_name)) setModelType(regen.model_name);
+    if (['flux_dev', 'flux_schnell', 'grok', 'flux2pro', 'flux_ultra', 'seedream45', 'nanopro_t2i', 'gptimage15', 'flux2max'].includes(regen.model_name)) setModelType(regen.model_name);
     if (['1:1', '16:9', '9:16'].includes(regen.aspect_ratio)) setAspectRatio(regen.aspect_ratio);
     if (md.visual_style) setVisualStyle(md.visual_style);
     if (md.camera_zoom) setCameraZoom(md.camera_zoom);
@@ -849,6 +857,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     if (imageMode === 'relight' || imageMode === 'colorgrade' || imageMode === 'bgreplace') return 3;
     if (modelType === 'grok') return 3;
     if (modelType === 'flux2pro') return 4;
+    const top = TOP_MODELS.find((m) => m.id === modelType);
+    if (top) return top.credits;
     if (modelType === 'flux_schnell' && !characterId) return 1;
     return 2;
   };
@@ -1368,6 +1378,31 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                   จากที่ทดสอบ Grok ทำ<b>ฉากห้องเรียนไทยและตัวอักษรไทยได้เป็นธรรมชาติกว่า</b> แต่ใช้ร่วมกับตัวละครที่เทรนไว้ไม่ได้
                 </p>
               )}
+
+              {/* Ultra tier — the production-grade picks */}
+              <label className="block text-xs font-semibold text-text-secondary uppercase pt-2">
+                🏆 ระดับโปรดักชัน (Ultra)
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 bg-[#1C1C1E] p-1.5 rounded-xl border border-[#D4AF37]/30">
+                {TOP_MODELS.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setModelType(m.id)}
+                    disabled={!!characterId}
+                    title={characterId ? `${m.label} ยังใช้ตัวละครที่เทรนไว้ (LoRA ของ Flux 1) ไม่ได้` : m.blurb}
+                    className={`text-left px-2.5 py-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                      modelType === m.id ? 'bg-white text-black shadow-md' : 'text-text-muted hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold">{m.label}</span>
+                      <span className={`text-[10px] ${modelType === m.id ? 'text-black/60' : 'text-[#D4AF37]'}`}>{m.credits} cr</span>
+                    </div>
+                    <p className={`text-[10px] leading-snug ${modelType === m.id ? 'text-black/60' : 'text-text-muted'}`}>{m.blurb}</p>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -1408,7 +1443,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                     setCharacterId(e.target.value);
                     // Grok cannot load a Flux LoRA, so picking a character while it is
                     // selected would be refused on submit. Step back to Dev instead.
-                    if (e.target.value && (modelType === 'grok' || modelType === 'flux2pro')) setModelType('flux_dev');
+                    if (e.target.value && (modelType === 'grok' || modelType === 'flux2pro' || TOP_MODELS.some((m) => m.id === modelType))) setModelType('flux_dev');
                   }}
                   className="w-full bg-[#1C1C1E] border border-white/10 p-3 rounded-xl text-xs sm:text-sm text-white outline-none cursor-pointer"
                 >
