@@ -7,8 +7,9 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { falSubmit, falStatus, falResult, normalizeOutput, FalSubmitError } from '@/lib/providers/fal';
 import { assertRunnable, estimateCost } from '@/lib/providers/registry';
-import { compositeBackground, gradeVideo, fetchToFile, probeVideo } from './composite';
+import { compositeBackground, gradeVideo, fetchToFile, probeVideo, FxInput } from './composite';
 import { newId, putFile, saveProject } from './store';
+import { loadFxLibrary, FxParams } from './fx';
 import type { VfxProject, VfxShot, VfxLayer, VfxLayerType, VfxEngine, VfxGrade } from './types';
 import { VFX_PHASE1_LIMITS as LIMITS } from './types';
 
@@ -213,9 +214,12 @@ export async function planProject(project: VfxProject, engine: VfxEngine, grade:
     const keepPrompt = existing.get('background')?.params?.prompt || existing.get('edit')?.params?.prompt;
     const prompt = keepPrompt || prompts[i];
     if (engine === 'matte') {
+      const fxPrev = existing.get('fx');
       shot.layers = [
         existing.get('matte') && existing.get('matte')!.status === 'done' ? existing.get('matte')! : layer('matte', {}, estimateCost(matte.id, secs).creditsShown, true, matte.id),
         layer('background', { prompt }, BG_IMAGE_CREDITS, true, BG_IMAGE_ID),
+        // Stock effects (Phase 2): off until the review page picks one; free — ffmpeg only
+        fxPrev ? fxPrev : layer('fx', { elements: [] as FxParams[] }, 0, false),
         layer('grade', { preset: grade }, 0, grade !== 'none'),
         layer('composite', {}, 0)
       ];
@@ -344,6 +348,7 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
 export async function compositeShot(project: VfxProject, shot: VfxShot, supabase: SupabaseClient): Promise<void> {
   const matte = shot.layers.find((l) => l.type === 'matte');
   const bg = shot.layers.find((l) => l.type === 'background');
+  const fxLayer = shot.layers.find((l) => l.type === 'fx');
   const grade = shot.layers.find((l) => l.type === 'grade');
   const comp = shot.layers.find((l) => l.type === 'composite');
   if (!matte?.output.color_url || !matte.output.alpha_url || !bg?.output.image_url || !comp) return;
@@ -352,13 +357,24 @@ export async function compositeShot(project: VfxProject, shot: VfxShot, supabase
     const colorRes = await fetch(matte.output.color_url);
     if (!colorRes.ok) throw new Error('matte colour clip unreachable');
     const preset = grade?.enabled ? grade.params.preset : 'none';
+    // Resolve the chosen stock effects to clip URLs; an element that left the library is skipped
+    let fx: FxInput[] = [];
+    const chosen: FxParams[] = fxLayer?.enabled ? (fxLayer.params.elements || []) : [];
+    if (chosen.length) {
+      const lib = await loadFxLibrary(supabase);
+      fx = chosen.map((p) => {
+        const el = lib.find((e) => e.id === p.fx_id);
+        return el ? { url: el.url, opacity: p.opacity, placement: p.placement, blend: p.blend } : null;
+      }).filter((x): x is FxInput => !!x);
+    }
     const out = await compositeBackground(
       Buffer.from(await colorRes.arrayBuffer()), matte.output.alpha_url, bg.output.image_url, shot.clip_url,
-      shot.width, shot.height, preset === 'match' ? 'none' : preset
+      shot.width, shot.height, preset, fx
     );
     const url = await putFile(`vfx_shots/${project.user_email}/${project.id}/${shot.id}_v${comp.version + 1}_out.mp4`, out, 'video/mp4', supabase);
     setLayerOutput(comp, { video_url: url });
     if (grade) { grade.status = grade.enabled ? 'done' : 'skipped'; grade.updated_at = new Date().toISOString(); }
+    if (fxLayer) { fxLayer.status = fx.length ? 'done' : 'skipped'; fxLayer.updated_at = new Date().toISOString(); }
     shot.output_url = url;
     shot.status = 'review';
     shot.error = undefined;
@@ -452,6 +468,63 @@ export async function regradeShot(project: VfxProject, shot: VfxShot, preset: Vf
     shot.output_url = url;
     shot.status = 'review';
   }
+}
+
+/** Choose the stock effects for a shot (free) and re-composite from the stored artifacts. */
+export async function setShotFx(project: VfxProject, shot: VfxShot, elements: FxParams[], supabase: SupabaseClient): Promise<void> {
+  if (project.engine !== 'matte') throw new Error('เลเยอร์ FX ใช้ได้กับเครื่องยนต์ตัดคน+วางฉาก (O3 edit เรนเดอร์ทั้งเฟรมในตัว)');
+  let fxLayer = shot.layers.find((l) => l.type === 'fx');
+  if (!fxLayer) {
+    fxLayer = layer('fx', { elements: [] }, 0, false);
+    const gradeIdx = shot.layers.findIndex((l) => l.type === 'grade');
+    shot.layers.splice(gradeIdx < 0 ? shot.layers.length : gradeIdx, 0, fxLayer);
+  }
+  const clean = elements.slice(0, 3).map((e) => ({
+    fx_id: String(e.fx_id),
+    opacity: Math.min(1, Math.max(0.05, Number(e.opacity) || 0.7)),
+    placement: e.placement === 'behind' ? 'behind' as const : 'front' as const,
+    blend: (['screen', 'lighten', 'addition'] as const).includes(e.blend) ? e.blend : 'screen' as const,
+    scale: 1
+  }));
+  fxLayer.history.unshift({ version: fxLayer.version, output: fxLayer.output, params: fxLayer.params, at: fxLayer.updated_at });
+  fxLayer.history = fxLayer.history.slice(0, 5);
+  fxLayer.params = { elements: clean };
+  fxLayer.enabled = clean.length > 0;
+  fxLayer.version += 1;
+  fxLayer.updated_at = new Date().toISOString();
+  await compositeShot(project, shot, supabase);
+}
+
+/** Put a layer back to an earlier version and rebuild what depends on it. */
+export async function rollbackLayer(project: VfxProject, shot: VfxShot, layerId: string, toVersion: number, supabase: SupabaseClient): Promise<void> {
+  const l = shot.layers.find((x) => x.id === layerId);
+  if (!l) throw new Error('ไม่พบเลเยอร์');
+  const entry = l.history.find((h) => h.version === toVersion);
+  if (!entry) throw new Error('ไม่พบเวอร์ชันนั้น');
+  // The current state becomes history too, so a rollback can itself be undone
+  l.history = [{ version: l.version, output: l.output, params: l.params, at: l.updated_at }, ...l.history.filter((h) => h.version !== toVersion)].slice(0, 5);
+  l.output = entry.output;
+  l.params = entry.params;
+  l.version += 1;
+  l.status = Object.keys(entry.output).length || l.type === 'fx' || l.type === 'grade' ? 'done' : 'pending';
+  l.updated_at = new Date().toISOString();
+  if (l.type === 'fx') l.enabled = (entry.params.elements || []).length > 0;
+  if (l.type === 'grade') l.enabled = entry.params.preset && entry.params.preset !== 'none';
+  if (l.type === 'composite' || l.type === 'edit') {
+    shot.output_url = entry.output.video_url;
+    shot.status = shot.output_url ? 'review' : 'draft';
+    return;
+  }
+  if (project.engine === 'matte') await compositeShot(project, shot, supabase);
+}
+
+/** Run the matte again (e.g. after a bad edge) and re-composite. Charged at the matte rate. */
+export async function redoMatte(project: VfxProject, shot: VfxShot, supabase: SupabaseClient): Promise<void> {
+  const matte = shot.layers.find((l) => l.type === 'matte');
+  if (!matte) throw new Error('ช็อตนี้ไม่มีเลเยอร์ตัดคน');
+  matte.status = 'pending';
+  matte.job_request_id = undefined;
+  await startShot(project, shot, supabase);
 }
 
 export async function persist(project: VfxProject, supabase: SupabaseClient) {

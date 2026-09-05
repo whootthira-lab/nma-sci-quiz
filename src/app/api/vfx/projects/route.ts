@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       reference_urls: references,
       instruction: (body.instruction || '').trim(),
       engine: body.engine === 'o3' ? 'o3' : 'matte',
-      grade: ['none', 'warm', 'cool', 'cinematic'].includes(body.grade) ? body.grade : 'none',
+      grade: ['none', 'warm', 'cool', 'cinematic', 'match'].includes(body.grade) ? body.grade : 'none',
       shots: [],
       status: 'draft',
       estimated_credits: 0,

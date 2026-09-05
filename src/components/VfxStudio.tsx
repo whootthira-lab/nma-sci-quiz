@@ -20,14 +20,16 @@ const ENGINES: { id: VfxEngine; label: string; blurb: string; perSec: number }[]
   { id: 'o3', label: 'Kling O3 Edit (อัลตร้า)', blurb: 'AI เรนเดอร์ช็อตใหม่ทั้งเฟรม แสงเงากลมกลืน · ช็อต 3–15 วิ', perSec: 19 }
 ];
 const GRADES: { id: VfxGrade; label: string }[] = [
-  { id: 'none', label: 'ไม่ปรับสี' }, { id: 'warm', label: 'อุ่น' }, { id: 'cool', label: 'เย็น' }, { id: 'cinematic', label: 'ซีเนมาติก' }
+  { id: 'none', label: 'ไม่ปรับสี' }, { id: 'match', label: '🎯 เข้ากับฉาก' }, { id: 'warm', label: 'อุ่น' }, { id: 'cool', label: 'เย็น' }, { id: 'cinematic', label: 'ซีเนมาติก' }
 ];
+interface FxElement { id: string; label: string; url: string; seconds: number; default_placement: 'front' | 'behind'; default_opacity: number; tags: string[] }
+interface FxParams { fx_id: string; opacity: number; placement: 'front' | 'behind'; blend: 'screen' | 'lighten' | 'addition' }
 
 const statusLabel: Record<string, string> = {
   draft: 'ร่าง', planned: 'วางแผนแล้ว', processing: 'กำลังสร้าง', review: 'รอตรวจ', approved: 'อนุมัติแล้ว', failed: 'ล้มเหลว', exported: 'ส่งออกแล้ว',
   pending: 'รอ', done: 'เสร็จ', skipped: 'ข้าม'
 };
-const layerLabel: Record<string, string> = { matte: 'ตัดคน', background: 'ฉากหลัง', grade: 'ปรับสี', composite: 'ประกอบ', edit: 'O3 edit' };
+const layerLabel: Record<string, string> = { matte: 'ตัดคน', background: 'ฉากหลัง', fx: 'เอฟเฟกต์', grade: 'ปรับสี', composite: 'ประกอบ', edit: 'O3 edit' };
 
 export default function VfxStudio() {
   const { user } = useAuth();
@@ -52,7 +54,15 @@ export default function VfxStudio() {
   const [confirmed, setConfirmed] = useState(false);
   // step 3 edits
   const [redoPrompt, setRedoPrompt] = useState<Record<string, string>>({});
+  // Phase 2: stock FX library and the per-shot picks being edited (before "apply")
+  const [fxLibrary, setFxLibrary] = useState<FxElement[]>([]);
+  const [fxDraft, setFxDraft] = useState<Record<string, FxParams[]>>({});
+  const [showHistory, setShowHistory] = useState<Record<string, boolean>>({});
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    fetch('/api/vfx/fx').then((r) => r.json()).then((j) => { if (j.success) setFxLibrary(j.elements); }).catch(() => {});
+  }, []);
 
   const api = async (path: string, body: any) => {
     const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, user_email: email, user_id: user?.id || '' }) });
@@ -320,15 +330,33 @@ export default function VfxStudio() {
                     </div>
                   </div>
 
-                  {/* layers */}
+                  {/* layers — click a versioned layer to see and roll back its history */}
                   {shot.layers.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 text-[10px] font-thai">
-                      {shot.layers.map((l) => (
-                        <span key={l.id} title={l.error || ''} className={`px-2 py-0.5 rounded-full border ${!l.enabled ? 'border-gray-200 text-gray-300 line-through' : l.status === 'done' ? 'border-green-300 text-green-700 bg-green-50' : l.status === 'processing' ? 'border-amber-300 text-amber-700 bg-amber-50' : l.status === 'failed' ? 'border-red-300 text-red-700 bg-red-50' : 'border-gray-200 text-gray-500'}`}>
-                          {layerLabel[l.type]}{l.cost_credits ? ` ${l.cost_credits}cr` : ''}{l.version > 1 ? ` v${l.version}` : ''}
-                        </span>
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap gap-1.5 text-[10px] font-thai">
+                        {shot.layers.map((l) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            title={l.error || (l.history.length ? 'ดูเวอร์ชันก่อนหน้า' : '')}
+                            onClick={() => l.history.length && setShowHistory((h) => ({ ...h, [l.id]: !h[l.id] }))}
+                            className={`px-2 py-0.5 rounded-full border ${!l.enabled ? 'border-gray-200 text-gray-300 line-through' : l.status === 'done' ? 'border-green-300 text-green-700 bg-green-50' : l.status === 'processing' ? 'border-amber-300 text-amber-700 bg-amber-50' : l.status === 'failed' ? 'border-red-300 text-red-700 bg-red-50' : 'border-gray-200 text-gray-500'} ${l.history.length ? 'cursor-pointer underline decoration-dotted' : 'cursor-default'}`}
+                          >
+                            {layerLabel[l.type]}{l.cost_credits ? ` ${l.cost_credits}cr` : ''}{l.version > 1 ? ` v${l.version}` : ''}
+                          </button>
+                        ))}
+                        <span className="ml-auto text-gray-500">รวม {shotCredits} เครดิต</span>
+                      </div>
+                      {shot.layers.filter((l) => showHistory[l.id] && l.history.length).map((l) => (
+                        <div key={l.id} className="flex flex-wrap items-center gap-1.5 text-[10px] font-thai bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+                          <span className="text-gray-500">{layerLabel[l.type]} — เวอร์ชันก่อนหน้า:</span>
+                          {l.history.map((h) => (
+                            <button key={h.version} type="button" disabled={!!busy || shot.status === 'processing'} onClick={() => shotAction(shot, 'rollback', { layer_id: l.id, version: h.version })} className="px-2 py-0.5 rounded-md bg-white border border-gray-300 hover:border-[#D4AF37]" title={h.params?.prompt || h.params?.preset || ''}>
+                            ↩ v{h.version}{h.params?.prompt ? ` · ${String(h.params.prompt).slice(0, 28)}…` : h.params?.preset ? ` · ${h.params.preset}` : ''}
+                            </button>
+                          ))}
+                        </div>
                       ))}
-                      <span className="ml-auto text-gray-500">รวม {shotCredits} เครดิต</span>
                     </div>
                   )}
                   {shot.error && <p className="text-[11px] text-red-600 font-thai">{shot.error}</p>}
@@ -349,10 +377,59 @@ export default function VfxStudio() {
                         {GRADES.map((g) => <button key={g.id} type="button" disabled={!!busy} onClick={() => shotAction(shot, 'regrade', { preset: g.id })} className={`px-2 py-1 rounded-lg border ${shot.layers.find((l) => l.type === 'grade')?.params.preset === g.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{g.label}</button>)}
                       </div>
                       {project.engine === 'matte' ? (
-                        <div className="flex gap-2">
-                          <input value={redoPrompt[shot.id] ?? bgLayer?.params.prompt ?? ''} onChange={(e) => setRedoPrompt((p) => ({ ...p, [shot.id]: e.target.value }))} className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs" placeholder="prompt ฉากหลังใหม่" />
-                          <button type="button" disabled={!!busy} onClick={() => shotAction(shot, 'redo_background', { prompt: redoPrompt[shot.id] ?? bgLayer?.params.prompt })} className="px-3 py-1.5 rounded-lg bg-white border border-[#D4AF37] text-xs font-semibold font-thai whitespace-nowrap"><RefreshCw className="inline w-3 h-3 mr-1" />gen ใหม่เฉพาะฉากหลัง (3 cr, ไม่ตัดคนซ้ำ)</button>
-                        </div>
+                        <>
+                          <div className="flex gap-2">
+                            <input value={redoPrompt[shot.id] ?? bgLayer?.params.prompt ?? ''} onChange={(e) => setRedoPrompt((p) => ({ ...p, [shot.id]: e.target.value }))} className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs" placeholder="prompt ฉากหลังใหม่" />
+                            <button type="button" disabled={!!busy} onClick={() => shotAction(shot, 'redo_background', { prompt: redoPrompt[shot.id] ?? bgLayer?.params.prompt })} className="px-3 py-1.5 rounded-lg bg-white border border-[#D4AF37] text-xs font-semibold font-thai whitespace-nowrap"><RefreshCw className="inline w-3 h-3 mr-1" />gen ใหม่เฉพาะฉากหลัง (3 cr, ไม่ตัดคนซ้ำ)</button>
+                            <button type="button" disabled={!!busy} onClick={() => { if (confirm('ตัดคนใหม่จะเสียเครดิตตามราคาช็อต และประกอบใหม่อัตโนมัติ ดำเนินการ?')) shotAction(shot, 'redo_matte'); }} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-xs font-thai whitespace-nowrap" title="รัน veed ใหม่เมื่อขอบตัดไม่สวย">ตัดคนใหม่ ({shot.layers.find((l) => l.type === 'matte')?.cost_credits || 0} cr)</button>
+                          </div>
+
+                          {/* Stock FX (Phase 2) — free, ffmpeg only */}
+                          {(() => {
+                            const fxLayer = shot.layers.find((l) => l.type === 'fx');
+                            const applied: FxParams[] = fxLayer?.params?.elements || [];
+                            const draft = fxDraft[shot.id] ?? applied;
+                            const setDraft = (next: FxParams[]) => setFxDraft((d) => ({ ...d, [shot.id]: next }));
+                            const dirty = JSON.stringify(draft) !== JSON.stringify(applied);
+                            return (
+                              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2 text-xs font-thai">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold text-[#1A1A1A]">✨ เอฟเฟกต์ (คลัง on-black · ซ้อนแบบ screen · ฟรี)</span>
+                                  {fxLibrary.length === 0 && <span className="text-gray-400">คลังว่าง — ผู้ดูแลเพิ่มได้ผ่าน /api/vfx/fx</span>}
+                                  {fxLibrary.map((el) => {
+                                    const on = draft.some((d) => d.fx_id === el.id);
+                                    return (
+                                      <button key={el.id} type="button" disabled={!!busy || (!on && draft.length >= 3)} onClick={() => setDraft(on ? draft.filter((d) => d.fx_id !== el.id) : [...draft, { fx_id: el.id, opacity: el.default_opacity, placement: el.default_placement, blend: 'screen' }])} className={`px-2.5 py-1 rounded-lg border ${on ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-300 text-gray-600'} disabled:opacity-40`} title={`${el.seconds}s`}>
+                                        {el.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {draft.map((d) => {
+                                  const el = fxLibrary.find((e) => e.id === d.fx_id);
+                                  const update = (patch: Partial<FxParams>) => setDraft(draft.map((x) => (x.fx_id === d.fx_id ? { ...x, ...patch } : x)));
+                                  return (
+                                    <div key={d.fx_id} className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+                                      <span className="font-semibold w-28 truncate">{el?.label || d.fx_id}</span>
+                                      <label className="flex items-center gap-1 text-gray-600">ความเข้ม <input type="range" min={0.1} max={1} step={0.05} value={d.opacity} onChange={(e) => update({ opacity: Number(e.target.value) })} className="accent-[#D4AF37] w-24" /> {Math.round(d.opacity * 100)}%</label>
+                                      <div className="flex gap-1">
+                                        {(['behind', 'front'] as const).map((p) => <button key={p} type="button" onClick={() => update({ placement: p })} className={`px-2 py-0.5 rounded-md border text-[10px] ${d.placement === p ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-300 text-gray-600'}`}>{p === 'behind' ? 'หลังคน' : 'หน้าคน'}</button>)}
+                                      </div>
+                                      <select value={d.blend} onChange={(e) => update({ blend: e.target.value as FxParams['blend'] })} className="px-1.5 py-0.5 border border-gray-300 rounded-md text-[10px] bg-white">
+                                        <option value="screen">screen</option><option value="lighten">lighten</option><option value="addition">add</option>
+                                      </select>
+                                    </div>
+                                  );
+                                })}
+                                {(dirty || (applied.length > 0 && draft.length === 0 && fxDraft[shot.id])) && (
+                                  <button type="button" disabled={!!busy} onClick={() => shotAction(shot, 'set_fx', { elements: draft }).then(() => setFxDraft((x) => { const n = { ...x }; delete n[shot.id]; return n; }))} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold">
+                                    <RefreshCw className="inline w-3 h-3 mr-1" />ประกอบใหม่พร้อมเอฟเฟกต์ (ฟรี)
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </>
                       ) : (
                         <div className="flex gap-2">
                           <input value={redoPrompt[shot.id] ?? bgLayer?.params.prompt ?? ''} onChange={(e) => setRedoPrompt((p) => ({ ...p, [shot.id]: e.target.value }))} className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs" placeholder="prompt ใหม่" />

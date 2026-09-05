@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const engine = body.engine === 'o3' ? 'o3' : body.engine === 'matte' ? 'matte' : project.engine;
-    const grade = ['none', 'warm', 'cool', 'cinematic'].includes(body.grade) ? body.grade : project.grade;
+    const grade = ['none', 'warm', 'cool', 'cinematic', 'match'].includes(body.grade) ? body.grade : project.grade;
     const planned = await planProject(project, engine, grade);
     await saveProject(planned, supabase);
     return NextResponse.json({ success: true, project: planned });

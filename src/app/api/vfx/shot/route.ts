@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serviceClient, loadProject } from '@/lib/vfx/store';
-import { redoBackground, regradeShot, startShot, persist, BG_IMAGE_CREDITS } from '@/lib/vfx/pipeline';
+import { redoBackground, regradeShot, startShot, persist, setShotFx, rollbackLayer, redoMatte, BG_IMAGE_CREDITS } from '@/lib/vfx/pipeline';
 import type { VfxGrade } from '@/lib/vfx/types';
 
 export const maxDuration = 300;
@@ -49,8 +49,23 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'regrade': {
-        const preset = (['none', 'warm', 'cool', 'cinematic'] as VfxGrade[]).includes(body.preset) ? (body.preset as VfxGrade) : 'none';
+        const preset = (['none', 'warm', 'cool', 'cinematic', 'match'] as VfxGrade[]).includes(body.preset) ? (body.preset as VfxGrade) : 'none';
         await regradeShot(project, shot, preset, supabase);
+        break;
+      }
+      case 'set_fx': {
+        // Stock effects are ffmpeg-only: free, re-composited from the stored matte
+        await setShotFx(project, shot, Array.isArray(body.elements) ? body.elements : [], supabase);
+        break;
+      }
+      case 'rollback': {
+        await rollbackLayer(project, shot, String(body.layer_id || ''), Number(body.version), supabase);
+        break;
+      }
+      case 'redo_matte': {
+        const matte = shot.layers.find((l) => l.type === 'matte');
+        await charge(matte?.cost_credits || 0);
+        await redoMatte(project, shot, supabase);
         break;
       }
       case 'rerun': {

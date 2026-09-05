@@ -9,7 +9,7 @@
 
 export type VfxEngine = 'matte' | 'o3';
 export type VfxGrade = 'none' | 'warm' | 'cool' | 'cinematic' | 'match';
-export type VfxLayerType = 'matte' | 'background' | 'grade' | 'composite' | 'edit';
+export type VfxLayerType = 'matte' | 'background' | 'fx' | 'grade' | 'composite' | 'edit';
 export type VfxLayerStatus = 'pending' | 'processing' | 'done' | 'failed' | 'skipped';
 export type VfxShotStatus = 'draft' | 'processing' | 'review' | 'approved' | 'failed';
 export type VfxProjectStatus = 'draft' | 'planned' | 'processing' | 'review' | 'exported';
