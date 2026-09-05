@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { geminiUrl, geminiText } from '@/lib/gemini';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmitCompat } from '@/lib/providers/fal';
 
@@ -14,7 +15,7 @@ async function enhanceImagePromptWithGPT(
   characterEmotion?: string
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   if (!apiKey && !geminiKey) {
     console.warn('[Image Enhance] Missing both OpenAI and Gemini keys. Using original prompt.');
     return prompt;
@@ -54,7 +55,7 @@ Guidelines:
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
-      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      const gRes = await fetch(`${geminiUrl()}?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -66,7 +67,7 @@ Guidelines:
       clearTimeout(timeoutId);
       if (gRes.ok) {
         const gJson = await gRes.json();
-        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const gText = geminiText(gJson);
         if (gText) return gText;
       } else {
         console.warn(`[Gemini Image Enhance] status ${gRes.status}, falling back to OpenAI`);

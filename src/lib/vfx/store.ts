@@ -28,6 +28,22 @@ export function newId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/**
+ * Table backend: once `vfx_projects` exists (scripts/sql/vfx_phase1.sql run in the Supabase
+ * SQL editor) the document is also kept in its `doc` column with summary fields alongside,
+ * and reads prefer the row. Probed once per process; the storage file stays the fallback
+ * and the write-through copy, so nothing is lost if the table is added or removed later.
+ */
+let tableState: 'unknown' | 'present' | 'absent' = 'unknown';
+async function hasTable(supabase: SupabaseClient): Promise<boolean> {
+  if (tableState === 'unknown') {
+    const { error } = await supabase.from('vfx_projects').select('id').limit(1);
+    tableState = error ? 'absent' : 'present';
+    if (error) console.log('[VFX store] vfx_projects table not present — using storage documents only');
+  }
+  return tableState === 'present';
+}
+
 export async function saveProject(project: VfxProject, supabase = serviceClient()): Promise<void> {
   project.updated_at = new Date().toISOString();
   const body = Buffer.from(JSON.stringify(project), 'utf8');
@@ -35,9 +51,36 @@ export async function saveProject(project: VfxProject, supabase = serviceClient(
     .from(BUCKET)
     .upload(projectPath(project.user_email, project.id), body, { contentType: 'application/json', upsert: true });
   if (error) throw new Error(`บันทึกโปรเจกต์ VFX ไม่สำเร็จ: ${error.message}`);
+  if (await hasTable(supabase)) {
+    const { error: dbErr } = await supabase.from('vfx_projects').upsert({
+      id: project.id,
+      user_id: project.user_id || null,
+      user_email: project.user_email,
+      name: project.name,
+      footage_url: project.footage_url,
+      footage: project.footage,
+      reference_urls: project.reference_urls,
+      instruction: project.instruction,
+      engine: project.engine,
+      grade: project.grade,
+      status: project.status,
+      estimated_credits: project.estimated_credits,
+      charged_credits: project.charged_credits,
+      export_url: project.export_url || null,
+      shots_count: project.shots.length,
+      doc: project,
+      created_at: project.created_at,
+      updated_at: project.updated_at
+    });
+    if (dbErr) console.warn('[VFX store] table write failed (storage copy is saved):', dbErr.message);
+  }
 }
 
 export async function loadProject(email: string, id: string, supabase = serviceClient()): Promise<VfxProject | null> {
+  if (await hasTable(supabase)) {
+    const { data } = await supabase.from('vfx_projects').select('doc').eq('id', id).eq('user_email', email.toLowerCase()).maybeSingle();
+    if (data?.doc) return data.doc as VfxProject;
+  }
   const { data, error } = await supabase.storage.from(BUCKET).download(projectPath(email, id));
   if (error || !data) return null;
   try {
@@ -58,6 +101,14 @@ export interface VfxProjectSummary {
 }
 
 export async function listProjects(email: string, supabase = serviceClient()): Promise<VfxProjectSummary[]> {
+  if (await hasTable(supabase)) {
+    const { data } = await supabase.from('vfx_projects')
+      .select('id, name, status, shots_count, footage, export_url, updated_at')
+      .eq('user_email', email.toLowerCase()).order('updated_at', { ascending: false }).limit(100);
+    if (data) {
+      return data.map((r: any) => ({ id: r.id, name: r.name, status: r.status, shots: r.shots_count || 0, footage_seconds: r.footage?.seconds || 0, export_url: r.export_url || undefined, updated_at: r.updated_at }));
+    }
+  }
   const { data, error } = await supabase.storage
     .from(BUCKET)
     .list(`vfx_projects/${email.toLowerCase()}`, { limit: 100, sortBy: { column: 'updated_at', order: 'desc' } });
@@ -73,6 +124,7 @@ export async function listProjects(email: string, supabase = serviceClient()): P
 
 export async function deleteProject(email: string, id: string, supabase = serviceClient()): Promise<void> {
   await supabase.storage.from(BUCKET).remove([projectPath(email, id)]);
+  if (await hasTable(supabase)) await supabase.from('vfx_projects').delete().eq('id', id).eq('user_email', email.toLowerCase());
 }
 
 /** Public URL of a storage path in the app bucket. */

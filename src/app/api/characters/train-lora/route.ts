@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { geminiUrl, geminiText } from '@/lib/gemini';
 import { createClient } from '@supabase/supabase-js';
 import JSZip from 'jszip';
 import { emotionTagsById } from '@/types';
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 async function analyzeImageWithVision(imageBuffer: Buffer, mimeType: string): Promise<{ angle: string; description: string }> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY || '';
-  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
   if (!apiKey && !geminiKey) {
     console.warn('[Vision Log] Missing both OpenAI and Gemini keys. Using fallback.');
     return { angle: 'front view', description: 'person face portrait' };
@@ -22,7 +23,7 @@ async function analyzeImageWithVision(imageBuffer: Buffer, mimeType: string): Pr
   // Vision runs once per training image, so this is the biggest token saving in the app.
   if (geminiKey) {
     try {
-      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      const gRes = await fetch(`${geminiUrl()}?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -32,7 +33,7 @@ async function analyzeImageWithVision(imageBuffer: Buffer, mimeType: string): Pr
       });
       if (gRes.ok) {
         const gJson = await gRes.json();
-        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const gText = geminiText(gJson);
         if (gText) {
           const parsed = JSON.parse(gText);
           return { angle: parsed.angle || 'front view', description: parsed.description || 'person face portrait' };

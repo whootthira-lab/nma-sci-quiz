@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { geminiUrl, geminiText } from '@/lib/gemini';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // 60s timeout
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest) {
     const type = formData.get('type') as string || 'image'; // 'image' | 'video' | 'ambient'
     const imageFile = formData.get('image') as File | null;
 
-    const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
 
     if (!geminiKey && !openaiKey) {
@@ -72,7 +73,7 @@ Keep it focused on audio details, and return ONLY the generated English sound pr
           parts[0].text += `\n\nAnalyze the attached image context and use it to enhance the prompt appropriately.`;
         }
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+        const response = await fetch(`${geminiUrl()}?key=${geminiKey}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -86,7 +87,7 @@ Keep it focused on audio details, and return ONLY the generated English sound pr
 
         if (response.ok) {
           const resJson = await response.json();
-          generatedText = resJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          generatedText = geminiText(resJson) || '';
           if (generatedText) {
             success = true;
             console.log('[Generate Prompt API] Gemini successfully generated prompt.');

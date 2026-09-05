@@ -1,66 +1,57 @@
--- VFX Studio Phase 1 — relational form of the project document (src/lib/vfx/types.ts).
+-- VFX Studio — project table. Run once in the Supabase SQL editor.
 --
--- The running code keeps each project as ONE JSON document in Storage
--- (kruth-ai-assets/vfx_projects/<email>/<project_id>.json) because the app has no
--- direct database connection for migrations and nothing may block a deploy on a
--- manual step. Run this in the Supabase SQL editor when the document store should
--- move into tables; src/lib/vfx/store.ts is the only module that would change.
+-- The app keeps each project as ONE JSON document (src/lib/vfx/types.ts). Until this table
+-- exists the document lives only in Storage (kruth-ai-assets/vfx_projects/<email>/<id>.json).
+-- Once the table exists, src/lib/vfx/store.ts detects it (one probe per process) and starts
+-- writing the document into `doc` with summary columns alongside, reading from the row first;
+-- the storage file remains a write-through copy. No code change or redeploy is needed.
+--
+-- Existing storage-only projects appear in the table the next time they are saved
+-- (any action on them), or run the backfill note at the bottom.
 
 create table if not exists vfx_projects (
   id text primary key,
-  user_id uuid references profiles(id),
+  user_id uuid,
   user_email text not null,
   name text not null,
   footage_url text not null,
-  footage jsonb not null,             -- {seconds,width,height,fps}
+  footage jsonb not null default '{}',        -- {seconds,width,height,fps}
   reference_urls jsonb not null default '[]',
   instruction text not null default '',
-  engine text not null default 'matte', -- matte | o3
-  grade text not null default 'none',
-  status text not null default 'draft', -- draft | planned | processing | review | exported
+  engine text not null default 'matte',       -- matte | o3
+  grade text not null default 'none',         -- none | match | warm | cool | cinematic
+  status text not null default 'draft',       -- draft | planned | processing | review | exported
   estimated_credits numeric not null default 0,
   charged_credits numeric not null default 0,
   export_url text,
+  shots_count int not null default 0,
+  doc jsonb not null,                         -- the full project document (shots + layers + history)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create table if not exists vfx_shots (
-  id text primary key,
-  project_id text not null references vfx_projects(id) on delete cascade,
-  "order" int not null,
-  start_sec numeric not null,
-  end_sec numeric not null,
-  clip_url text not null,
-  thumb_url text,
-  width int, height int, fps numeric,
-  analysis jsonb,
-  status text not null default 'draft', -- draft | processing | review | approved | failed
-  output_url text,
-  error text
-);
+create index if not exists vfx_projects_user_idx on vfx_projects(user_email, updated_at desc);
+create index if not exists vfx_projects_status_idx on vfx_projects(status);
 
-create table if not exists vfx_layers (
-  id text primary key,
-  shot_id text not null references vfx_shots(id) on delete cascade,
-  type text not null,                 -- matte | background | grade | composite | edit
-  enabled boolean not null default true,
-  params jsonb not null default '{}',
-  model_id text,
-  cost_credits numeric not null default 0,
-  version int not null default 1,
-  status text not null default 'pending', -- pending | processing | done | failed | skipped
-  job_request_id text,
-  output jsonb not null default '{}',
-  history jsonb not null default '[]',
-  error text,
-  updated_at timestamptz not null default now()
-);
+-- Service-role access only (the app's server routes); no browser access.
+alter table vfx_projects enable row level security;
+
+-- Optional, for reporting: shots and layers flattened out of the document.
+create or replace view vfx_shots_v as
+select p.id as project_id, p.user_email, s->>'id' as shot_id, (s->>'order')::int as shot_order,
+       (s->>'start')::numeric as start_sec, (s->>'end')::numeric as end_sec,
+       s->>'status' as status, s->>'output_url' as output_url
+from vfx_projects p, jsonb_array_elements(p.doc->'shots') s;
+
+create or replace view vfx_layers_v as
+select p.id as project_id, s->>'id' as shot_id, l->>'id' as layer_id, l->>'type' as type,
+       (l->>'enabled')::boolean as enabled, (l->>'version')::int as version, l->>'status' as status,
+       (l->>'cost_credits')::numeric as cost_credits, l->>'model_id' as model_id, l->'params' as params, l->'output' as output
+from vfx_projects p, jsonb_array_elements(p.doc->'shots') s, jsonb_array_elements(s->'layers') l;
 
 -- Layer jobs themselves ride on the existing `generations` table (metadata.mode = 'vfx-layer',
 -- metadata.vfx_project_id / vfx_shot_id / vfx_layer_id), so the server-side driver
 -- (/api/cron/drive) and /api/video-status carry them with no new worker.
 
-create index if not exists vfx_projects_user_idx on vfx_projects(user_email, updated_at desc);
-create index if not exists vfx_shots_project_idx on vfx_shots(project_id, "order");
-create index if not exists vfx_layers_shot_idx on vfx_layers(shot_id);
+-- Backfill: existing storage documents are imported by opening them in the studio (any
+-- save writes the row). A bulk import script can be added if there are many.

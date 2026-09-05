@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { geminiUrl, geminiText } from '@/lib/gemini';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmitCompat } from '@/lib/providers/fal';
 import { padSpeechWithSilence, generateTTS, generateGeminiTTS, generateGoogleTTS, generateOpenAITTS, generateCosyVoiceTTS } from '@/lib/tts';
@@ -48,7 +49,7 @@ async function uploadToSupabaseStorage(
  */
 async function buildAmbientPrompt(sceneDescription: string, imageUrl?: string): Promise<string> {
   const fallback = (sceneDescription || 'quiet room tone').slice(0, 200);
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
   const instruction = `You are a sound designer. From the scene description, write ONE English prompt (max 40 words) describing only the ambient sound and diegetic sound effects that scene would have — room tone, weather, crowd, footsteps, objects. No music unless the scene clearly has music playing, and no speech or narration. Return only the prompt.
 
@@ -72,7 +73,7 @@ Scene: "${sceneDescription}"`;
       parts.push({ text: instruction });
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 9000);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+      const res = await fetch(`${geminiUrl()}?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,7 +85,7 @@ Scene: "${sceneDescription}"`;
       clearTimeout(timeoutId);
       if (res.ok) {
         const j = await res.json();
-        const text = j.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const text = geminiText(j);
         if (text) return text;
       }
     } catch (err: any) {
@@ -132,7 +133,7 @@ async function enhancePromptWithGPT(
   duration: number = 5
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-  const geminiKey = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   if (!apiKey && !geminiKey) {
     console.warn('[GPT Enhance] Missing both OpenAI and Gemini keys. Using original prompt.');
     return situationPrompt || '';
@@ -203,7 +204,7 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
-      const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      const gRes = await fetch(`${geminiUrl()}?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -215,9 +216,9 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
       clearTimeout(timeoutId);
       if (gRes.ok) {
         const gJson = await gRes.json();
-        const gText = gJson.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const gText = geminiText(gJson);
         if (gText) {
-          console.log('[Gemini Enhance] Enhanced prompt via gemini-1.5-flash');
+          console.log('[Gemini Enhance] Enhanced prompt via Gemini');
           return gText;
         }
       } else {

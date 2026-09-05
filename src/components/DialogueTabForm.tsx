@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { THAI_VOICES, ASPECT_RATIOS, CHARACTER_EMOTIONS, emotionTagsById } from '@/types';
 import { useAuth } from '@/lib/auth-context';
-import { getCharacters, supabase } from '@/lib/supabase-db';
+import { getCharacters, supabase, uploadToStorage } from '@/lib/supabase-db';
 import DialogueCanvasWorkspace, { type FaceTag } from './DialogueCanvasWorkspace';
 
 interface Character {
@@ -1153,7 +1153,7 @@ export default function DialogueTabForm() {
     const castIds = Array.from(new Set(beatCards.map((c) => c.characterId)));
     const cast = castIds.map((id) => characterList.find((c) => c.id === id));
     if (cast.some((c) => !c)) throw new Error('กรุณาเลือกตัวละครให้ครบทุกบทก่อนเริ่ม');
-    if (beatCards.some((c) => !c.scriptText.trim())) throw new Error('กรุณาพิมพ์บทพูดให้ครบทุกบทในบีต');
+    if (beatCards.some((c) => !c.scriptText.trim() && !c.audioFile)) throw new Error('กรุณาพิมพ์บทพูด (หรือแนบไฟล์เสียง) ให้ครบทุกบทในบีต');
     const characters = cast.map((ch) => ({
       name: ch!.name,
       image_url: getAvatarUrl(ch),
@@ -1172,12 +1172,22 @@ export default function DialogueTabForm() {
     });
 
     try {
+      // Cards with their own recording: upload the file straight to storage first, the
+      // server only ever receives the URL (the 4.5 MB request cap never applies).
+      const audioUrls: Record<string, string> = {};
+      for (const c of beatCards) {
+        if (c.audioFile) {
+          setAll({ progressMessage: `🎙️ กำลังอัปโหลดไฟล์เสียงของบท…` });
+          audioUrls[c.id] = await uploadToStorage(c.audioFile, `audio/${user?.email || 'unknown'}/beat_${Date.now()}_${c.id}.${(c.audioFile.name.split('.').pop() || 'mp3').toLowerCase()}`);
+        }
+      }
       const lines = beatCards.map((c) => {
         const finalEmotion = c.emotion === 'custom' ? c.customEmotionText : c.emotion;
         const acted = !!finalEmotion && finalEmotion !== 'normal';
         return {
           speaker: castIds.indexOf(c.characterId),
           text: c.scriptText,
+          audio_url: audioUrls[c.id] || undefined,
           voice_id: c.voiceId,
           tts_provider: c.ttsProvider,
           speed: c.speedFactor,

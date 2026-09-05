@@ -42,6 +42,8 @@ interface BeatLine {
   emotion_instruction?: string;
   emotion_label?: string;
   speed?: number;
+  /** an uploaded recording for this line (storage URL) — used instead of TTS */
+  audio_url?: string;
 }
 interface BeatCharacter {
   name: string;
@@ -62,6 +64,13 @@ function probeSeconds(file: string): Promise<number> {
 }
 
 async function speak(line: BeatLine): Promise<Buffer> {
+  // A card with its own recording skips TTS: the file was uploaded by the browser straight
+  // to storage and arrives here as a URL (never as bytes through this function).
+  if (line.audio_url) {
+    const res = await fetch(line.audio_url);
+    if (!res.ok) throw new Error(`ดาวน์โหลดไฟล์เสียงที่อัปโหลดไม่สำเร็จ (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
   const speed = line.speed || 1.0;
   switch (line.tts_provider) {
     case 'gemini': return generateGeminiTTS(line.text, line.voice_id, speed, line.emotion_instruction || '');
@@ -107,7 +116,7 @@ export async function POST(req: NextRequest) {
     if (characters.length > 3 || lines.length > 8) {
       return NextResponse.json({ success: false, error: 'บีตหนึ่งรองรับตัวละครไม่เกิน 3 คน และบทพูดไม่เกิน 8 บรรทัด' }, { status: 400 });
     }
-    if (characters.some((c) => !c.image_url) || lines.some((l) => !l.text?.trim() || l.speaker < 0 || l.speaker >= characters.length)) {
+    if (characters.some((c) => !c.image_url) || lines.some((l) => (!l.text?.trim() && !l.audio_url) || l.speaker < 0 || l.speaker >= characters.length)) {
       return NextResponse.json({ success: false, error: 'ตัวละครทุกคนต้องมีรูป และทุกบรรทัดต้องระบุผู้พูดกับข้อความ' }, { status: 400 });
     }
 
