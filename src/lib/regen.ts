@@ -30,10 +30,11 @@ export function stashRegen(payload: RegenPayload) {
 }
 
 /** Which studio tab recreates a given mode. */
-export function regenTab(mode: string): 'image' | 'mode1' | 'mode2' | 'dialogue' {
+export function regenTab(mode: string): 'image' | 'mode1' | 'mode2' | 'dialogue' | 'vfx' {
   if (mode.startsWith('image-')) return 'image';
   if (mode === 'face-motion') return 'mode2';
   if (mode.startsWith('dialogue')) return 'dialogue';
+  if (mode.startsWith('vfx')) return 'vfx';
   return 'mode1'; // image_to_video, text_to_video, motion-control and the rest
 }
 
@@ -48,7 +49,7 @@ export function peekRegen(): RegenPayload | null {
 }
 
 /** A form claims the payload meant for it; anything else stays put. */
-export function takeRegen(tab: 'image' | 'mode1' | 'mode2' | 'dialogue'): RegenPayload | null {
+export function takeRegen(tab: 'image' | 'mode1' | 'mode2' | 'dialogue' | 'vfx'): RegenPayload | null {
   const payload = peekRegen();
   if (!payload || regenTab(payload.mode || '') !== tab) return null;
   try {

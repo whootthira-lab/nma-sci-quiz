@@ -8,13 +8,14 @@ import Mode1Form from '@/components/Mode1Form';
 import Mode2Form from '@/components/Mode2Form';
 import ImageTabForm from '@/components/ImageTabForm';
 import DialogueTabForm from '@/components/DialogueTabForm';
-import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare } from 'lucide-react';
+import VfxBackgroundForm from '@/components/VfxBackgroundForm';
+import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare, Layers } from 'lucide-react';
 import { peekRegen, regenTab } from '@/lib/regen';
 
 export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'mode2'>('mode1');
+  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'vfx' | 'mode2'>('mode1');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -100,6 +101,18 @@ export default function DashboardPage() {
           </button>
 
           <button
+            onClick={() => setActiveTab('vfx')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
+              activeTab === 'vfx'
+                ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
+                : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span className="font-thai">เปลี่ยนฉากหลัง (VFX)</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('mode2')}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
               activeTab === 'mode2'
@@ -148,6 +161,16 @@ export default function DashboardPage() {
                   สร้างวิดีโอบทสนทนาสลับกล้องระหว่างผู้สอนและผู้เรียนเสมือนจริง จัดการลำดับเสียงพากย์ สีหน้าอารมณ์ และต่อวิดีโอรวมเข้าด้วยกันอย่างสมบูรณ์
                 </p>
               </>
+            ) : activeTab === 'vfx' ? (
+              <>
+                <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-[#D4AF37]" />
+                  เปลี่ยนฉากหลังวิดีโอ (VFX Studio)
+                </h2>
+                <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
+                  อัปโหลดฟุตเทจคนแสดงจริง แล้วย้ายไปอยู่ในฉากใหม่ — ตัดตัวคนทุกเฟรมและวางบนภาพฉาก หรือให้ <span className="font-semibold text-[#D4AF37]">Kling O3</span> เรนเดอร์ช็อตใหม่ทั้งเฟรมพร้อมแสงเงาที่กลมกลืน
+                </p>
+              </>
             ) : (
               <>
                 <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
@@ -168,6 +191,8 @@ export default function DashboardPage() {
             <ImageTabForm onImageGenerated={handleVideoGenerated} />
           ) : activeTab === 'dialogue' ? (
             <DialogueTabForm />
+          ) : activeTab === 'vfx' ? (
+            <VfxBackgroundForm />
           ) : isAdmin ? (
             <Mode2Form onVideoGenerated={handleVideoGenerated} />
           ) : (

@@ -123,6 +123,106 @@ async function mixAmbientUnder(speechClip: Buffer, ambientClip: Buffer): Promise
   }
 }
 
+/** Colour grades as filter chains the 2018 deployed ffmpeg has (eq, colorbalance). */
+function gradeChain(grade: string): string {
+  switch (grade) {
+    case 'warm': return 'colorbalance=rs=0.10:gs=0.03:bs=-0.10:rm=0.06:bm=-0.06,eq=saturation=1.05';
+    case 'cool': return 'colorbalance=rs=-0.06:bs=0.10:rm=-0.04:bm=0.06';
+    case 'cinematic': return 'eq=contrast=1.08:saturation=0.88,colorbalance=rs=-0.08:gs=-0.02:bs=0.10:bm=0.02:rh=0.10:gh=0.03:bh=-0.10';
+    default: return '';
+  }
+}
+
+async function fetchToFile(url: string, file: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`ดาวน์โหลดไฟล์ไม่สำเร็จ (${res.status}): ${url.slice(0, 80)}`);
+  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+}
+
+/**
+ * VFX background replacement, matte engine. veed's h264 mode hands back the person as an
+ * RGB clip plus a separate alpha clip; the old ffmpeg cannot decode VP9 alpha but it can
+ * `alphamerge` two ordinary streams, so: grade the person, merge the alpha in, size the
+ * background image to the footage, overlay, and put the footage's own audio back.
+ * The composite IS the product here, so a failure is reported rather than shipped around.
+ */
+async function compositeBackground(
+  rgb: Buffer, alphaUrl: string, backgroundUrl: string, footageUrl: string,
+  width: number, height: number, grade: string
+): Promise<any> {
+  const dir = os.tmpdir();
+  const tag = `vfx_${Date.now()}`;
+  const rgbPath = path.join(dir, `${tag}_rgb.mp4`);
+  const alphaPath = path.join(dir, `${tag}_alpha.mp4`);
+  const bgPath = path.join(dir, `${tag}_bg.img`);
+  const srcPath = path.join(dir, `${tag}_src.mp4`);
+  const outPath = path.join(dir, `${tag}_out.mp4`);
+  try {
+    fs.writeFileSync(rgbPath, rgb);
+    await fetchToFile(alphaUrl, alphaPath);
+    await fetchToFile(backgroundUrl, bgPath);
+    let haveAudio = false;
+    if (footageUrl) {
+      try { await fetchToFile(footageUrl, srcPath); haveAudio = true; } catch (e) { console.warn('[VFX] footage audio unavailable:', e); }
+    }
+
+    const g = gradeChain(grade);
+    const fgChain = `[1:v]${g ? g + ',' : ''}format=rgba[fg];[2:v]format=gray[a];[fg][a]alphamerge[fga]`;
+    // Background sized to the footage: exact when the client measured the footage, else
+    // stretched to the foreground's own size (the image was made at the same aspect).
+    const bgChain = width && height
+      ? `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[bg];[bg][fga]overlay=0:0:shortest=1:format=yuv420[out]`
+      : `[0:v][fga]scale2ref[bg][fga2];[bg][fga2]overlay=0:0:shortest=1:format=yuv420[out]`;
+
+    await new Promise<void>((resolve, reject) => {
+      const cmd = ffmpeg()
+        .input(bgPath).inputOptions(['-loop 1'])
+        .input(rgbPath)
+        .input(alphaPath);
+      if (haveAudio) cmd.input(srcPath);
+      const out = ['-map [out]'];
+      if (haveAudio) out.push('-map 3:a?', '-c:a aac', '-b:a 160k');
+      out.push('-c:v libx264', '-preset veryfast', '-crf 19', '-pix_fmt yuv420p', '-movflags +faststart', '-shortest');
+      cmd
+        .complexFilter(`${fgChain};${bgChain}`)
+        .outputOptions(out)
+        .on('start', (line: string) => console.log('[VFX composite]', line))
+        .on('end', () => resolve())
+        .on('error', (err: any) => reject(new Error(`ffmpeg composite: ${err?.message || err}`)))
+        .save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } finally {
+    for (const p of [rgbPath, alphaPath, bgPath, srcPath, outPath]) {
+      try { fs.unlinkSync(p); } catch { /* already gone */ }
+    }
+  }
+}
+
+/** Whole-frame grade for clips a model already re-rendered (O3 edit). Audio copied. On
+ *  failure the ungraded clip ships — a finished shot beats no shot. */
+async function gradeVideo(input: Buffer, grade: string): Promise<any> {
+  const chain = gradeChain(grade);
+  if (!chain) return input;
+  const dir = os.tmpdir();
+  const inPath = path.join(dir, `grade_in_${Date.now()}.mp4`);
+  const outPath = path.join(dir, `grade_out_${Date.now()}.mp4`);
+  try {
+    fs.writeFileSync(inPath, input);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg().input(inPath)
+        .outputOptions(['-vf ' + chain, '-c:v libx264', '-preset veryfast', '-crf 18', '-pix_fmt yuv420p', '-c:a copy', '-movflags +faststart'])
+        .on('end', () => resolve()).on('error', (err: any) => reject(err)).save(outPath);
+    });
+    return fs.readFileSync(outPath);
+  } catch (err) {
+    console.warn('[VFX grade] failed, shipping ungraded clip:', err);
+    return input;
+  } finally {
+    for (const p of [inPath, outPath]) { try { fs.unlinkSync(p); } catch { /* gone */ } }
+  }
+}
+
 async function uploadToFirebaseStorage(
   buffer: Buffer,
   path: string,
@@ -335,6 +435,7 @@ export async function POST(req: NextRequest) {
 
     if (currentStatus === 'COMPLETED') {
       let tempUrl = '';
+      let matteAlphaUrl = ''; // veed h264 mode: second clip carrying the person's alpha
 
       if (apiProvider === 'siliconflow' && !isLipsyncPhase) {
         tempUrl = statusData.results?.videos?.[0]?.url;
@@ -399,7 +500,17 @@ export async function POST(req: NextRequest) {
         }
 
         const detailData = await detailResponse.json();
-        tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.audio_file?.url || detailData.audio?.url || detailData.images?.[0]?.url || detailData.image?.url;
+        if (Array.isArray(detailData.video)) {
+          // Two clips (RGB + alpha). Named when the provider names them; else in that order.
+          const vids = detailData.video as any[];
+          const alpha = vids.find((v) => /alpha|mask/i.test(v?.file_name || v?.url || '')) || vids[1];
+          const rgbClip = vids.find((v) => v !== alpha) || vids[0];
+          tempUrl = rgbClip?.url || '';
+          matteAlphaUrl = alpha?.url || '';
+          console.log('[VFX] matte outputs:', vids.map((v) => v?.file_name || v?.url));
+        } else {
+          tempUrl = detailData.video?.url || detailData.output?.video?.url || detailData.audio_file?.url || detailData.audio?.url || detailData.images?.[0]?.url || detailData.image?.url;
+        }
       }
 
       if (!tempUrl) throw new Error('ไม่พบ URL วิดีโอจากระบบ AI');
@@ -542,6 +653,22 @@ export async function POST(req: NextRequest) {
 
       const videoRes = await fetch(tempUrl);
       let videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+
+      // VFX background replacement: the matte engine's person clip becomes the product
+      // only once it sits on the new background; the O3 engine's clip only needs its grade.
+      const vfxMeta = genRow?.metadata?.mode === 'vfx-background' ? genRow.metadata : null;
+      if (vfxMeta && !isImage) {
+        if (vfxMeta.vfx_engine === 'matte') {
+          if (!matteAlphaUrl) throw new Error('ผลตัดคนไม่มีเลเยอร์ alpha กลับมา — ประกอบฉากไม่ได้');
+          console.log('[VFX] compositing person onto new background');
+          videoBuffer = await compositeBackground(
+            videoBuffer, matteAlphaUrl, vfxMeta.vfx_background_url, vfxMeta.vfx_footage_url,
+            Number(vfxMeta.vfx_width) || 0, Number(vfxMeta.vfx_height) || 0, vfxMeta.vfx_grade || 'none'
+          );
+        } else if (vfxMeta.vfx_grade && vfxMeta.vfx_grade !== 'none') {
+          videoBuffer = await gradeVideo(videoBuffer, vfxMeta.vfx_grade);
+        }
+      }
 
       // Kling's lip-sync draws the mouth a steady ~0.25s behind the sound — measured by
       // frame-stepping around the speech onset (audio at 1.14s, lips parting at 1.3–1.4s)
