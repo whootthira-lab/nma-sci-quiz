@@ -180,13 +180,17 @@ export async function compositeBackground(
 
     // FX clips loop to the shot; each is scaled to the canvas and blended onto the layer
     // beneath it — behind the person (atmosphere) or over everything (emissive).
+    // Blends must run in RGB. In yuv420p `screen` also screens the chroma planes against
+    // the effect's neutral 128s, which drags U/V toward 191 and paints the whole frame
+    // magenta (seen on the first production run). Planar RGB in, yuv420p out.
     const fxBase = haveAudio ? 4 : 3;
-    const scaleFx = (i: number) => (W && H ? `[${fxBase + i}:v]scale=${W}:${H},setsar=1,format=yuv420p[fx${i}]` : `[${fxBase + i}:v]format=yuv420p[fx${i}]`);
+    const scaleFx = (i: number) => (W && H ? `[${fxBase + i}:v]scale=${W}:${H},setsar=1,format=gbrp[fx${i}]` : `[${fxBase + i}:v]format=gbrp[fx${i}]`);
+    const blendOp = (f: FxInput) => `blend=all_mode=${f.blend}:all_opacity=${Math.min(1, Math.max(0, f.opacity)).toFixed(2)}:shortest=1`;
     let bgLabel = '[bg0]';
     fx.forEach((f, i) => {
       if (f.placement !== 'behind') return;
       parts.push(scaleFx(i));
-      parts.push(`${bgLabel}[fx${i}]blend=all_mode=${f.blend}:all_opacity=${Math.min(1, Math.max(0, f.opacity)).toFixed(2)}:shortest=1[bgf${i}]`);
+      parts.push(`${bgLabel}format=gbrp[bgr${i}];[bgr${i}][fx${i}]${blendOp(f)},format=yuv420p[bgf${i}]`);
       bgLabel = `[bgf${i}]`;
     });
     parts.push(`${bgLabel}${fgLabel}overlay=0:0:shortest=1:format=yuv420[cmp0]`);
@@ -194,7 +198,7 @@ export async function compositeBackground(
     fx.forEach((f, i) => {
       if (f.placement === 'behind') return;
       parts.push(scaleFx(i));
-      parts.push(`${outLabel}[fx${i}]blend=all_mode=${f.blend}:all_opacity=${Math.min(1, Math.max(0, f.opacity)).toFixed(2)}:shortest=1[cmpf${i}]`);
+      parts.push(`${outLabel}format=gbrp[cmr${i}];[cmr${i}][fx${i}]${blendOp(f)},format=yuv420p[cmpf${i}]`);
       outLabel = `[cmpf${i}]`;
     });
     // final label must be named [out]
