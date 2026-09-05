@@ -74,7 +74,10 @@ async function posterFrame(src: string, at: number, out: string): Promise<void> 
 
 // ───────────────────────────── Gemini (advisory) ─────────────────────────────
 
-async function gemini(parts: any[], model = 'gemini-2.0-flash'): Promise<string> {
+// gemini-2.0-flash and 1.5-flash were retired (404 "no longer available", 5 ก.ย. 2569);
+// the API's own message points at 3.6-flash. Responses may carry thought parts without
+// text, so every text part is joined rather than reading parts[0].
+async function gemini(parts: any[], model = 'gemini-3.6-flash'): Promise<string> {
   const key = process.env.GEMINI_API_KEY || '';
   if (!key) throw new Error('no GEMINI_API_KEY');
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
