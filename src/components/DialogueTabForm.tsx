@@ -56,6 +56,10 @@ interface SceneData {
    *  spares the merge step from uploading the same image again. */
   imageUrl?: string;
   faceTags: FaceTag[];
+  /** How the scene is shot. `classic`: one clip per line, composited onto the scene image.
+   *  `beat`: consecutive lines are grouped into ≤15s beats and each beat is ONE continuous
+   *  two-shot from Kling O3 (cast by reference image) with lip-sync over the joined audio. */
+  engine?: 'classic' | 'beat';
 }
 
 interface DialogueCardData {
@@ -78,6 +82,8 @@ interface DialogueCardData {
   cropY?: number;
   cropW?: number;
   cropH?: number;
+  /** Cards shot together in one Scene Beat share this id and the same videoUrl. */
+  beatId?: string;
 }
 
 const cropFaceImage = async (
@@ -515,8 +521,13 @@ export default function DialogueTabForm() {
     return result.length ? result : [text];
   };
 
-  const isCardTooLong = (card: DialogueCardData) =>
-    !!card.scriptText.trim() && speechSecondsOf(card.scriptText, card.speedFactor) > maxSpeechSeconds;
+  // A beat is one O3 shot of at most 15s; with 1s of silence either side a single line
+  // may speak for 13s. Classic scenes keep the per-engine clip limit.
+  const BEAT_CAP_SECONDS = 15;
+  const isCardTooLong = (card: DialogueCardData) => {
+    const limit = sceneOf(card)?.engine === 'beat' ? BEAT_CAP_SECONDS - 2 : maxSpeechSeconds;
+    return !!card.scriptText.trim() && speechSecondsOf(card.scriptText, card.speedFactor) > limit;
+  };
   const tooLongCards = cards.filter(isCardTooLong);
 
   // Replace a long card with several cards in place, keeping character, voice and emotion.
@@ -1095,6 +1106,140 @@ export default function DialogueTabForm() {
     }
   };
 
+  // ── Scene Beat ─────────────────────────────────────────────────────────────
+  // Consecutive lines of one scene become a beat: one continuous Kling O3 shot with the
+  // cast supplied as reference images, then lip-synced over the lines' joined audio.
+  // The estimate below only plans the grouping; the server measures the real audio and
+  // refuses a beat that will not fit, in which case the beat is split where it was measured.
+  const BEAT_PLAN_SECONDS = 12; // headroom under the 15s cap for a 15-chars/s estimate
+  const BEAT_MAX_LINES = 8;
+  const BEAT_MAX_CAST = 3;
+  const BEAT_CREDITS_PER_SECOND = 12; // O3 standard 10 + lip-sync 2
+  const beatSecondsOf = (c: DialogueCardData) => speechSecondsOf(c.scriptText, c.speedFactor) + 2;
+
+  const groupBeats = (sceneCards: DialogueCardData[]): DialogueCardData[][] => {
+    const beats: DialogueCardData[][] = [];
+    let cur: DialogueCardData[] = [];
+    let secs = 0;
+    for (const c of sceneCards) {
+      const s = beatSecondsOf(c);
+      const cast = new Set([...cur.map((x) => x.characterId), c.characterId]).size;
+      if (cur.length && (secs + s > BEAT_PLAN_SECONDS || cur.length >= BEAT_MAX_LINES || cast > BEAT_MAX_CAST)) {
+        beats.push(cur);
+        cur = [];
+        secs = 0;
+      }
+      cur.push(c);
+      secs += s;
+    }
+    if (cur.length) beats.push(cur);
+    return beats;
+  };
+  const beatCreditsOf = (beat: DialogueCardData[]) => {
+    const secs = beat.reduce((sum, c) => sum + beatSecondsOf(c), 0);
+    return BEAT_CREDITS_PER_SECOND * Math.min(BEAT_CAP_SECONDS, Math.max(3, secs)) + 1;
+  };
+
+  const generateBeat = async (beatCards: DialogueCardData[], depth = 0): Promise<string> => {
+    const scene = sceneOf(beatCards[0]);
+    const leader = beatCards[0];
+    const beatId = `beat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const memberIds = beatCards.map((c) => c.id);
+    const setAll = (u: Partial<DialogueCardData>) =>
+      setCards((prev) => prev.map((c) => (memberIds.includes(c.id) ? { ...c, ...u } : c)));
+
+    const castIds = Array.from(new Set(beatCards.map((c) => c.characterId)));
+    const cast = castIds.map((id) => characterList.find((c) => c.id === id));
+    if (cast.some((c) => !c)) throw new Error('กรุณาเลือกตัวละครให้ครบทุกบทก่อนเริ่ม');
+    if (beatCards.some((c) => !c.scriptText.trim())) throw new Error('กรุณาพิมพ์บทพูดให้ครบทุกบทในบีต');
+    const characters = cast.map((ch) => ({
+      name: ch!.name,
+      image_url: getAvatarUrl(ch),
+      description: ch!.visual_description || ''
+    }));
+    const noFace = characters.find((c) => !c.image_url);
+    if (noFace) throw new Error(`ตัวละคร "${noFace.name}" ยังไม่มีรูปใบหน้า — Scene Beat ใช้รูปตัวละครเป็นภาพอ้างอิง`);
+
+    setAll({
+      status: 'generating',
+      progressPercent: 5,
+      progressMessage: `🎬 บีต ${beatCards.length} บท: กำลังสร้างเสียงพูดทุกบรรทัด...`,
+      beatId,
+      videoUrl: undefined,
+      cropX: undefined, cropY: undefined, cropW: undefined, cropH: undefined
+    });
+
+    try {
+      const lines = beatCards.map((c) => {
+        const finalEmotion = c.emotion === 'custom' ? c.customEmotionText : c.emotion;
+        const acted = !!finalEmotion && finalEmotion !== 'normal';
+        return {
+          speaker: castIds.indexOf(c.characterId),
+          text: c.scriptText,
+          voice_id: c.voiceId,
+          tts_provider: c.ttsProvider,
+          speed: c.speedFactor,
+          emotion_instruction: c.ttsProvider === 'gemini' && acted ? `พูดด้วยน้ำเสียงตามอารมณ์นี้: ${finalEmotion}. ` : '',
+          emotion_label: acted ? emotionTagsById(c.emotion, c.customEmotionText) : ''
+        };
+      });
+
+      const res = await fetch('/api/generate-beat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_email: user?.email || '',
+          user_id: user?.id || '',
+          aspect_ratio: aspectRatio,
+          scene_name: scene?.name || '',
+          scene_image_url: scene?.imageUrl || '',
+          characters,
+          lines
+        })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        // Measured audio does not fit one shot: cut at the measured midpoint, shoot as two beats
+        if (Array.isArray(data.measured_seconds) && beatCards.length > 1 && depth < 3) {
+          const secs = data.measured_seconds as number[];
+          const total = secs.reduce((a, b) => a + b, 0);
+          let acc = 0;
+          let cut = 1;
+          for (let i = 0; i < secs.length - 1; i++) {
+            acc += secs[i];
+            if (acc >= total / 2) { cut = i + 1; break; }
+          }
+          await generateBeat(beatCards.slice(0, cut), depth + 1);
+          return generateBeat(beatCards.slice(cut), depth + 1);
+        }
+        throw new Error(data.error || 'เซิร์ฟเวอร์ปฏิเสธการสร้างบีต');
+      }
+
+      setAll({ status: 'polling', progressPercent: 15, progressMessage: '🎥 Kling O3 กำลังถ่ายช็อตนี้ (ทุกบทในบีตพร้อมกัน)...' });
+      const url = await pollCardStatus(leader.id, data.requestId, data.videoPath);
+      setAll({ status: 'completed', progressPercent: 100, progressMessage: '✅ เสร็จสมบูรณ์!', videoUrl: url });
+      return url;
+    } catch (err: any) {
+      setAll({ status: 'failed', progressPercent: undefined, progressMessage: `❌ ล้มเหลว: ${err.message || 'สร้างบีตไม่สำเร็จ'}` });
+      throw err;
+    }
+  };
+
+  // The card's own button: a classic scene shoots the line; a beat scene shoots the whole
+  // beat the line belongs to (grouping is deterministic over the scene's cards).
+  const generateForCard = async (cardId: string) => {
+    const card = cards.find((c) => c.id === cardId);
+    if (!card) return;
+    if (sceneOf(card)?.engine !== 'beat') return generateCardVideo(cardId);
+    const beat = groupBeats(cards.filter((c) => c.sceneId === card.sceneId)).find((b) => b.some((c) => c.id === cardId));
+    if (!beat) return;
+    try {
+      await generateBeat(beat);
+    } catch (err) {
+      console.error('[Beat]', err);
+    }
+  };
+
   // Generate all uncompleted clips in sequence
   const generateAllClips = async () => {
     if (batchGenerating) return;
@@ -1102,14 +1247,24 @@ export default function DialogueTabForm() {
     setMergeError(null);
 
     try {
-      for (let i = 0; i < cards.length; i++) {
-        const card = cards[i];
-        if (card.status === 'completed' && card.videoUrl) {
-          continue; // Skip already generated clips
+      for (const scene of scenes) {
+        const sceneCards = cards.filter((c) => c.sceneId === scene.id);
+        if (scene.engine === 'beat') {
+          for (const beat of groupBeats(sceneCards)) {
+            const done = beat.every((c) => c.status === 'completed' && c.videoUrl && c.beatId && c.beatId === beat[0].beatId);
+            if (done) continue;
+            setCurrentGeneratingIndex(cards.findIndex((c) => c.id === beat[0].id));
+            await generateBeat(beat);
+          }
+          continue;
         }
-
-        setCurrentGeneratingIndex(i);
-        await generateCardVideo(card.id);
+        for (const card of sceneCards) {
+          if (card.status === 'completed' && card.videoUrl) {
+            continue; // Skip already generated clips
+          }
+          setCurrentGeneratingIndex(cards.findIndex((c) => c.id === card.id));
+          await generateCardVideo(card.id);
+        }
       }
     } catch (err: any) {
       console.error('[Batch Generation Error]', err);
@@ -1183,6 +1338,18 @@ export default function DialogueTabForm() {
   // Long scenes are stitched in groups so no single request nears the 300s limit.
   const MERGE_CHUNK = 8;
   const mergeScene = async (scene: SceneData, sceneCards: DialogueCardData[]): Promise<string> => {
+    if (scene.engine === 'beat') {
+      // Each beat is already a full-frame shot of the scene; the cards of one beat share
+      // its clip, so join one clip per beat and skip the compositing entirely.
+      const beatUrls: string[] = [];
+      for (const c of sceneCards) {
+        if (c.videoUrl && !beatUrls.includes(c.videoUrl)) beatUrls.push(c.videoUrl);
+      }
+      if (beatUrls.length === 0) throw new Error(`${scene.name}: ยังไม่มีบีตที่สร้างเสร็จ`);
+      if (beatUrls.length === 1) return beatUrls[0];
+      return callMergeApi(beatUrls.map(toPlainClip), null, null, scene.name, true);
+    }
+
     const baseUrl = await uploadSceneImage(scene);
     const clips = sceneCards.map(toClip);
 
@@ -1302,7 +1469,8 @@ export default function DialogueTabForm() {
               id: s.id,
               name: s.name,
               imageUrl: s.imageUrl || null,
-              faceTags: s.faceTags
+              faceTags: s.faceTags,
+              engine: s.engine || 'classic'
             })),
             cards: cards.map((c) => ({ ...c, audioFile: null }))
           })
@@ -1332,7 +1500,8 @@ export default function DialogueTabForm() {
         imageFile: null, // the stored copy is used instead
         imagePreview: s.imageUrl || null,
         imageUrl: s.imageUrl || undefined,
-        faceTags: s.faceTags || []
+        faceTags: s.faceTags || [],
+        engine: s.engine === 'beat' ? 'beat' : 'classic'
       }))
     );
     setCards((pendingDraft.cards || []).map((c: any) => ({ ...c, audioFile: null })));
@@ -1635,6 +1804,26 @@ export default function DialogueTabForm() {
                   placeholder="ชื่อฉาก เช่น ในห้องเรียน"
                 />
                 <span className="text-[11px] text-gray-500 font-thai">{sceneCards.length} บท</span>
+                {/* Engine: one clip per line, or continuous O3 beats */}
+                <div className="flex items-center rounded-xl border border-gray-200 bg-white p-0.5" title="เครื่องยนต์ของฉากนี้">
+                  {([
+                    { id: 'classic', label: 'ทีละบท', tip: 'สร้างคลิปทีละบรรทัด แล้ววางลงบนภาพฉาก (แบบเดิม)' },
+                    { id: 'beat', label: '🎬 Scene Beat', tip: 'ถ่ายบทต่อเนื่องเป็นช็อตเดียว ตัวละครอยู่ร่วมเฟรมและสลับกันพูด (Kling O3 + ลิปซิงค์, ≤15 วิ/บีต)' }
+                  ] as const).map((eng) => (
+                    <button
+                      key={eng.id}
+                      type="button"
+                      onClick={() => updateScene(scene.id, { engine: eng.id })}
+                      disabled={autoRunning || batchGenerating || merging}
+                      title={eng.tip}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold font-thai transition-all disabled:opacity-40 ${
+                        (scene.engine || 'classic') === eng.id ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      {eng.label}
+                    </button>
+                  ))}
+                </div>
                 {scenes.length > 1 && (
                   <button
                     type="button"
@@ -1648,11 +1837,31 @@ export default function DialogueTabForm() {
                 )}
               </div>
 
+              {scene.engine === 'beat' && (() => {
+                const beats = groupBeats(sceneCards);
+                const credits = beats.reduce((sum, b) => sum + beatCreditsOf(b), 0);
+                return (
+                  <div className="rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/5 px-4 py-3 text-[11px] text-gray-700 font-thai space-y-1">
+                    <p className="font-semibold text-[#1A1A1A]">
+                      Scene Beat: {sceneCards.length} บท → {beats.length} บีต · ประมาณ {credits} เครดิต
+                      <span className="font-normal text-gray-500"> (Kling O3 ช็อตต่อเนื่อง + ลิปซิงค์, ≈12 เครดิต/วินาที)</span>
+                    </p>
+                    <p className="text-gray-600">
+                      บทที่ติดกันในฉากนี้จะถูกถ่ายรวมเป็นช็อตเดียวครั้งละไม่เกิน 15 วินาที ตัวละครอยู่ร่วมเฟรมและสลับกันพูด
+                      ระบบใช้รูปตัวละครเป็นภาพอ้างอิง (ไม่ต้องแท็กใบหน้า) ส่วนภาพฉากจะถูกใช้เป็นฉากหลังของช็อต และใช้เสียง TTS เท่านั้น
+                      {beats.some((b) => b.length === 1) && ' · บีตที่มีบทเดียวคือบทที่ยาวหรือกำลังจะเปลี่ยนคู่สนทนา'}
+                    </p>
+                  </div>
+                );
+              })()}
+
               <div className="bg-[#FAF8F5] border border-gray-100 p-4 rounded-2xl space-y-3">
                 <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
                   <div className="flex-1">
                     <label className="block text-[11px] font-semibold text-gray-600 mb-1.5 font-thai">
-                      ภาพฉากนี้ (ทางเลือก — ใส่เพื่อให้ตัวละครพูดอยู่ร่วมเฟรมเดียวกัน)
+                      {scene.engine === 'beat'
+                        ? 'ภาพฉากนี้ (ทางเลือก — ใช้เป็นฉากหลังของช็อตบีต)'
+                        : 'ภาพฉากนี้ (ทางเลือก — ใส่เพื่อให้ตัวละครพูดอยู่ร่วมเฟรมเดียวกัน)'}
                     </label>
                     <input
                       type="file"
@@ -2073,14 +2282,14 @@ export default function DialogueTabForm() {
                           <div className="flex-1 flex flex-col justify-center items-center py-4 space-y-3">
                             <Film className="w-10 h-10 text-gray-300" />
                             <p className="text-xs text-gray-500 font-thai">
-                              พร้อมสำหรับการสร้างวิดีโอย่อย
+                              {scene.engine === 'beat' ? 'จะถูกถ่ายรวมกับบทข้างเคียงเป็นบีตเดียว' : 'พร้อมสำหรับการสร้างวิดีโอย่อย'}
                             </p>
                             <button
-                              onClick={() => generateCardVideo(card.id)}
+                              onClick={() => generateForCard(card.id)}
                               disabled={batchGenerating}
                               className="px-4 py-2 bg-[#1A1A1A] hover:bg-black text-[#D4AF37] font-semibold text-xs rounded-xl shadow-sm transition-all disabled:opacity-50 font-thai flex items-center gap-1.5"
                             >
-                              <Video className="w-3.5 h-3.5" /> เจนคลิปนี้
+                              <Video className="w-3.5 h-3.5" /> {scene.engine === 'beat' ? 'ถ่ายบีตนี้' : 'เจนคลิปนี้'}
                             </button>
                           </div>
                         )}
@@ -2120,10 +2329,10 @@ export default function DialogueTabForm() {
                             </div>
                             <div className="flex items-center gap-1.5 mt-2.5">
                               <span className="text-[11px] font-semibold text-green-600 font-thai flex items-center gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" /> สำเร็จ
+                                <CheckCircle2 className="w-3.5 h-3.5" /> {card.beatId ? 'สำเร็จ (ช็อตบีตร่วม)' : 'สำเร็จ'}
                               </span>
                               <button
-                                onClick={() => generateCardVideo(card.id)}
+                                onClick={() => generateForCard(card.id)}
                                 disabled={batchGenerating}
                                 className="text-[10px] text-gray-400 hover:text-gray-600 underline font-thai"
                               >
@@ -2140,7 +2349,7 @@ export default function DialogueTabForm() {
                               {card.progressMessage || 'การเจนคลิปนี้ล้มเหลว'}
                             </p>
                             <button
-                              onClick={() => generateCardVideo(card.id)}
+                              onClick={() => generateForCard(card.id)}
                               disabled={batchGenerating}
                               className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-xs border border-red-200 rounded-lg transition-all font-thai"
                             >
