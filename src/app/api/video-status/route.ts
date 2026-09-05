@@ -140,7 +140,7 @@ async function fetchToFile(url: string, file: string) {
 }
 
 /** Frame size and length of a clip, read from ffmpeg's own banner (no ffprobe is deployed). */
-function probeVideo(file: string): Promise<{ width: number; height: number; seconds: number }> {
+function probeVideo(file: string): Promise<{ width: number; height: number; seconds: number; fps: number }> {
   return new Promise((resolve) => {
     let stderr = '';
     const proc = require('child_process').spawn(ffmpegInstaller.path, ['-hide_banner', '-i', file]);
@@ -148,10 +148,12 @@ function probeVideo(file: string): Promise<{ width: number; height: number; seco
     proc.on('close', () => {
       const dim = stderr.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
       const dur = stderr.match(/Duration: (\d+):(\d+):([\d.]+)/);
+      const fps = stderr.match(/Video:.*?([\d.]+) fps/);
       resolve({
         width: dim ? +dim[1] : 0,
         height: dim ? +dim[2] : 0,
-        seconds: dur ? (+dur[1] * 3600 + +dur[2] * 60 + +dur[3]) : 0
+        seconds: dur ? (+dur[1] * 3600 + +dur[2] * 60 + +dur[3]) : 0,
+        fps: fps ? +fps[1] : 0
       });
     });
   });
@@ -188,7 +190,7 @@ async function compositeBackground(
     // (a wrong number here crops the person, as the first production run showed).
     const rgbInfo = await probeVideo(rgbPath);
     const alphaInfo = await probeVideo(alphaPath);
-    const srcInfo = haveAudio ? await probeVideo(srcPath) : { width: 0, height: 0, seconds: 0 };
+    const srcInfo = haveAudio ? await probeVideo(srcPath) : { width: 0, height: 0, seconds: 0, fps: 0 };
     const W = alphaInfo.width || rgbInfo.width || width;
     const H = alphaInfo.height || rgbInfo.height || height;
     // veed's colour clip came back SHORTER than its alpha clip (6.36 s vs 7.20 s on the first
@@ -207,15 +209,18 @@ async function compositeBackground(
       ? `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg];[bg][fga]overlay=0:0:shortest=1:format=yuv420[out]`
       : `[0:v][fga]scale2ref[bg][fga2];[bg][fga2]overlay=0:0:shortest=1:format=yuv420[out]`;
 
+    // The looped still would otherwise set the graph's clock at image2's default 25 fps and
+    // the 30 fps footage would be resampled (7.20 s came out 7.12 s); run it at the clip's rate.
+    const fps = alphaInfo.fps || rgbInfo.fps || srcInfo.fps || 25;
     await new Promise<void>((resolve, reject) => {
       const cmd = ffmpeg()
-        .input(bgPath).inputOptions(['-loop 1'])
+        .input(bgPath).inputOptions(['-loop 1', `-framerate ${fps}`])
         .input(rgbPath)
         .input(alphaPath);
       if (haveAudio) cmd.input(srcPath);
       const out = ['-map [out]'];
       if (haveAudio) out.push('-map 3:a?', '-c:a aac', '-b:a 160k');
-      out.push('-c:v libx264', '-preset veryfast', '-crf 19', '-pix_fmt yuv420p', '-movflags +faststart', '-shortest');
+      out.push(`-r ${fps}`, '-c:v libx264', '-preset veryfast', '-crf 19', '-pix_fmt yuv420p', '-movflags +faststart', '-shortest');
       cmd
         .complexFilter(`${fgChain};${bgChain}`)
         .outputOptions(out)
