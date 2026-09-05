@@ -139,6 +139,24 @@ async function fetchToFile(url: string, file: string) {
   fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
 }
 
+/** Frame size and length of a clip, read from ffmpeg's own banner (no ffprobe is deployed). */
+function probeVideo(file: string): Promise<{ width: number; height: number; seconds: number }> {
+  return new Promise((resolve) => {
+    let stderr = '';
+    const proc = require('child_process').spawn(ffmpegInstaller.path, ['-hide_banner', '-i', file]);
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    proc.on('close', () => {
+      const dim = stderr.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
+      const dur = stderr.match(/Duration: (\d+):(\d+):([\d.]+)/);
+      resolve({
+        width: dim ? +dim[1] : 0,
+        height: dim ? +dim[2] : 0,
+        seconds: dur ? (+dur[1] * 3600 + +dur[2] * 60 + +dur[3]) : 0
+      });
+    });
+  });
+}
+
 /**
  * VFX background replacement, matte engine. veed's h264 mode hands back the person as an
  * RGB clip plus a separate alpha clip; the old ffmpeg cannot decode VP9 alpha but it can
@@ -166,12 +184,27 @@ async function compositeBackground(
       try { await fetchToFile(footageUrl, srcPath); haveAudio = true; } catch (e) { console.warn('[VFX] footage audio unavailable:', e); }
     }
 
+    // The clips' own frame size is the truth; the client's measurement is only a fallback
+    // (a wrong number here crops the person, as the first production run showed).
+    const rgbInfo = await probeVideo(rgbPath);
+    const alphaInfo = await probeVideo(alphaPath);
+    const srcInfo = haveAudio ? await probeVideo(srcPath) : { width: 0, height: 0, seconds: 0 };
+    const W = alphaInfo.width || rgbInfo.width || width;
+    const H = alphaInfo.height || rgbInfo.height || height;
+    // veed's colour clip came back SHORTER than its alpha clip (6.36 s vs 7.20 s on the first
+    // production run) and is only the footage re-encoded anyway. When the original footage
+    // has the alpha's frame size, it is the colour source: full length, first-generation
+    // pixels, and its own audio. The colour clip is the fallback.
+    const useSource = haveAudio && srcInfo.width === W && srcInfo.height === H;
+    const colorIn = useSource ? '[3:v]' : '[1:v]';
+    console.log(`[VFX composite] color ${rgbInfo.width}x${rgbInfo.height} ${rgbInfo.seconds}s · alpha ${alphaInfo.seconds}s · footage ${srcInfo.width}x${srcInfo.height} ${srcInfo.seconds}s · canvas ${W}x${H} · colour from ${useSource ? 'footage' : 'veed'}`);
+
     const g = gradeChain(grade);
-    const fgChain = `[1:v]${g ? g + ',' : ''}format=rgba[fg];[2:v]format=gray[a];[fg][a]alphamerge[fga]`;
-    // Background sized to the footage: exact when the client measured the footage, else
-    // stretched to the foreground's own size (the image was made at the same aspect).
-    const bgChain = width && height
-      ? `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[bg];[bg][fga]overlay=0:0:shortest=1:format=yuv420[out]`
+    const fgChain = `${colorIn}${g ? g + ',' : ''}format=rgba[fg];[2:v]format=gray[a];[fg][a]alphamerge[fga]`;
+    // Background covers the person's frame (scaled up to cover, centre-cropped), else
+    // stretched to the foreground's own size when even the clip could not be measured.
+    const bgChain = W && H
+      ? `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg];[bg][fga]overlay=0:0:shortest=1:format=yuv420[out]`
       : `[0:v][fga]scale2ref[bg][fga2];[bg][fga2]overlay=0:0:shortest=1:format=yuv420[out]`;
 
     await new Promise<void>((resolve, reject) => {
