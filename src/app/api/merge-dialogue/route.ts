@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize, trimSilence } = body;
+    const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize, trimSilence, colorMatch } = body;
     let videoClips = body.videoClips;
 
     // Backward compatibility with Phase 1 payload
@@ -219,6 +219,55 @@ export async function POST(req: NextRequest) {
         );
       });
 
+    // ── Anchor-frame colour match ──────────────────────────────────────────────
+    // Every clip is a separate generation, and the model's colour balance drifts between
+    // them even from one seed image — a warm shot, then a cool one, the same character.
+    // The first clip of the batch is the anchor; each later clip's average colour is
+    // measured and nudged toward it with a per-channel gain. Gentle by design: 60% of the
+    // measured correction, clamped to ±15%, so a legitimately different picture (another
+    // character, another wardrobe) is evened out, not repainted.
+    const MATCH_STRENGTH = 0.6;
+    const MATCH_CLAMP = 0.15;
+    const meanRgb = (filePath: string): Promise<[number, number, number] | null> =>
+      new Promise((resolve) => {
+        // One pixel per sampled frame is the frame's average; average those in turn.
+        execFile(
+          ffmpegInstaller.path,
+          ['-i', filePath, '-vf', "select='not(mod(n\\,10))',scale=1:1", '-frames:v', '30', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'],
+          { encoding: 'buffer', maxBuffer: 1024 * 1024 },
+          (err, stdout) => {
+            const buf = stdout as unknown as Buffer;
+            if (err || !buf || buf.length < 3) return resolve(null);
+            const n = Math.floor(buf.length / 3);
+            let r = 0, g = 0, b = 0;
+            for (let k = 0; k < n; k++) { r += buf[k * 3]; g += buf[k * 3 + 1]; b += buf[k * 3 + 2]; }
+            resolve([r / n, g / n, b / n]);
+          }
+        );
+      });
+    const gainToward = (anchor: number, mine: number) => {
+      if (mine < 8) return 1; // near-black: a gain would only amplify noise
+      const raw = anchor / mine;
+      const eased = 1 + (raw - 1) * MATCH_STRENGTH;
+      return Math.min(1 + MATCH_CLAMP, Math.max(1 - MATCH_CLAMP, eased));
+    };
+    // Per-clip filter fragment ('' when the clip already sits on the anchor)
+    const colorFilters: string[] = videoClips.map(() => '');
+    if (colorMatch && videoClips.length > 1) {
+      const anchor = await meanRgb(localClipPaths[0]);
+      if (anchor) {
+        for (let i = 1; i < videoClips.length; i++) {
+          const mine = await meanRgb(localClipPaths[i]);
+          if (!mine) continue;
+          const gains = [0, 1, 2].map((c) => gainToward(anchor[c], mine[c]));
+          if (gains.every((gain) => Math.abs(gain - 1) < 0.01)) continue;
+          colorFilters[i] = `colorchannelmixer=rr=${gains[0].toFixed(3)}:gg=${gains[1].toFixed(3)}:bb=${gains[2].toFixed(3)}`;
+          console.log(`[Merge API] Clip ${i} colour → anchor: mean ${mine.map((v) => v.toFixed(0)).join('/')} vs ${anchor.map((v) => v.toFixed(0)).join('/')} · gains ${gains.map((gain) => gain.toFixed(3)).join('/')}`);
+        }
+      }
+    }
+    const withColor = (i: number, chain: string) => (colorFilters[i] ? `${colorFilters[i]},${chain}` : chain);
+
     // Process segments
     const localVideoPaths: string[] = [];
 
@@ -235,9 +284,22 @@ export async function POST(req: NextRequest) {
 
       // If no base image, or clip does not have coordinates, we don't overlay
       if (!baseImageUrl) {
-        if (!normalize && !trimTo) {
+        if (!normalize && !trimTo && !colorFilters[i]) {
           // Direct Phase 1 concatenation: use downloaded clip directly
           localVideoPaths.push(localClipPath);
+          continue;
+        }
+        if (!normalize && colorFilters[i]) {
+          // Colour correction needs a re-encode; keep size and rate as they are
+          await new Promise<void>((resolve, reject) => {
+            ffmpeg(localClipPath)
+              .outputOptions(['-vf ' + colorFilters[i], '-c:v libx264', '-preset veryfast', '-pix_fmt yuv420p', '-c:a aac', '-ar 44100', '-ac 2', ...trimOpts])
+              .on('end', () => resolve())
+              .on('error', (err) => reject(err))
+              .save(segmentPath);
+          });
+          localVideoPaths.push(segmentPath);
+          tempFiles.push(segmentPath);
           continue;
         }
         if (!normalize && trimTo) {
@@ -267,7 +329,7 @@ export async function POST(req: NextRequest) {
           ffmpeg()
             .input(localClipPath)
             .complexFilter([
-              `[0:v]scale=${normW}:${normH}:force_original_aspect_ratio=decrease,pad=${normW}:${normH}:(ow-iw)/2:(oh-ih)/2,setsar=1[out]`
+              `[0:v]${withColor(i, `scale=${normW}:${normH}:force_original_aspect_ratio=decrease,pad=${normW}:${normH}:(ow-iw)/2:(oh-ih)/2,setsar=1`)}[out]`
             ])
             .outputOptions([
               '-map [out]',
@@ -297,7 +359,7 @@ export async function POST(req: NextRequest) {
           ffmpeg()
             .input(localClipPath)
             .complexFilter([
-              `[0:v]scale=${evenBgW}:${evenBgH}[scaled]`
+              `[0:v]${withColor(i, `scale=${evenBgW}:${evenBgH}`)}[scaled]`
             ])
             .outputOptions([
               '-map [scaled]',
@@ -342,7 +404,7 @@ export async function POST(req: NextRequest) {
             .input(localClipPath)
             .complexFilter([
               `[0:v]scale=2*trunc(iw/2):2*trunc(ih/2)[bg]`,
-              `[1:v]scale=${finalW}:${finalH}[face]`,
+              `[1:v]${withColor(i, `scale=${finalW}:${finalH}`)}[face]`,
               `[bg][face]overlay=${x}:${y}:shortest=1[outv]`
             ])
             .outputOptions([

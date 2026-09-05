@@ -191,6 +191,8 @@ export default function DialogueTabForm() {
   const [premiumAllowed, setPremiumAllowed] = useState(false);
   // Carry the last frame of each line into the next one so poses don't jump between clips
   const [continuityEnabled, setContinuityEnabled] = useState(false);
+  // Even out the colour drift between separately generated clips of one scene (merge-side ffmpeg)
+  const [colorMatchEnabled, setColorMatchEnabled] = useState(true);
 
   // Spreadsheet round-trip
   const [sheetBusy, setSheetBusy] = useState<'export' | 'import' | null>(null);
@@ -1282,7 +1284,8 @@ export default function DialogueTabForm() {
     tags: FaceTag[] | null,
     label: string,
     normalize = false,
-    trimSilence = false
+    trimSilence = false,
+    colorMatch = false
   ): Promise<string> => {
     const response = await fetch('/api/merge-dialogue', {
       method: 'POST',
@@ -1296,7 +1299,8 @@ export default function DialogueTabForm() {
         baseImageUrl,
         faceTags: tags && tags.length > 0 ? tags : null,
         normalize,
-        trimSilence
+        trimSilence,
+        colorMatch
       })
     });
     const result = await response.json();
@@ -1347,7 +1351,7 @@ export default function DialogueTabForm() {
       }
       if (beatUrls.length === 0) throw new Error(`${scene.name}: ยังไม่มีบีตที่สร้างเสร็จ`);
       if (beatUrls.length === 1) return beatUrls[0];
-      return callMergeApi(beatUrls.map(toPlainClip), null, null, scene.name, true);
+      return callMergeApi(beatUrls.map(toPlainClip), null, null, scene.name, true, false, colorMatchEnabled);
     }
 
     const baseUrl = await uploadSceneImage(scene);
@@ -1356,8 +1360,9 @@ export default function DialogueTabForm() {
     // Nothing to composite and nothing to join → the clip is already the scene
     if (clips.length === 1 && !baseUrl) return clips[0].videoUrl;
 
+    // Colour is matched within a scene (same place, same light); scenes are left to differ.
     if (clips.length <= MERGE_CHUNK) {
-      return callMergeApi(clips, baseUrl, scene.faceTags, scene.name, false, true);
+      return callMergeApi(clips, baseUrl, scene.faceTags, scene.name, false, true, colorMatchEnabled);
     }
 
     const parts: string[] = [];
@@ -1365,7 +1370,7 @@ export default function DialogueTabForm() {
       const groupNo = Math.floor(i / MERGE_CHUNK) + 1;
       setAutoStage(`${scene.name}: กำลังต่อคลิป ช่วงที่ ${groupNo}...`);
       parts.push(
-        await callMergeApi(clips.slice(i, i + MERGE_CHUNK), baseUrl, scene.faceTags, `${scene.name} (ช่วง ${groupNo})`, false, true)
+        await callMergeApi(clips.slice(i, i + MERGE_CHUNK), baseUrl, scene.faceTags, `${scene.name} (ช่วง ${groupNo})`, false, true, colorMatchEnabled)
       );
     }
     return callMergeApi(parts.map(toPlainClip), null, null, scene.name, true);
@@ -1464,6 +1469,7 @@ export default function DialogueTabForm() {
             ttsProvider,
             videoModel,
             continuityEnabled,
+            colorMatchEnabled,
             mergedVideoUrl,
             scenes: scenes.map((s) => ({
               id: s.id,
@@ -1482,7 +1488,7 @@ export default function DialogueTabForm() {
     return () => clearTimeout(timer);
   }, [
     draftKey, draftLoaded, pendingDraft, projectHasContent, projectTitle, aspectRatio,
-    ttsProvider, videoModel, continuityEnabled, mergedVideoUrl, scenes, cards
+    ttsProvider, videoModel, continuityEnabled, colorMatchEnabled, mergedVideoUrl, scenes, cards
   ]);
 
   const restoreDraft = () => {
@@ -1492,6 +1498,7 @@ export default function DialogueTabForm() {
     setTtsProvider(pendingDraft.ttsProvider || 'google');
     setVideoModel(pendingDraft.videoModel || 'fast');
     setContinuityEnabled(!!pendingDraft.continuityEnabled);
+    setColorMatchEnabled(pendingDraft.colorMatchEnabled !== false);
     setMergedVideoUrl(pendingDraft.mergedVideoUrl || null);
     setScenes(
       (pendingDraft.scenes || []).map((s: any) => ({
@@ -2458,6 +2465,20 @@ export default function DialogueTabForm() {
                 <span className="text-[11px] leading-relaxed">
                   <b className="text-[#1A1A1A]">ภาพต่อเนื่องระหว่างบท</b> — ใช้เฟรมสุดท้ายของบทก่อนหน้าเป็นภาพตั้งต้นของบทถัดไป
                   ท่าทางจะไม่กระโดด (ใช้ภายในฉากเดียวกันและตัวละครเดิมเท่านั้น เปลี่ยนฉากยังตัดภาพตามปกติ)
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer bg-white border border-gray-150 rounded-xl px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={colorMatchEnabled}
+                  onChange={(e) => setColorMatchEnabled(e.target.checked)}
+                  disabled={autoRunning || batchGenerating || merging}
+                  className="mt-0.5 accent-[#D4AF37]"
+                />
+                <span className="text-[11px] leading-relaxed">
+                  <b className="text-[#1A1A1A]">เกลี่ยสีข้ามช็อต (color match)</b> — ตอนรวมคลิปในฉากเดียวกัน ระบบวัดโทนสีของบทแรกเป็นหลัก
+                  แล้วปรับบทถัดไปให้เข้าหากันเล็กน้อย (±15%) ลดอาการภาพอุ่น/เย็นไม่เท่ากันระหว่างการเจนแต่ละครั้ง (ไม่ปรับข้ามฉาก)
                 </span>
               </label>
 
