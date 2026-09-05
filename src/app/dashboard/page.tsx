@@ -9,6 +9,7 @@ import Mode2Form from '@/components/Mode2Form';
 import ImageTabForm from '@/components/ImageTabForm';
 import DialogueTabForm from '@/components/DialogueTabForm';
 import VfxBackgroundForm from '@/components/VfxBackgroundForm';
+import VfxStudio from '@/components/VfxStudio';
 import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare, Layers } from 'lucide-react';
 import { peekRegen, regenTab } from '@/lib/regen';
 
@@ -16,6 +17,8 @@ export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'vfx' | 'mode2'>('mode1');
+  // VFX tab: the one-shot quick mode (Phase 0.5) or the shot-by-shot studio (Phase 1)
+  const [vfxMode, setVfxMode] = useState<'quick' | 'studio'>('studio');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -165,11 +168,16 @@ export default function DashboardPage() {
               <>
                 <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
                   <Layers className="w-5 h-5 text-[#D4AF37]" />
-                  เปลี่ยนฉากหลังวิดีโอ (VFX Studio)
+                  VFX Studio — เปลี่ยนฉากหลังวิดีโอ
                 </h2>
                 <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
                   อัปโหลดฟุตเทจคนแสดงจริง แล้วย้ายไปอยู่ในฉากใหม่ — ตัดตัวคนทุกเฟรมและวางบนภาพฉาก หรือให้ <span className="font-semibold text-[#D4AF37]">Kling O3</span> เรนเดอร์ช็อตใหม่ทั้งเฟรมพร้อมแสงเงาที่กลมกลืน
                 </p>
+                <div className="mt-3 inline-flex rounded-xl border border-gray-200 bg-white p-0.5 text-[11px] font-thai">
+                  {([['studio', 'สตูดิโอ (แบ่งช็อต · ตรวจทีละช็อต)'], ['quick', 'โหมดด่วน (คลิปเดียวจบ)']] as const).map(([id, label]) => (
+                    <button key={id} type="button" onClick={() => setVfxMode(id)} className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${vfxMode === id ? 'bg-[#1A1A1A] text-[#D4AF37]' : 'text-gray-500 hover:text-gray-800'}`}>{label}</button>
+                  ))}
+                </div>
               </>
             ) : (
               <>
@@ -192,7 +200,7 @@ export default function DashboardPage() {
           ) : activeTab === 'dialogue' ? (
             <DialogueTabForm />
           ) : activeTab === 'vfx' ? (
-            <VfxBackgroundForm />
+            vfxMode === 'studio' ? <VfxStudio /> : <VfxBackgroundForm />
           ) : isAdmin ? (
             <Mode2Form onVideoGenerated={handleVideoGenerated} />
           ) : (
