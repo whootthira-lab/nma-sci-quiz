@@ -220,7 +220,10 @@ async function compositeBackground(
       if (haveAudio) cmd.input(srcPath);
       const out = ['-map [out]'];
       if (haveAudio) out.push('-map 3:a?', '-c:a aac', '-b:a 160k');
-      out.push(`-r ${fps}`, '-c:v libx264', '-preset veryfast', '-crf 19', '-pix_fmt yuv420p', '-movflags +faststart', '-shortest');
+      // No `-shortest`: on the deployed ffmpeg 4.1 it cut the tail (7.20 s → 6.97 s) while the
+      // 4.4 build kept every frame. The looped still is already bounded by overlay's
+      // shortest=1, and the audio is the footage's own, so nothing here runs long.
+      out.push(`-r ${fps}`, '-c:v libx264', '-preset veryfast', '-crf 19', '-pix_fmt yuv420p', '-movflags +faststart');
       cmd
         .complexFilter(`${fgChain};${bgChain}`)
         .outputOptions(out)
