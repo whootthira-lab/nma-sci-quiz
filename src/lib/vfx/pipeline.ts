@@ -96,7 +96,7 @@ async function gemini(parts: any[], model = 'gemini-3.6-flash'): Promise<string>
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.4, maxOutputTokens: 1024 } })
+    body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.4, maxOutputTokens: 1024, responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'low' } } })
   });
   if (!res.ok) throw new Error(`gemini ${res.status}`);
   const j = await res.json();

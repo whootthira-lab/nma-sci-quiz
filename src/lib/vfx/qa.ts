@@ -51,7 +51,7 @@ Reply with JSON only: {"flags": [subset of "edge_halo","lighting_mismatch","fram
     }
     const res = await fetch(`${geminiUrl()}?key=${key}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.2, maxOutputTokens: 400 } })
+      body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.2, maxOutputTokens: 512, responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'low' } } })
     });
     if (!res.ok) return null;
     const text = geminiText(await res.json());
@@ -91,7 +91,7 @@ export async function isPublicFigure(imageUrl: string): Promise<{ publicFigure: 
       body: JSON.stringify({ contents: [{ parts: [
         { text: 'Does this image depict a recognizable public figure (politician, celebrity, athlete, royalty, well-known executive or influencer)? Reply with JSON only: {"public_figure": true|false, "who": "<name or empty>"}. If unsure, answer false.' },
         { inline_data: { mime_type: r.headers.get('content-type')?.includes('png') ? 'image/png' : 'image/jpeg', data } }
-      ] }], generationConfig: { temperature: 0, maxOutputTokens: 100 } })
+      ] }], generationConfig: { temperature: 0, maxOutputTokens: 256, responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'low' } } })
     });
     if (!res.ok) return null;
     const m = geminiText(await res.json()).match(/\{[\s\S]*\}/);
