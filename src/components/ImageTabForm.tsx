@@ -58,6 +58,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     { id: 'flux_ultra',  label: '🏆 Flux 1.1 Pro Ultra', blurb: 'ภาพถ่ายสมจริง 4MP คมสุด', credits: 7 },
     { id: 'seedream45',  label: '🌱 Seedream 4.5', blurb: 'หน้าคนเอเชียสมจริง คุ้มราคา', credits: 4 },
     { id: 'nanopro_t2i', label: '🍌 Nano Banana Pro', blurb: 'Gemini 3 Pro — ตัวอักษร/คำสั่งซับซ้อน', credits: 15 },
+    { id: 'gptimage2',   label: '🧠 GPT Image 2 (OpenAI ล่าสุด)', blurb: 'ตามคำสั่ง/ตัวหนังสือแม่นสุด ช้าและแพงกว่า', credits: 10 },
     { id: 'gptimage15',  label: '🧠 GPT Image 1.5', blurb: 'ตามคำสั่งแม่น ตัวหนังสือชัด', credits: 6 },
     { id: 'flux2max',    label: '✨ Flux 2 Max', blurb: 'Flux 2 รุ่นสูงสุด', credits: 7 },
   ] as const;
@@ -147,7 +148,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
     if (KNOWN_MODES.includes(mode)) setImageMode(mode as typeof imageMode);
 
     if (regen.prompt) setPrompt(regen.prompt);
-    if (['flux_dev', 'flux_schnell', 'grok', 'flux2pro', 'flux_ultra', 'seedream45', 'nanopro_t2i', 'gptimage15', 'flux2max'].includes(regen.model_name)) setModelType(regen.model_name);
+    if (['flux_dev', 'flux_schnell', 'grok', 'flux2pro', 'flux_ultra', 'seedream45', 'nanopro_t2i', 'gptimage15', 'gptimage2', 'flux2max'].includes(regen.model_name)) setModelType(regen.model_name);
     if (['1:1', '16:9', '9:16'].includes(regen.aspect_ratio)) setAspectRatio(regen.aspect_ratio);
     if (md.visual_style) setVisualStyle(md.visual_style);
     if (md.camera_zoom) setCameraZoom(md.camera_zoom);

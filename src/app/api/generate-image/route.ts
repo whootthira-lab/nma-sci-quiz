@@ -141,6 +141,10 @@ const TOP_T2I: Record<string, { endpoint: string; label: string; credits: number
     endpoint: 'fal-ai/gpt-image-1.5', label: 'GPT Image 1.5', credits: 6,
     body: (a) => ({ image_size: a === '16:9' ? '1536x1024' : a === '9:16' ? '1024x1536' : '1024x1024', quality: 'medium', output_format: 'jpeg' })
   },
+  gptimage2: {
+    endpoint: 'fal-ai/gpt-image-2', label: 'GPT Image 2', credits: 10,
+    body: (a) => ({ image_size: a === '16:9' ? 'landscape_16_9' : a === '9:16' ? 'portrait_16_9' : 'square_hd', quality: 'medium', output_format: 'jpeg' })
+  },
   flux2max: {
     endpoint: 'fal-ai/flux-2-max', label: 'Flux 2 Max', credits: 7,
     body: (a) => ({ image_size: a === '16:9' ? 'landscape_16_9' : a === '9:16' ? 'portrait_16_9' : 'square_hd', enable_safety_checker: true, safety_tolerance: '2', output_format: 'jpeg' })
