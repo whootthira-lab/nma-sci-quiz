@@ -9,7 +9,7 @@
 
 export type VfxEngine = 'matte' | 'o3';
 export type VfxGrade = 'none' | 'warm' | 'cool' | 'cinematic' | 'match';
-export type VfxLayerType = 'matte' | 'background' | 'fx' | 'grade' | 'composite' | 'edit';
+export type VfxLayerType = 'character' | 'matte' | 'background' | 'fx' | 'grade' | 'composite' | 'edit';
 export type VfxLayerStatus = 'pending' | 'processing' | 'done' | 'failed' | 'skipped';
 export type VfxShotStatus = 'draft' | 'processing' | 'review' | 'approved' | 'failed';
 export type VfxProjectStatus = 'draft' | 'planned' | 'processing' | 'review' | 'exported';
@@ -20,7 +20,7 @@ export interface VfxLayerOutput {
   alpha_url?: string;
   /** background: the environment image */
   image_url?: string;
-  /** composite / edit: the finished shot */
+  /** composite / edit: the finished shot; character: the new actor performing the footage */
   video_url?: string;
 }
 
@@ -62,6 +62,8 @@ export interface VfxShot {
   status: VfxShotStatus;
   output_url?: string;
   error?: string;
+  /** VLM quality check of the latest output (advisory flags, never blocking) */
+  qa?: { flags: string[]; notes: string; score: number; checked_at: string };
 }
 
 export interface VfxProject {

@@ -29,7 +29,9 @@ const statusLabel: Record<string, string> = {
   draft: 'ร่าง', planned: 'วางแผนแล้ว', processing: 'กำลังสร้าง', review: 'รอตรวจ', approved: 'อนุมัติแล้ว', failed: 'ล้มเหลว', exported: 'ส่งออกแล้ว',
   pending: 'รอ', done: 'เสร็จ', skipped: 'ข้าม'
 };
-const layerLabel: Record<string, string> = { matte: 'ตัดคน', background: 'ฉากหลัง', fx: 'เอฟเฟกต์', grade: 'ปรับสี', composite: 'ประกอบ', edit: 'O3 edit' };
+const layerLabel: Record<string, string> = { character: 'ตัวละคร', matte: 'ตัดคน', background: 'ฉากหลัง', fx: 'เอฟเฟกต์', grade: 'ปรับสี', composite: 'ประกอบ', edit: 'O3 edit' };
+const qaLabel: Record<string, string> = { edge_halo: 'ขอบตัดหลุด', lighting_mismatch: 'แสงไม่เข้ากับฉาก', frame_jump: 'เฟรมกระโดด', identity_drift: 'หน้าไม่ตรงอ้างอิง', artifact: 'มีสิ่งแปลกปลอม' };
+interface ConsentRecord { id: string; face_url: string; person_name: string; basis: 'self' | 'release'; confirmed_at: string }
 
 export default function VfxStudio() {
   const { user } = useAuth();
@@ -58,11 +60,37 @@ export default function VfxStudio() {
   const [fxLibrary, setFxLibrary] = useState<FxElement[]>([]);
   const [fxDraft, setFxDraft] = useState<Record<string, FxParams[]>>({});
   const [showHistory, setShowHistory] = useState<Record<string, boolean>>({});
+  // Phase 3: consent records (faces the user may use) and the new-consent form
+  const [consents, setConsents] = useState<ConsentRecord[]>([]);
+  const [consentStatement, setConsentStatement] = useState('');
+  const [consentForm, setConsentForm] = useState<{ open: boolean; faceUrl: string; facePreview: string; name: string; basis: 'self' | 'release'; releaseUrl: string; confirmed: boolean; busy: boolean; error: string }>({ open: false, faceUrl: '', facePreview: '', name: '', basis: 'self', releaseUrl: '', confirmed: false, busy: false, error: '' });
+  const [characterPick, setCharacterPick] = useState<Record<string, string>>({}); // shot id → consent id
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadConsents = useCallback(async () => {
+    if (!email) return;
+    try {
+      const j = await fetch(`/api/vfx/consent?email=${encodeURIComponent(email)}`).then((r) => r.json());
+      if (j.success) { setConsents(j.consents); setConsentStatement(j.statement); }
+    } catch { /* optional */ }
+  }, [email]);
 
   useEffect(() => {
     fetch('/api/vfx/fx').then((r) => r.json()).then((j) => { if (j.success) setFxLibrary(j.elements); }).catch(() => {});
-  }, []);
+    loadConsents();
+  }, [loadConsents]);
+
+  const submitConsent = async () => {
+    setConsentForm((f) => ({ ...f, busy: true, error: '' }));
+    try {
+      const j = await fetch('/api/vfx/consent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: email, face_url: consentForm.faceUrl, person_name: consentForm.name, basis: consentForm.basis, release_doc_url: consentForm.releaseUrl || undefined, confirmed: consentForm.confirmed }) }).then((r) => r.json());
+      if (!j.success) throw new Error(j.error);
+      await loadConsents();
+      setConsentForm({ open: false, faceUrl: '', facePreview: '', name: '', basis: 'self', releaseUrl: '', confirmed: false, busy: false, error: '' });
+    } catch (err: any) {
+      setConsentForm((f) => ({ ...f, busy: false, error: err.message || 'บันทึกไม่สำเร็จ' }));
+    }
+  };
 
   const api = async (path: string, body: any) => {
     const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, user_email: email, user_id: user?.id || '' }) });
@@ -360,6 +388,70 @@ export default function VfxStudio() {
                     </div>
                   )}
                   {shot.error && <p className="text-[11px] text-red-600 font-thai">{shot.error}</p>}
+                  {shot.qa && (
+                    <div className={`flex flex-wrap items-center gap-1.5 text-[10px] font-thai rounded-lg px-2.5 py-1.5 border ${shot.qa.flags.length ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-700'}`}>
+                      <span className="font-semibold">QC {shot.qa.score}/5</span>
+                      {shot.qa.flags.map((f) => <span key={f} className="px-1.5 py-0.5 rounded-md bg-white border border-amber-300">{qaLabel[f] || f}</span>)}
+                      {shot.qa.notes && <span className="text-gray-600">{shot.qa.notes}</span>}
+                      <span className="ml-auto text-gray-400">ตรวจโดย AI · เป็นคำแนะนำ ไม่บล็อกงาน</span>
+                    </div>
+                  )}
+
+                  {/* Character layer (Phase 3): a consented face drives a new actor through the footage */}
+                  {(shot.status === 'review' || shot.status === 'approved' || shot.status === 'draft' || shot.status === 'failed') && shot.layers.length > 0 && (() => {
+                    const ch = shot.layers.find((l) => l.type === 'character');
+                    const current = ch?.enabled ? consents.find((c) => c.id === ch.params.consent_id) : undefined;
+                    const pickId = characterPick[shot.id] ?? (current?.id || '');
+                    const pick = consents.find((c) => c.id === pickId);
+                    const secs = Math.ceil(shot.end - shot.start);
+                    const matteCost = shot.layers.find((l) => l.type === 'matte')?.cost_credits || 0;
+                    const editCost = shot.layers.find((l) => l.type === 'edit')?.cost_credits || 0;
+                    const cost = 8 * secs + (project.engine === 'matte' ? matteCost : editCost);
+                    return (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2 text-xs font-thai">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-[#1A1A1A]">🎭 เปลี่ยนตัวละคร (Motion Control · ต้องมีบันทึกความยินยอม)</span>
+                          {current && <span className="px-2 py-0.5 rounded-full bg-[#1A1A1A] text-[#D4AF37]">กำลังใช้: {current.person_name}</span>}
+                          <button type="button" onClick={() => setConsentForm((f) => ({ ...f, open: !f.open }))} className="ml-auto underline text-gray-600">+ เพิ่มใบหน้าพร้อมความยินยอม</button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {consents.length === 0 && <span className="text-gray-400">ยังไม่มีบันทึกความยินยอม — เพิ่มก่อนจึงเลือกได้</span>}
+                          {consents.map((c) => (
+                            <button key={c.id} type="button" onClick={() => setCharacterPick((p) => ({ ...p, [shot.id]: c.id }))} className={`flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border ${pickId === c.id ? 'border-[#D4AF37] bg-white shadow-sm' : 'border-gray-300 bg-white/60'}`} title={`${c.basis === 'self' ? 'ตัวเอง' : 'มีหนังสือยินยอม'} · ${c.confirmed_at.slice(0, 10)}`}>
+                              <img src={c.face_url} alt="" className="w-6 h-6 rounded-full object-cover" /> {c.person_name}
+                            </button>
+                          ))}
+                          {pick && pick.id !== current?.id && (
+                            <button type="button" disabled={!!busy} onClick={() => { if (confirm(`สร้างนักแสดงใหม่จากฟุตเทจนี้และตัดคน/เรนเดอร์ใหม่ ประมาณ ${cost} เครดิต ผลงานจะมีลายน้ำและข้อมูลกำกับว่าเป็น AI ดำเนินการ?`)) shotAction(shot, 'set_character', { face_url: pick.face_url, consent_id: pick.id }); }} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold">ใช้ตัวละครนี้ (~{cost} cr)</button>
+                          )}
+                          {current && (
+                            <button type="button" disabled={!!busy} onClick={() => { setCharacterPick((p) => ({ ...p, [shot.id]: '' })); shotAction(shot, 'set_character', {}); }} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300">กลับไปใช้คนเดิม ({project.engine === 'matte' ? matteCost : editCost} cr)</button>
+                          )}
+                        </div>
+                        {consentForm.open && (
+                          <div className="rounded-lg border border-[#D4AF37]/40 bg-white p-3 space-y-2">
+                            <p className="font-semibold text-[#1A1A1A]">บันทึกความยินยอมใช้ภาพลักษณ์</p>
+                            <div className="flex flex-wrap gap-3 items-start">
+                              <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; setConsentForm((x) => ({ ...x, facePreview: URL.createObjectURL(f), busy: true })); try { const url = await uploadToStorage(f, `vfx_faces/${email}/${Date.now()}_${safeName(f.name)}`); setConsentForm((x) => ({ ...x, faceUrl: url, busy: false })); } catch (err: any) { setConsentForm((x) => ({ ...x, busy: false, error: err.message })); } }} className="text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-[#1A1A1A] file:text-[#D4AF37]" />
+                              {consentForm.facePreview && <img src={consentForm.facePreview} alt="" className="w-14 h-14 rounded-lg object-cover border" />}
+                              <input value={consentForm.name} onChange={(e) => setConsentForm((x) => ({ ...x, name: e.target.value }))} placeholder="ชื่อบุคคลในภาพ" className="px-3 py-1.5 border border-gray-200 rounded-lg" />
+                              <select value={consentForm.basis} onChange={(e) => setConsentForm((x) => ({ ...x, basis: e.target.value as 'self' | 'release' }))} className="px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
+                                <option value="self">เป็นตัวข้าพเจ้าเอง</option>
+                                <option value="release">ผู้อื่น — มีหนังสือยินยอม</option>
+                              </select>
+                              {consentForm.basis === 'release' && (
+                                <input type="file" accept="image/*,.pdf" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { const url = await uploadToStorage(f, `vfx_releases/${email}/${Date.now()}_${safeName(f.name)}`); setConsentForm((x) => ({ ...x, releaseUrl: url })); } catch (err: any) { setConsentForm((x) => ({ ...x, error: err.message })); } }} className="text-xs" title="แนบหนังสือยินยอม (ภาพหรือ PDF)" />
+                              )}
+                            </div>
+                            <label className="flex items-start gap-2 text-[11px] text-gray-700 cursor-pointer"><input type="checkbox" checked={consentForm.confirmed} onChange={(e) => setConsentForm((x) => ({ ...x, confirmed: e.target.checked }))} className="mt-0.5 accent-[#D4AF37]" /> {consentStatement}</label>
+                            <p className="text-[10px] text-gray-400">ระบบจะตรวจว่าภาพไม่ใช่บุคคลสาธารณะ และปฏิเสธถ้าเป็น · ทุกผลงานที่ใช้ตัวละครนี้จะมีลายน้ำและ metadata อ้างอิงบันทึกนี้</p>
+                            {consentForm.error && <p className="text-[11px] text-red-600">{consentForm.error}</p>}
+                            <button type="button" disabled={consentForm.busy || !consentForm.faceUrl || !consentForm.name || !consentForm.confirmed} onClick={submitConsent} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40">{consentForm.busy ? 'กำลังบันทึก…' : 'บันทึกความยินยอม'}</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* prompt (plan stage) */}
                   {bgLayer && editable && (

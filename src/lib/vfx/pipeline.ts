@@ -10,6 +10,18 @@ import { assertRunnable, estimateCost } from '@/lib/providers/registry';
 import { compositeBackground, gradeVideo, fetchToFile, probeVideo, FxInput } from './composite';
 import { newId, putFile, saveProject } from './store';
 import { loadFxLibrary, FxParams } from './fx';
+import { watermarkVideo } from './watermark';
+import { qaShot } from './qa';
+import { requireConsent } from './consent';
+
+export const CHARACTER_ID = 'char-motion-control';
+
+/** The footage a shot's matte/edit should work from: the new actor's clip when a character
+ *  layer has produced one, else the original segment. */
+function sourceClip(shot: VfxShot): string {
+  const ch = shot.layers.find((l) => l.type === 'character');
+  return (ch?.enabled && ch.status === 'done' && ch.output.video_url) || shot.clip_url;
+}
 import type { VfxProject, VfxShot, VfxLayer, VfxLayerType, VfxEngine, VfxGrade } from './types';
 import { VFX_PHASE1_LIMITS as LIMITS } from './types';
 
@@ -213,21 +225,24 @@ export async function planProject(project: VfxProject, engine: VfxEngine, grade:
     const existing = new Map(shot.layers.map((l) => [l.type, l]));
     const keepPrompt = existing.get('background')?.params?.prompt || existing.get('edit')?.params?.prompt;
     const prompt = keepPrompt || prompts[i];
+    // A character choice (with its consent) survives re-planning; its job does not re-run if done
+    const character = existing.get('character');
+    const withCharacter = (layers: VfxLayer[]) => (character ? [character, ...layers] : layers);
     if (engine === 'matte') {
       const fxPrev = existing.get('fx');
-      shot.layers = [
+      shot.layers = withCharacter([
         existing.get('matte') && existing.get('matte')!.status === 'done' ? existing.get('matte')! : layer('matte', {}, estimateCost(matte.id, secs).creditsShown, true, matte.id),
         layer('background', { prompt }, BG_IMAGE_CREDITS, true, BG_IMAGE_ID),
         // Stock effects (Phase 2): off until the review page picks one; free — ffmpeg only
         fxPrev ? fxPrev : layer('fx', { elements: [] as FxParams[] }, 0, false),
         layer('grade', { preset: grade }, 0, grade !== 'none'),
         layer('composite', {}, 0)
-      ];
+      ]);
     } else {
-      shot.layers = [
+      shot.layers = withCharacter([
         layer('edit', { prompt }, estimateCost(o3.id, Math.min(15, Math.max(3, secs))).creditsShown, true, o3.id),
         layer('grade', { preset: grade }, 0, grade !== 'none')
-      ];
+      ]);
     }
     shot.status = 'draft';
     shot.output_url = undefined;
@@ -307,6 +322,25 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
   shot.error = undefined;
   const ts = Date.now();
   try {
+    // Character first: the new actor's clip becomes the footage every later layer works from.
+    // Runs only with a consent record on the layer (checked when the layer was set, and again here).
+    const character = shot.layers.find((l) => l.type === 'character');
+    if (character?.enabled && character.status !== 'done') {
+      const model = assertRunnable(CHARACTER_ID);
+      await requireConsent(project.user_email, character.params.consent_id, character.params.face_url, supabase);
+      const { requestId } = await falSubmit(model.endpoint, {
+        image_url: character.params.face_url,
+        video_url: shot.clip_url,
+        character_orientation: 'video',
+        keep_original_sound: true,
+        prompt: character.params.prompt || 'the person performs exactly the reference motion, natural expression, consistent identity'
+      });
+      character.status = 'processing';
+      character.job_request_id = requestId;
+      await insertLayerJob(supabase, project, shot, character, model.endpoint, model.id, requestId, `vfx_shots/${project.user_email}/${project.id}/${shot.id}_${ts}_character.mp4`, `character: shot ${shot.order}`);
+      return; // onLayerJobDone continues with the matte/edit once the actor clip lands
+    }
+
     if (project.engine === 'matte') {
       const bg = shot.layers.find((l) => l.type === 'background')!;
       if (bg.status !== 'done') {
@@ -317,7 +351,7 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const matte = shot.layers.find((l) => l.type === 'matte')!;
       if (matte.status !== 'done') {
         const model = assertRunnable(MATTE_ID);
-        const { requestId } = await falSubmit(model.endpoint, { video_url: shot.clip_url, output_codec: 'h264', subject_is_person: true, refine_foreground_edges: true });
+        const { requestId } = await falSubmit(model.endpoint, { video_url: sourceClip(shot), output_codec: 'h264', subject_is_person: true, refine_foreground_edges: true });
         matte.status = 'processing';
         matte.job_request_id = requestId;
         await insertLayerJob(supabase, project, shot, matte, model.endpoint, model.id, requestId, `vfx_shots/${project.user_email}/${project.id}/${shot.id}_${ts}_matte.mp4`, `matte: shot ${shot.order}`);
@@ -330,7 +364,7 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const model = assertRunnable(O3_EDIT_ID);
       const refs = project.reference_urls.slice(0, 3);
       const prompt = `Replace the entire background and environment of @Video1 with ${edit.params.prompt}${refs.length ? `, matching the look of ${refs.map((_, i) => `@Image${i + 1}`).join(' and ')}` : ''}. Keep the person, their face, clothing, motion, timing and camera framing exactly as in @Video1. Relight the person naturally to match. No text, no extra people.`;
-      const body: Record<string, any> = { video_url: shot.clip_url, prompt, keep_audio: true };
+      const body: Record<string, any> = { video_url: sourceClip(shot), prompt, keep_audio: true };
       if (refs.length) body.image_urls = refs;
       const { requestId } = await falSubmit(model.endpoint, body);
       edit.status = 'processing';
@@ -345,6 +379,26 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
 }
 
 // ───────────────────────────── 4. finish ─────────────────────────────
+
+/** Provenance on outputs that carry a character edit: visible mark + metadata (Phase 3 guardrail). */
+async function finishOutput(project: VfxProject, shot: VfxShot, video: Buffer): Promise<Buffer> {
+  const ch = shot.layers.find((l) => l.type === 'character');
+  if (!ch?.enabled || ch.status !== 'done') return video;
+  try {
+    return await watermarkVideo(video, { consentId: ch.params.consent_id, projectId: project.id, shotId: shot.id, modelId: ch.model_id || CHARACTER_ID });
+  } catch (e) {
+    // A character edit must not ship unmarked
+    throw new Error(`ใส่ลายน้ำไม่สำเร็จ: ${(e as any)?.message || e}`);
+  }
+}
+
+/** VLM check of the latest output — flags for the reviewer, never a block. */
+async function runQa(shot: VfxShot): Promise<void> {
+  if (!shot.output_url) return;
+  const ch = shot.layers.find((l) => l.type === 'character');
+  const report = await qaShot(shot.output_url, { identityUrl: ch?.enabled ? ch.params.face_url : undefined });
+  if (report) shot.qa = report;
+}
 
 /** Matte + background (+grade) → the shot. Reads the stored artifacts; never calls a model. */
 export async function compositeShot(project: VfxProject, shot: VfxShot, supabase: SupabaseClient): Promise<void> {
@@ -369,10 +423,11 @@ export async function compositeShot(project: VfxProject, shot: VfxShot, supabase
         return el ? { url: el.url, opacity: p.opacity, placement: p.placement, blend: p.blend } : null;
       }).filter((x): x is FxInput => !!x);
     }
-    const out = await compositeBackground(
-      Buffer.from(await colorRes.arrayBuffer()), matte.output.alpha_url, bg.output.image_url, shot.clip_url,
+    let out: Buffer = await compositeBackground(
+      Buffer.from(await colorRes.arrayBuffer()), matte.output.alpha_url, bg.output.image_url, sourceClip(shot),
       shot.width, shot.height, preset, fx
     );
+    out = await finishOutput(project, shot, out);
     const url = await putFile(`vfx_shots/${project.user_email}/${project.id}/${shot.id}_v${comp.version + 1}_out.mp4`, out, 'video/mp4', supabase);
     setLayerOutput(comp, { video_url: url });
     if (grade) { grade.status = grade.enabled ? 'done' : 'skipped'; grade.updated_at = new Date().toISOString(); }
@@ -380,6 +435,7 @@ export async function compositeShot(project: VfxProject, shot: VfxShot, supabase
     shot.output_url = url;
     shot.status = 'review';
     shot.error = undefined;
+    await runQa(shot);
   } catch (e: any) {
     comp.status = 'failed';
     comp.error = e?.message || String(e);
@@ -398,6 +454,16 @@ export async function onLayerJobDone(
   const shot = project.shots.find((s) => s.id === shotId);
   const l = shot?.layers.find((x) => x.id === layerId);
   if (!shot || !l) return;
+  if (l.type === 'character') {
+    if (!urls.video) { l.status = 'failed'; l.error = 'ไม่มีคลิปนักแสดงใหม่กลับมา'; shot.status = 'failed'; shot.error = l.error; return; }
+    // Keep our own copy (Fal URLs expire), then carry on with the rest of the shot from it
+    const url = await putFile(`vfx_shots/${project.user_email}/${project.id}/${shot.id}_v${l.version + 1}_character.mp4`, Buffer.from(await (await fetch(urls.video)).arrayBuffer()), 'video/mp4', supabase);
+    setLayerOutput(l, { video_url: url });
+    // The matte (or edit) must be redone on the new actor's clip
+    for (const x of shot.layers) if (x.type === 'matte' || x.type === 'edit') { x.status = 'pending'; x.job_request_id = undefined; }
+    await startShot(project, shot, supabase);
+    return;
+  }
   if (l.type === 'matte') {
     if (!urls.color || !urls.alpha) { l.status = 'failed'; l.error = 'ผลตัดคนไม่ครบ (ต้องมีทั้ง color และ alpha)'; shot.status = 'failed'; shot.error = l.error; return; }
     // Copy the two clips into our storage: Fal's URLs are not permanent, and a later
@@ -410,15 +476,17 @@ export async function onLayerJobDone(
   } else if (l.type === 'edit') {
     if (!urls.video) { l.status = 'failed'; l.error = 'ไม่มีไฟล์วิดีโอกลับมา'; shot.status = 'failed'; shot.error = l.error; return; }
     const grade = shot.layers.find((x) => x.type === 'grade');
-    let buf = Buffer.from(await (await fetch(urls.video)).arrayBuffer());
+    let buf: Buffer = Buffer.from(await (await fetch(urls.video)).arrayBuffer());
     if (grade?.enabled && grade.params.preset && grade.params.preset !== 'none' && grade.params.preset !== 'match') {
       buf = await gradeVideo(buf, grade.params.preset);
     }
+    buf = await finishOutput(project, shot, buf);
     const url = await putFile(`vfx_shots/${project.user_email}/${project.id}/${shot.id}_v${l.version + 1}_out.mp4`, buf, 'video/mp4', supabase);
     setLayerOutput(l, { video_url: url });
     if (grade) { grade.status = grade.enabled ? 'done' : 'skipped'; }
     shot.output_url = url;
     shot.status = 'review';
+    await runQa(shot);
   }
 }
 
@@ -518,6 +586,44 @@ export async function rollbackLayer(project: VfxProject, shot: VfxShot, layerId:
     return;
   }
   if (project.engine === 'matte') await compositeShot(project, shot, supabase);
+}
+
+/**
+ * Choose (or clear) the character for a shot. Requires a consent record that covers the face.
+ * Setting it invalidates the matte/edit (they must be redone on the new actor's clip) and
+ * queues the shot; the caller charges the character rate plus the matte/edit redo.
+ */
+export async function setShotCharacter(
+  project: VfxProject, shot: VfxShot, choice: { face_url: string; consent_id: string; prompt?: string } | null, supabase: SupabaseClient
+): Promise<void> {
+  let ch = shot.layers.find((l) => l.type === 'character');
+  if (!choice) {
+    if (ch) { ch.enabled = false; ch.status = 'skipped'; }
+    // back to the original footage: matte/edit must be redone on it
+    for (const x of shot.layers) if (x.type === 'matte' || x.type === 'edit') { x.status = 'pending'; x.job_request_id = undefined; }
+    return;
+  }
+  await requireConsent(project.user_email, choice.consent_id, choice.face_url, supabase);
+  const model = assertRunnable(CHARACTER_ID);
+  const secs = Math.ceil(shot.end - shot.start);
+  const cost = estimateCost(model.id, secs).creditsShown;
+  if (!ch) {
+    ch = layer('character', {}, cost, true, model.id);
+    shot.layers.unshift(ch);
+  }
+  if (Object.keys(ch.output).length) {
+    ch.history.unshift({ version: ch.version, output: ch.output, params: ch.params, at: ch.updated_at });
+    ch.history = ch.history.slice(0, 5);
+  }
+  ch.enabled = true;
+  ch.params = { face_url: choice.face_url, consent_id: choice.consent_id, prompt: choice.prompt || '' };
+  ch.cost_credits = cost;
+  ch.model_id = model.id;
+  ch.status = 'pending';
+  ch.output = {};
+  ch.job_request_id = undefined;
+  ch.updated_at = new Date().toISOString();
+  for (const x of shot.layers) if (x.type === 'matte' || x.type === 'edit') { x.status = 'pending'; x.job_request_id = undefined; }
 }
 
 /** Run the matte again (e.g. after a bad edge) and re-composite. Charged at the matte rate. */
