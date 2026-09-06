@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, listProjects, loadProject, saveProject, deleteProject, newId } from '@/lib/vfx/store';
 import { analyzeFootage } from '@/lib/vfx/pipeline';
 import type { VfxProject } from '@/lib/vfx/types';
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
 /** POST: create a project from uploaded footage and analyse it into shots (no model credits). */
 export async function POST(req: NextRequest) {
   try {
+    await primeRates(); // billed prices before anything is quoted or charged
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
     const userId = body.user_id || '';

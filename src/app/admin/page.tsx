@@ -30,6 +30,28 @@ export default function AdminPage() {
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
+  // Phase 4: billed prices — a Fal usage export sets the registry's rates
+  const [billResult, setBillResult] = useState<any>(null);
+  const [billBusy, setBillBusy] = useState(false);
+  const [billMapping, setBillMapping] = useState<any[]>([]);
+  const importBill = async (file: File) => {
+    setBillBusy(true);
+    setBillResult(null);
+    try {
+      const csv = await file.text();
+      const res = await fetch('/api/admin/bill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, csv, source: file.name }) });
+      const j = await res.json();
+      setBillResult(j);
+      if (j.success) {
+        const m = await fetch(`/api/admin/bill?email=${encodeURIComponent(user?.email || '')}`).then((r) => r.json());
+        if (m.success) setBillMapping(m.mapping.filter((x: any) => x.billed));
+      }
+    } catch (e: any) {
+      setBillResult({ success: false, error: e.message });
+    } finally {
+      setBillBusy(false);
+    }
+  };
   const [wanResolution, setWanResolution] = useState('720p');
   const [klingResolution, setKlingResolution] = useState('720p');
   const [grokResolution, setGrokResolution] = useState('720p');
@@ -660,6 +682,40 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Billed prices (Phase 4): Fal usage export → registry rates */}
+        <div className="glow-card p-6 mb-8">
+          <h2 className="text-lg font-display font-semibold text-text-primary mb-2 font-thai">
+            ราคาจากบิลจริง (Fal usage export → ทะเบียนโมเดล)
+          </h2>
+          <p className="text-xs text-text-muted font-thai mb-4">
+            ดาวน์โหลด CSV จาก fal.ai → Billing → Usage แล้วอัปโหลดที่นี่ ระบบคำนวณ $/หน่วยต่อ endpoint (รวมยอด ÷ รวมหน่วย)
+            และตั้งเครดิตตามกฎ <span className="text-[#D4AF37]">เครดิต = ⌈$ × 115⌉</span> ให้ทุกโมเดลใน VFX Studio ที่มีข้อมูลบิล ≥ 2 รายการ มีผลทันทีโดยไม่ต้อง deploy
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <input type="file" accept=".csv,text/csv" disabled={billBusy} onChange={(e) => { const f = e.target.files?.[0]; if (f) importBill(f); }} className="text-xs text-text-muted file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#D4AF37] file:text-black font-thai cursor-pointer" />
+            {billBusy && <span className="text-xs text-[#D4AF37] font-thai">กำลังอ่านบิล...</span>}
+          </div>
+          {billResult && (
+            <div className={`mt-4 rounded-xl border p-4 text-xs font-thai space-y-2 ${billResult.success ? 'border-white/10 bg-surface-2/30' : 'border-accent-danger/40 bg-accent-danger/10'}`}>
+              {billResult.success ? (
+                <>
+                  <p className="text-text-primary">อ่านได้ {billResult.rows} รายการ (ข้าม {billResult.skipped}) · {billResult.endpoints} endpoint · รวม ${billResult.totalUsd} · อัปเดตราคาในทะเบียน {billResult.changed} รายการ</p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead><tr className="text-text-muted text-left"><th className="py-1 pr-3">endpoint</th><th className="pr-3">หน่วย</th><th className="pr-3">$/หน่วย</th><th className="pr-3">เครดิต</th><th className="pr-3">n</th><th>รวม $</th></tr></thead>
+                      <tbody>{billResult.preview.map((p: any) => <tr key={p.endpoint + p.unit} className="border-t border-white/5 text-text-primary"><td className="py-1 pr-3 font-mono">{p.endpoint}</td><td className="pr-3">{p.unit}</td><td className="pr-3">{p.usdPerUnit}</td><td className="pr-3 text-[#D4AF37]">{p.credits}</td><td className="pr-3">{p.samples}</td><td>{p.usdTotal}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                  {billResult.unmatched?.length > 0 && <p className="text-text-muted">ไม่ตรงกับทะเบียน (ยังไม่ได้ใช้ใน registry): {billResult.unmatched.map((u: any) => `${u.endpoint} $${u.usd}`).join(' · ')}</p>}
+                  {billMapping.length > 0 && <p className="text-text-muted">โมเดลที่ใช้ราคาบิลตอนนี้: {billMapping.map((m: any) => `${m.id} ${m.usdPerUnit}/${m.unit}→${m.creditsPerUnit}cr`).join(' · ')}</p>}
+                </>
+              ) : (
+                <p className="text-accent-danger">{billResult.error}</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Provider Settings Switch */}

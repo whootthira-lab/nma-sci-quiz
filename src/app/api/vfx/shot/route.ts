@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, loadProject } from '@/lib/vfx/store';
 import { redoBackground, regradeShot, startShot, persist, setShotFx, rollbackLayer, redoMatte, setShotCharacter, BG_IMAGE_CREDITS } from '@/lib/vfx/pipeline';
 import type { VfxGrade } from '@/lib/vfx/types';
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(req: NextRequest) {
   try {
+    await primeRates(); // billed prices before anything is quoted or charged
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
     const supabase = serviceClient();

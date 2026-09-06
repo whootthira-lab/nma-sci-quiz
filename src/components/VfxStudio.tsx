@@ -32,6 +32,12 @@ const statusLabel: Record<string, string> = {
 const layerLabel: Record<string, string> = { character: 'ตัวละคร', matte: 'ตัดคน', background: 'ฉากหลัง', fx: 'เอฟเฟกต์', grade: 'ปรับสี', composite: 'ประกอบ', edit: 'O3 edit' };
 const qaLabel: Record<string, string> = { edge_halo: 'ขอบตัดหลุด', lighting_mismatch: 'แสงไม่เข้ากับฉาก', frame_jump: 'เฟรมกระโดด', identity_drift: 'หน้าไม่ตรงอ้างอิง', artifact: 'มีสิ่งแปลกปลอม' };
 interface ConsentRecord { id: string; face_url: string; person_name: string; basis: 'self' | 'release'; confirmed_at: string }
+interface SceneTemplate { id: string; label: string; thumbnail_url?: string; instruction: string; engine: VfxEngine; grade: VfxGrade; fx: FxParams[]; background_image_url?: string; owner?: string }
+const PREFS: { id: 'economy' | 'balanced' | 'quality'; label: string; blurb: string }[] = [
+  { id: 'economy', label: 'ประหยัด', blurb: 'ตัดคน+วางฉากทุกช็อต' },
+  { id: 'balanced', label: 'สมดุล', blurb: 'O3 เฉพาะช็อตที่คนหลายคน/กล้องเคลื่อน' },
+  { id: 'quality', label: 'คุณภาพ', blurb: 'O3 เรนเดอร์ทั้งเฟรมทุกช็อต' }
+];
 
 export default function VfxStudio() {
   const { user } = useAuth();
@@ -49,8 +55,17 @@ export default function VfxStudio() {
   const [refUrls, setRefUrls] = useState<string[]>([]);
   const [name, setName] = useState('');
   const [instruction, setInstruction] = useState('');
-  const [engine, setEngine] = useState<VfxEngine>('matte');
-  const [grade, setGrade] = useState<VfxGrade>('none');
+  const [engine, setEngine] = useState<VfxEngine | 'auto'>('auto');
+  const [preference, setPreference] = useState<'economy' | 'balanced' | 'quality'>('balanced');
+  const [grade, setGrade] = useState<VfxGrade>('match');
+  // Phase 4: scene templates and batch mode
+  const [templates, setTemplates] = useState<SceneTemplate[]>([]);
+  const [templateId, setTemplateId] = useState('');
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchUrls, setBatchUrls] = useState<{ name: string; url: string }[]>([]);
+  const [batchResult, setBatchResult] = useState<{ projects: any[]; total_credits: number } | null>(null);
+  const [batchConfirmed, setBatchConfirmed] = useState(false);
+  const [engineReason, setEngineReason] = useState('');
   // step 2 edits
   const [prompts, setPrompts] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -77,8 +92,73 @@ export default function VfxStudio() {
 
   useEffect(() => {
     fetch('/api/vfx/fx').then((r) => r.json()).then((j) => { if (j.success) setFxLibrary(j.elements); }).catch(() => {});
+    fetch('/api/vfx/templates').then((r) => r.json()).then((j) => { if (j.success) setTemplates(j.templates); }).catch(() => {});
     loadConsents();
   }, [loadConsents]);
+
+  const applyTemplate = (id: string) => {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    setInstruction(t.instruction);
+    setEngine(t.engine);
+    setGrade(t.grade);
+  };
+
+  const saveAsTemplate = async () => {
+    if (!project) return;
+    const label = prompt('ตั้งชื่อเทมเพลตนี้', project.name);
+    if (!label) return;
+    setBusy('กำลังบันทึกเทมเพลต...');
+    try {
+      const j = await api('/api/vfx/templates', { from_project_id: project.id, label });
+      setTemplates(j.templates);
+    } catch (err: any) { setError(err.message); } finally { setBusy(''); }
+  };
+
+  const handleBatchFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).slice(0, 10);
+    if (!files.length) return;
+    setUploading(true);
+    setError('');
+    try {
+      const out: { name: string; url: string }[] = [];
+      for (const f of files) {
+        if (f.size > 200 * 1024 * 1024) throw new Error(`${f.name} ใหญ่เกิน 200 MB`);
+        out.push({ name: f.name, url: await uploadToStorage(f, `vfx_footage/${email}/${Date.now()}_${safeName(f.name)}`) });
+      }
+      setBatchUrls((prev) => [...prev, ...out].slice(0, 10));
+    } catch (err: any) { setError(err.message || 'อัปโหลดไม่สำเร็จ'); } finally { setUploading(false); }
+  };
+
+  const createBatch = async () => {
+    if (!batchUrls.length) return;
+    setBusy(`กำลังวิเคราะห์และวางแผน ${batchUrls.length} ไฟล์ (ยังไม่หักเครดิต)...`);
+    setError('');
+    setBatchResult(null);
+    try {
+      const j = await api('/api/vfx/batch', { footage_urls: batchUrls.map((b) => b.url), name, instruction, template_id: templateId || undefined, engine: engine === 'auto' ? undefined : engine, preference, grade });
+      setBatchResult({ projects: j.projects, total_credits: j.total_credits });
+      setBatchConfirmed(false);
+      await loadList();
+    } catch (err: any) { setError(err.message); } finally { setBusy(''); }
+  };
+
+  const runBatch = async () => {
+    if (!batchResult || !batchConfirmed) return;
+    setBusy('กำลังส่งงานทุกโปรเจกต์ในชุด...');
+    setError('');
+    const failures: string[] = [];
+    for (const p of batchResult.projects) {
+      if (p.error || !p.credits) continue;
+      try { await api('/api/vfx/run', { project_id: p.id, confirm_credits: p.credits }); } catch (err: any) { failures.push(`${p.name}: ${err.message}`); }
+    }
+    setBusy('');
+    if (failures.length) setError(failures.join(' · '));
+    await loadList();
+    setBatchResult(null);
+    setBatchUrls([]);
+  };
 
   const submitConsent = async () => {
     setConsentForm((f) => ({ ...f, busy: true, error: '' }));
@@ -167,7 +247,7 @@ export default function VfxStudio() {
     setBusy('กำลังวิเคราะห์ฟุตเทจและแบ่งช็อต...');
     setError('');
     try {
-      const r = await api('/api/vfx/projects', { footage_url: footageUrl, reference_urls: refUrls, name, instruction, engine, grade });
+      const r = await api('/api/vfx/projects', { footage_url: footageUrl, reference_urls: refUrls, name, instruction, engine: engine === 'auto' ? 'matte' : engine, grade });
       setProject(r.project);
       setPrompts({});
       await loadList();
@@ -180,8 +260,9 @@ export default function VfxStudio() {
     setBusy('กำลังวางแผนเลเยอร์และคิดราคา...');
     setError('');
     try {
-      const r = await api('/api/vfx/plan', { project_id: p.id, instruction: instruction || p.instruction, reference_urls: refUrls.length ? refUrls : p.reference_urls, engine, grade, prompts });
+      const r = await api('/api/vfx/plan', { project_id: p.id, instruction: instruction || p.instruction, reference_urls: refUrls.length ? refUrls : p.reference_urls, engine, preference, grade, prompts, template_id: templateId || undefined });
       setProject(r.project);
+      setEngineReason(r.engine_reason || '');
       setPrompts(Object.fromEntries(r.project.shots.map((s: VfxShot) => [s.id, s.layers.find((l) => l.type === 'background' || l.type === 'edit')?.params?.prompt || ''])));
       setConfirmed(false);
     } catch (err: any) { setError(err.message); } finally { setBusy(''); }
@@ -195,7 +276,7 @@ export default function VfxStudio() {
       // Push any edited prompts first so the run uses them
       const edited = Object.entries(prompts).some(([id, p]) => p !== (project.shots.find((s) => s.id === id)?.layers.find((l) => l.type === 'background' || l.type === 'edit')?.params?.prompt || ''));
       let current = project;
-      if (edited) current = (await api('/api/vfx/plan', { project_id: project.id, engine: project.engine, grade: project.grade, prompts })).project;
+      if (edited) current = (await api('/api/vfx/plan', { project_id: project.id, engine: project.engine, grade: project.grade, prompts, template_id: templateId || undefined })).project;
       const r = await api('/api/vfx/run', { project_id: current.id, confirm_credits: pendingCredits(current) });
       setProject(r.project);
       setConfirmed(false);
@@ -240,7 +321,10 @@ export default function VfxStudio() {
           </div>
         ))}
         {project && (
-          <button type="button" onClick={() => { setProject(null); setConfirmed(false); }} className="ml-auto text-gray-500 underline">โปรเจกต์ใหม่ / รายการ</button>
+          <span className="ml-auto flex items-center gap-3">
+            {project.shots.some((s) => s.output_url) && <button type="button" onClick={saveAsTemplate} disabled={!!busy} className="text-gray-500 underline">บันทึกลุคนี้เป็นเทมเพลต</button>}
+            <button type="button" onClick={() => { setProject(null); setConfirmed(false); }} className="text-gray-500 underline">โปรเจกต์ใหม่ / รายการ</button>
+          </span>
         )}
       </div>
 
@@ -251,9 +335,29 @@ export default function VfxStudio() {
       {!project && (
         <>
           <section className="bg-[#FAF8F5] border border-gray-100 p-6 rounded-2xl space-y-4">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 font-thai flex items-center gap-2"><Film className="w-4 h-4 text-[#D4AF37]" /> ฟุตเทจคนแสดงจริง (≤60 วิ)</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 font-thai flex items-center gap-2"><Film className="w-4 h-4 text-[#D4AF37]" /> ฟุตเทจคนแสดงจริง (≤60 วิ)</h3>
+              <div className="flex rounded-xl border border-gray-200 bg-white p-0.5 text-[11px] font-thai">
+                {([[false, 'ไฟล์เดียว'], [true, 'โหมดชุด (หลายไฟล์ ลุคเดียว)']] as const).map(([m, label]) => (
+                  <button key={String(m)} type="button" onClick={() => { setBatchMode(m); setBatchResult(null); }} className={`px-3 py-1.5 rounded-lg font-semibold ${batchMode === m ? 'bg-[#1A1A1A] text-[#D4AF37]' : 'text-gray-500'}`}>{label}</button>
+                ))}
+              </div>
+            </div>
+            {batchMode ? (
+              <>
+                <input type="file" accept="video/mp4,video/quicktime" multiple onChange={handleBatchFiles} disabled={!!busy || uploading} className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#1A1A1A] file:text-[#D4AF37] font-thai cursor-pointer" />
+                {uploading && <p className="text-xs text-[#D4AF37] font-thai flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> กำลังอัปโหลด...</p>}
+                {batchUrls.length > 0 && (
+                  <ul className="text-xs font-thai text-gray-700 space-y-1">
+                    {batchUrls.map((b, i) => <li key={b.url} className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> {i + 1}. {b.name} <button type="button" onClick={() => setBatchUrls((p) => p.filter((x) => x.url !== b.url))} className="text-red-400 ml-auto"><Trash2 className="w-3 h-3" /></button></li>)}
+                  </ul>
+                )}
+                <p className="text-[11px] text-gray-400 font-thai">สูงสุด 10 ไฟล์ ทุกไฟล์ใช้บรีฟ/เทมเพลต/โทนสีเดียวกัน ระบบเลือกเครื่องยนต์ต่อไฟล์ให้ตามการวิเคราะห์ช็อต แล้วให้ยืนยันราคารวมครั้งเดียว</p>
+              </>
+            ) : (
             <input type="file" accept="video/mp4,video/quicktime" onChange={handleFootage} disabled={!!busy} className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#1A1A1A] file:text-[#D4AF37] font-thai cursor-pointer" />
-            {footagePreview && (
+            )}
+            {!batchMode && footagePreview && (
               <div className="flex flex-col sm:flex-row gap-4">
                 <video src={footagePreview} controls className="w-full sm:w-64 rounded-xl bg-black border border-gray-200" />
                 <div className="text-xs font-thai space-y-1 text-gray-600">
@@ -267,13 +371,34 @@ export default function VfxStudio() {
 
           <section className="bg-[#FAF8F5] border border-gray-100 p-6 rounded-2xl space-y-4">
             <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 font-thai flex items-center gap-2"><ImageIcon className="w-4 h-4 text-[#D4AF37]" /> บรีฟฉากใหม่ + ภาพอ้างอิง (ทางเลือก ≤4)</h3>
+            {/* Scene templates (Phase 4) */}
+            {templates.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setTemplateId('')} className={`px-2.5 py-1 rounded-lg text-[11px] font-thai border ${!templateId ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>เขียนเอง</button>
+                {templates.map((t) => (
+                  <button key={t.id} type="button" onClick={() => applyTemplate(t.id)} title={`${t.instruction}${t.background_image_url ? ' · มีภาพฉากคงที่ (ไม่ต้องสร้างใหม่)' : ''}`} className={`px-2.5 py-1 rounded-lg text-[11px] font-thai border flex items-center gap-1.5 ${templateId === t.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}`}>
+                    {t.thumbnail_url && <img src={t.thumbnail_url} alt="" className="w-5 h-5 rounded object-cover" />}{t.label}{t.owner && <span className="text-[9px] opacity-60">ของฉัน</span>}
+                  </button>
+                ))}
+              </div>
+            )}
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อโปรเจกต์ เช่น โฆษณาห้องแล็บ v1" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-thai focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" />
             <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} rows={3} placeholder="บรรยายฉากใหม่ที่ต้องการ เช่น ห้องแล็บวิทยาศาสตร์สมัยใหม่ แสงธรรมชาติจากหน้าต่างซ้าย — ระบบจะเขียน prompt ต่อช็อตให้ตรงมุมกล้อง" className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm font-thai focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" />
             <div className="flex flex-wrap items-center gap-3">
               <input type="file" accept="image/*" multiple onChange={handleRefs} disabled={!!busy} className="text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-white file:border file:border-gray-300 font-thai cursor-pointer" />
               {refUrls.map((u) => <img key={u} src={u} alt="ref" className="w-14 h-14 object-cover rounded-lg border border-gray-200" />)}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <button type="button" onClick={() => setEngine('auto')} className={`text-left p-4 rounded-2xl border-2 bg-white ${engine === 'auto' ? 'border-[#D4AF37] shadow-sm' : 'border-gray-200'}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold font-thai flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-[#D4AF37]" /> อัตโนมัติ (router)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1A1A1A] text-[#D4AF37] font-thai">ตามช็อต</span>
+                </div>
+                <p className="text-[11px] text-gray-500 font-thai">อ่านโน้ตช็อต (จำนวนคน, กล้อง) แล้วเลือกให้ตามนโยบายด้านล่าง</p>
+                {engine === 'auto' && (
+                  <div className="flex gap-1 mt-2">{PREFS.map((p) => <button key={p.id} type="button" onClick={(ev) => { ev.stopPropagation(); setPreference(p.id); }} title={p.blurb} className={`flex-1 px-1.5 py-1 rounded-lg border text-[10px] font-thai ${preference === p.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{p.label}</button>)}</div>
+                )}
+              </button>
               {ENGINES.map((e) => (
                 <button key={e.id} type="button" onClick={() => setEngine(e.id)} className={`text-left p-4 rounded-2xl border-2 bg-white ${engine === e.id ? 'border-[#D4AF37] shadow-sm' : 'border-gray-200'}`}>
                   <div className="flex items-center justify-between mb-1">
@@ -288,9 +413,32 @@ export default function VfxStudio() {
               <span className="text-gray-600">ปรับสี:</span>
               {GRADES.map((g) => <button key={g.id} type="button" onClick={() => setGrade(g.id)} className={`px-3 py-1.5 rounded-lg border ${grade === g.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white text-gray-600 border-gray-200'}`}>{g.label}</button>)}
             </div>
+            {batchMode ? (
+              <>
+                <button type="button" onClick={createBatch} disabled={!batchUrls.length || uploading || !!busy || (!instruction.trim() && !templateId)} className="w-full py-3.5 bg-[#1A1A1A] hover:bg-black text-[#D4AF37] font-semibold rounded-xl shadow-md disabled:opacity-40 font-thai flex items-center justify-center gap-2">
+                  <Layers className="w-4 h-4" /> วิเคราะห์และวางแผนทั้งชุด ({batchUrls.length} ไฟล์ ยังไม่หักเครดิต)
+                </button>
+                {batchResult && (
+                  <div className="rounded-2xl border border-[#D4AF37]/40 bg-[#D4AF37]/5 p-4 space-y-2 text-xs font-thai">
+                    {batchResult.projects.map((p) => (
+                      <div key={p.id} className="flex flex-wrap items-center gap-2 bg-white rounded-lg px-3 py-1.5 border border-gray-200">
+                        <span className="font-semibold">{p.name}</span>
+                        {p.error ? <span className="text-red-600">{p.error}</span> : <><span className="text-gray-500">{p.shots} ช็อต · {p.seconds?.toFixed(1)} วิ · {p.engine === 'o3' ? 'O3 edit' : 'ตัดคน+ฉาก'}</span><span className="text-gray-400" title={p.reason}>{p.reason}</span><span className="ml-auto font-bold">{p.credits} cr</span></>}
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={batchConfirmed} onChange={(e) => setBatchConfirmed(e.target.checked)} className="accent-[#D4AF37]" /> ยืนยันหักรวม {batchResult.total_credits} เครดิต แล้วสร้างทุกโปรเจกต์</label>
+                      <button type="button" onClick={runBatch} disabled={!batchConfirmed || !!busy} className="px-4 py-2 rounded-xl bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40">สร้างทั้งชุด</button>
+                    </div>
+                    <p className="text-[10px] text-gray-400">งานเดินบนเซิร์ฟเวอร์ ดูความคืบหน้าและตรวจทีละโปรเจกต์ได้จากรายการด้านล่าง</p>
+                  </div>
+                )}
+              </>
+            ) : (
             <button type="button" onClick={createProject} disabled={!footageUrl || uploading || !!busy} className="w-full py-3.5 bg-[#1A1A1A] hover:bg-black text-[#D4AF37] font-semibold rounded-xl shadow-md disabled:opacity-40 font-thai flex items-center justify-center gap-2">
               <Sparkles className="w-4 h-4" /> วิเคราะห์ฟุตเทจและวางแผน (ยังไม่หักเครดิต)
             </button>
+            )}
           </section>
 
           {projects.length > 0 && (
@@ -321,7 +469,12 @@ export default function VfxStudio() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-thai">
               <textarea value={instruction || project.instruction} onChange={(e) => setInstruction(e.target.value)} rows={2} placeholder="บรีฟฉากใหม่" className="md:col-span-2 px-3 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" />
               <div className="space-y-2">
-                <div className="flex gap-1">{ENGINES.map((e) => <button key={e.id} type="button" onClick={() => setEngine(e.id)} className={`flex-1 px-2 py-1.5 rounded-lg border ${(engine) === e.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{e.id === 'matte' ? 'ตัดคน+ฉาก' : 'O3 Edit'}</button>)}</div>
+                <div className="flex gap-1">
+                  <button type="button" onClick={() => setEngine('auto')} className={`flex-1 px-2 py-1.5 rounded-lg border ${engine === 'auto' ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>อัตโนมัติ</button>
+                  {ENGINES.map((e) => <button key={e.id} type="button" onClick={() => setEngine(e.id)} className={`flex-1 px-2 py-1.5 rounded-lg border ${(engine) === e.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{e.id === 'matte' ? 'ตัดคน+ฉาก' : 'O3 Edit'}</button>)}
+                </div>
+                {engine === 'auto' && <div className="flex gap-1">{PREFS.map((p) => <button key={p.id} type="button" onClick={() => setPreference(p.id)} className={`flex-1 px-1 py-1 rounded-lg border text-[10px] ${preference === p.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{p.label}</button>)}</div>}
+                {engineReason && <p className="text-[10px] text-gray-500">router: {engineReason} → {project.engine === 'o3' ? 'O3 edit' : 'ตัดคน+ฉาก'}</p>}
                 <div className="flex gap-1">{GRADES.map((g) => <button key={g.id} type="button" onClick={() => setGrade(g.id)} className={`flex-1 px-1 py-1 rounded-lg border text-[10px] ${grade === g.id ? 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]' : 'bg-white border-gray-200 text-gray-600'}`}>{g.label}</button>)}</div>
                 <button type="button" onClick={() => plan()} disabled={!!busy || project.shots.some((s) => s.status === 'processing')} className="w-full py-2 rounded-xl bg-white border border-[#D4AF37] text-[#1A1A1A] font-semibold disabled:opacity-40 flex items-center justify-center gap-1.5"><RefreshCw className="w-3.5 h-3.5" /> วางแผน / คิดราคาใหม่</button>
               </div>
