@@ -37,8 +37,10 @@ export async function watermarkVideo(input: Buffer, info: WatermarkInfo): Promis
     const comment = `AI character edit · consent ${info.consentId} · project ${info.projectId} shot ${info.shotId} · model ${info.modelId} · KRUTH VFX Studio`;
     await new Promise<void>((resolve, reject) => {
       const cmd = ffmpeg().input(inPath);
+      // Option values with spaces must be passed as separate array items: fluent-ffmpeg splits
+      // a single "-metadata comment=a b" string on whitespace ("Unrecognized option 'b'").
       const out = ['-map 0:a?', '-c:a copy', '-c:v libx264', '-preset veryfast', '-crf 18', '-pix_fmt yuv420p', '-movflags +faststart',
-        `-metadata comment=${comment}`, '-metadata title=KRUTH VFX (AI character edit)'];
+        '-metadata', `comment=${comment}`, '-metadata', 'title=KRUTH VFX (AI character edit)'];
       if (hasLogo) {
         cmd.input(LOGO);
         cmd.complexFilter(`[1:v]scale=${logoW}:-1,format=rgba,colorchannelmixer=aa=0.55[wm];[0:v][wm]overlay=W-w-${margin}:H-h-${margin}:format=yuv420[out]`);
