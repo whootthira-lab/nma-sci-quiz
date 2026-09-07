@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, loadProject } from '@/lib/vfx/store';
 import { startShot, projectCredits, persist } from '@/lib/vfx/pipeline';
+import { assertTier } from '@/lib/credits/packages';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,11 @@ export async function POST(req: NextRequest) {
     const wanted: string[] | undefined = Array.isArray(body.shot_ids) && body.shot_ids.length ? body.shot_ids : undefined;
     const shots = project.shots.filter((s) => (!wanted || wanted.includes(s.id)) && s.status !== 'processing' && s.status !== 'review' && s.status !== 'approved');
     if (!shots.length) return NextResponse.json({ success: false, error: 'ไม่มีช็อตที่รอสร้าง' }, { status: 400 });
+
+    // Package tier (direction pivot): O3 edit is ultra, a character layer is pro, the matte path is open to all
+    const needsUltra = project.engine === 'o3';
+    const needsPro = shots.some((s) => s.layers.some((l) => l.type === 'character' && l.enabled));
+    try { await assertTier(email, needsUltra ? 'ultra' : needsPro ? 'pro' : 'economy', supabase); } catch (e: any) { return NextResponse.json({ success: false, error: e.message }, { status: 403 }); }
 
     const creditsShown = projectCredits(project, shots.map((s) => s.id));
     if (Number(body.confirm_credits) !== creditsShown) {

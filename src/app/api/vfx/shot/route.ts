@@ -3,6 +3,7 @@ import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, loadProject } from '@/lib/vfx/store';
 import { redoBackground, regradeShot, startShot, persist, setShotFx, rollbackLayer, redoMatte, setShotCharacter, BG_IMAGE_CREDITS } from '@/lib/vfx/pipeline';
 import type { VfxGrade } from '@/lib/vfx/types';
+import { assertTier } from '@/lib/credits/packages';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'set_character': {
+        await assertTier(email, 'pro', supabase);
         // Character layer (Phase 3): consent required; charged for the actor clip plus the
         // matte/edit that must be redone on it. Passing no face clears the character.
         const choice = body.face_url ? { face_url: String(body.face_url), consent_id: String(body.consent_id || ''), prompt: body.prompt ? String(body.prompt) : undefined } : null;
@@ -81,6 +83,7 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'rerun': {
+        if (project.engine === 'o3') await assertTier(email, 'ultra', supabase);
         const prompt = String(body.prompt || '').trim();
         for (const l of shot.layers) {
           if ((l.type === 'edit' || l.type === 'background') && prompt) l.params.prompt = prompt;

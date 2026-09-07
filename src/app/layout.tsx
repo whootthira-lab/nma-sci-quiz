@@ -4,7 +4,7 @@ import StaleBuildReloader from '@/components/StaleBuildReloader';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AI Video Studio — แพลตฟอร์มสร้างวิดีโอ AI สำหรับครู',
+  title: 'KRUTH AI Studio — แพลตฟอร์มโปรดักชั่นวิดีโอด้วย AI',
   description: 'สร้างวิดีโอการสอนด้วย AI อย่างมืออาชีพ ด้วยเทคโนโลยี Text-to-Video และ Face Motion',
 };
 

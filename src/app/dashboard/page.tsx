@@ -10,13 +10,14 @@ import ImageTabForm from '@/components/ImageTabForm';
 import DialogueTabForm from '@/components/DialogueTabForm';
 import VfxBackgroundForm from '@/components/VfxBackgroundForm';
 import VfxStudio from '@/components/VfxStudio';
-import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare, Layers } from 'lucide-react';
+import FilmStudio from '@/components/FilmStudio';
+import { Film, Scan, Loader2, Lock, Image as ImageIcon, MessageSquare, Layers, Clapperboard } from 'lucide-react';
 import { peekRegen, regenTab } from '@/lib/regen';
 
 export default function DashboardPage() {
   const { user, isAdmin, loading } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'vfx' | 'mode2'>('mode1');
+  const [activeTab, setActiveTab] = useState<'mode1' | 'image' | 'dialogue' | 'vfx' | 'film' | 'mode2'>('mode1');
   // VFX tab: the one-shot quick mode (Phase 0.5) or the shot-by-shot studio (Phase 1)
   const [vfxMode, setVfxMode] = useState<'quick' | 'studio'>('studio');
 
@@ -59,7 +60,7 @@ export default function DashboardPage() {
                 KRUTH AI Studio
               </h1>
               <p className="text-sm text-gray-500 font-thai">
-                แพลตฟอร์มผลิตสื่อดิจิทัลอัจฉริยะสำหรับองค์กร
+                แพลตฟอร์มโปรดักชั่นวิดีโอและภาพด้วย AI ระดับสตูดิโอ
               </p>
             </div>
           </div>
@@ -116,6 +117,18 @@ export default function DashboardPage() {
           </button>
 
           <button
+            onClick={() => setActiveTab('film')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
+              activeTab === 'film'
+                ? 'bg-[#1A1A1A] text-[#D4AF37] shadow-md'
+                : 'text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-50'
+            }`}
+          >
+            <Clapperboard className="w-4 h-4" />
+            <span className="font-thai">Film Mode</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('mode2')}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-medium transition-all duration-200 ${
               activeTab === 'mode2'
@@ -138,7 +151,7 @@ export default function DashboardPage() {
               <>
                 <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
                   <Film className="w-5 h-5 text-[#D4AF37]" />
-                  ระบบสร้างวิดีโอผู้สอนเสมือนจริง
+                  ระบบสร้างวิดีโอนักแสดงเสมือนจริง
                 </h2>
                 <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
                   สร้างสื่อวิดีโอระดับมืออาชีพจากภาพนิ่งและบทพากย์ภาษาไทย ประมวลผลด้วย <span className="font-semibold text-[#D4AF37]">KRUTH Engine</span> ที่รองรับการขยับริมฝีปากอย่างเป็นธรรมชาติ
@@ -151,7 +164,7 @@ export default function DashboardPage() {
                   ระบบสร้างรูปภาพอัจฉริยะ (Image Generator)
                 </h2>
                 <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
-                  สร้างภาพประกอบสื่อการสอนจากข้อความ แปลงสไตล์ภาพ แก้ไขจุดบกพร่อง และขยายขอบเฟรมด้วยโมเดล <span className="font-semibold text-[#D4AF37]">Flux.1 Dev</span> ที่มีความเที่ยงตรงสูง
+                  สร้างภาพนิ่งระดับโปรดักชั่นจากข้อความ แปลงสไตล์ภาพ แก้ไขจุดบกพร่อง และขยายขอบเฟรมด้วยโมเดล <span className="font-semibold text-[#D4AF37]">Flux.1 Dev</span> ที่มีความเที่ยงตรงสูง
                 </p>
               </>
             ) : activeTab === 'dialogue' ? (
@@ -161,7 +174,17 @@ export default function DashboardPage() {
                   ระบบสร้างวิดีโอบทสนทนาหลายตัวละคร (Dialogue Engine)
                 </h2>
                 <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
-                  สร้างวิดีโอบทสนทนาสลับกล้องระหว่างผู้สอนและผู้เรียนเสมือนจริง จัดการลำดับเสียงพากย์ สีหน้าอารมณ์ และต่อวิดีโอรวมเข้าด้วยกันอย่างสมบูรณ์
+                  สร้างวิดีโอบทสนทนาสลับกล้องระหว่างตัวละครเสมือนจริง จัดการลำดับเสียงพากย์ สีหน้าอารมณ์ และต่อวิดีโอรวมเข้าด้วยกันอย่างสมบูรณ์
+                </p>
+              </>
+            ) : activeTab === 'film' ? (
+              <>
+                <h2 className="text-xl font-display font-semibold text-[#1A1A1A] flex items-center gap-2">
+                  <Clapperboard className="w-5 h-5 text-[#D4AF37]" />
+                  Film Mode — Style Bible และความสม่ำเสมอทุกฉาก
+                </h2>
+                <p className="text-sm text-gray-500 mt-2 font-thai leading-relaxed">
+                  ล็อกสไตล์ไว้ใน asset ไม่ใช่ใน prompt: Style Bible (พาเลตต์ LUT กฎแสง) + master สถานที่/ตัวละคร → ทุกช็อตในฉากถ่ายบน plate เดียวกัน แล้ว grade ให้ตรง anchor frame โดยวัด ΔE จริง
                 </p>
               </>
             ) : activeTab === 'vfx' ? (
@@ -199,6 +222,8 @@ export default function DashboardPage() {
             <ImageTabForm onImageGenerated={handleVideoGenerated} />
           ) : activeTab === 'dialogue' ? (
             <DialogueTabForm />
+          ) : activeTab === 'film' ? (
+            <FilmStudio />
           ) : activeTab === 'vfx' ? (
             vfxMode === 'studio' ? <VfxStudio /> : <VfxBackgroundForm />
           ) : isAdmin ? (

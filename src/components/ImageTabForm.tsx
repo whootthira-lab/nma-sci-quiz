@@ -1307,8 +1307,8 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
                 imageMode === 'inpainting'
                   ? 'เขียนบอก AI ว่าอยากให้วาดอะไรลงไปในจุดที่ระบายพู่กัน เช่น "ใส่แว่นตากันแดดทรงสปอร์ตสีดำ, realistic"'
                   : imageMode === 'outpainting'
-                    ? 'บรรยายฉากข้างเคียงเพื่อช่วย AI ขยายฉากให้กลมกลืน เช่น "ฉากห้องเรียนคณิตศาสตร์ขนาดใหญ่เบลอหลัง"'
-                    : 'ป้อนรายละเอียดภาพที่ต้องการสร้าง เช่น "ครูผู้หญิงไทยสอนคณิตศาสตร์ สวมสูทสีน้ำเงิน หน้าตายิ้มแย้ม สไตล์พิกซาร์"'
+                    ? 'บรรยายฉากข้างเคียงเพื่อช่วย AI ขยายฉากให้กลมกลืน เช่น "ล็อบบี้โรงแรมหรูตอนกลางคืน โคมระย้า พื้นหินอ่อน"'
+                    : 'ป้อนรายละเอียดภาพที่ต้องการสร้าง เช่น "นักแสดงหญิงไทยในชุดสูทสีน้ำเงิน ยืนในสำนักงานทันสมัย แสงหน้าต่างนุ่ม"'
               }
               rows={3}
               className="w-full bg-[#1C1C1E] border border-white/10 p-3 rounded-xl text-sm text-white placeholder-gray-500 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
@@ -1376,7 +1376,7 @@ export default function ImageTabForm({ onImageGenerated }: ImageTabFormProps) {
               </div>
               {modelType === 'grok' && (
                 <p className="text-[10px] text-text-muted leading-relaxed">
-                  จากที่ทดสอบ Grok ทำ<b>ฉากห้องเรียนไทยและตัวอักษรไทยได้เป็นธรรมชาติกว่า</b> แต่ใช้ร่วมกับตัวละครที่เทรนไว้ไม่ได้
+                  จากที่ทดสอบ Grok ทำ<b>ฉากสถานที่ไทยและตัวอักษรไทยได้เป็นธรรมชาติกว่า</b> แต่ใช้ร่วมกับตัวละครที่เทรนไว้ไม่ได้
                 </p>
               )}
 

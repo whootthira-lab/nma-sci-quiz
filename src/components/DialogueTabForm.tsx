@@ -1612,7 +1612,7 @@ export default function DialogueTabForm() {
               value={projectTitle}
               onChange={(e) => setProjectTitle(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37] font-thai"
-              placeholder="เช่น การพูดคุยของครูสมศรีกับสมชาย"
+              placeholder="เช่น บทสนทนาในร้านกาแฟกับสมชาย"
             />
           </div>
 
@@ -1818,7 +1818,7 @@ export default function DialogueTabForm() {
                   value={scene.name}
                   onChange={(e) => updateScene(scene.id, { name: e.target.value })}
                   className="flex-1 min-w-[140px] px-3 py-1.5 border border-gray-200 rounded-xl text-sm font-semibold font-thai focus:outline-none focus:ring-1 focus:ring-[#D4AF37]"
-                  placeholder="ชื่อฉาก เช่น ในห้องเรียน"
+                  placeholder="ชื่อฉาก เช่น ภายในร้านกาแฟ กลางวัน"
                 />
                 <span className="text-[11px] text-gray-500 font-thai">{sceneCards.length} บท</span>
                 {/* Engine: one clip per line, or continuous O3 beats */}

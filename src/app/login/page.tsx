@@ -43,7 +43,7 @@ export default function LoginPage() {
               AI Video Studio
             </h1>
             <p className="text-sm text-text-secondary mt-2 font-thai text-center">
-              แพลตฟอร์มสร้างวิดีโอ AI สำหรับครูผู้สอน
+              แพลตฟอร์มโปรดักชั่นวิดีโอด้วย AI
             </p>
           </div>
 

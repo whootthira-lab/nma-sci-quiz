@@ -22,6 +22,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-db';
+import { PACKAGES } from '@/lib/credits/packages';
 
 export default function AdminPage() {
   const { user, isAdmin, loading } = useAuth();
@@ -30,6 +31,11 @@ export default function AdminPage() {
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
+  // Credit packages (direction pivot)
+  const [pkgEmail, setPkgEmail] = useState('');
+  const [pkgId, setPkgId] = useState('creator');
+  const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgResult, setPkgResult] = useState('');
   // Phase 4: billed prices — a Fal usage export sets the registry's rates
   const [billResult, setBillResult] = useState<any>(null);
   const [billBusy, setBillBusy] = useState(false);
@@ -684,6 +690,28 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* Credit packages by tier (direction pivot) */}
+        <div className="glow-card p-6 mb-8">
+          <h2 className="text-lg font-display font-semibold text-text-primary mb-2 font-thai">แพ็กเกจเครดิตแยกระดับ (Starter / Creator / Studio / Production)</h2>
+          <p className="text-xs text-text-muted font-thai mb-4">ให้แพ็กเกจ = เพิ่มเครดิตตามแพ็กเกจและตั้งระดับโมเดลที่บัญชีใช้ได้ (economy / pro / ultra) · O3 edit และ Film Mode ต้อง ultra, ตัวละคร Motion Control ต้อง pro · บัญชีเดิมที่ไม่เคยรับแพ็กเกจยังใช้ได้ทุกระดับ</p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+            {PACKAGES.map((p) => (
+              <div key={p.id} className="rounded-xl border border-white/10 bg-surface-2/30 p-3 text-xs font-thai">
+                <p className="text-sm font-bold text-text-primary">{p.label} <span className="text-[#D4AF37]">฿{p.price_thb.toLocaleString()}</span></p>
+                <p className="text-text-primary">{p.credits.toLocaleString()} เครดิต · ระดับ {p.max_tier} · ฿{(p.price_thb / p.credits).toFixed(2)}/เครดิต</p>
+                <p className="text-text-muted mt-1">{p.blurb}</p>
+                <ul className="text-text-muted mt-1 list-disc pl-4">{p.examples.map((x) => <li key={x}>{x}</li>)}</ul>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-thai">
+            <input value={pkgEmail} onChange={(e) => setPkgEmail(e.target.value)} placeholder="อีเมลผู้ใช้ (ต้องอยู่ในรายชื่อแล้ว)" className="px-3 py-2 rounded-lg bg-[#1C1C1E] border border-white/10 text-white w-64" />
+            <select value={pkgId} onChange={(e) => setPkgId(e.target.value)} className="px-2 py-2 rounded-lg bg-[#1C1C1E] border border-white/10 text-white">{PACKAGES.map((p) => <option key={p.id} value={p.id}>{p.label} — {p.credits} เครดิต</option>)}</select>
+            <button type="button" disabled={pkgBusy || !pkgEmail} onClick={async () => { setPkgBusy(true); setPkgResult(''); try { const r = await fetch('/api/admin/package', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, target_email: pkgEmail.trim(), package_id: pkgId }) }).then((x) => x.json()); setPkgResult(r.success ? `✅ ให้แพ็กเกจแล้ว — ระดับ ${r.account.tier} · ยอดใหม่ ${r.new_balance_credits} เครดิต` : `❌ ${r.error}`); } finally { setPkgBusy(false); } }} className="px-4 py-2 rounded-lg bg-[#D4AF37] text-black font-bold disabled:opacity-40">ให้แพ็กเกจ</button>
+            {pkgResult && <span className="text-text-primary">{pkgResult}</span>}
+          </div>
+        </div>
+
         {/* Billed prices (Phase 4): Fal usage export → registry rates */}
         <div className="glow-card p-6 mb-8">
           <h2 className="text-lg font-display font-semibold text-text-primary mb-2 font-thai">
@@ -1119,7 +1147,7 @@ export default function AdminPage() {
                   type="text"
                   value={nameField}
                   onChange={(e) => setNameField(e.target.value)}
-                  placeholder="เช่น ครูสมศรี"
+                  placeholder="เช่น สมศรี โปรดิวเซอร์"
                   className="w-full bg-[#2C2C2E] border border-white/10 p-3 rounded-xl text-sm text-white placeholder-gray-500 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all"
                 />
               </div>

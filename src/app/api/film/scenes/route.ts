@@ -1,0 +1,150 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { serviceClient, newId, saveFilm, loadFilm } from '@/lib/film/store';
+import { loadProject, saveProject, newId as vfxId, putFile } from '@/lib/vfx/store';
+import { analyzeFootage, planProject, startShot, persist, projectCredits } from '@/lib/vfx/pipeline';
+import { resolveEffectiveStyle, requireLockedMaster } from '@/lib/film/resolver';
+import { gradeToAnchor, extractFrame } from '@/lib/film/color';
+import { primeRates } from '@/lib/providers/rates';
+import type { VfxProject } from '@/lib/vfx/types';
+import type { FilmShot } from '@/lib/film/types';
+import { assertTier } from '@/lib/credits/packages';
+
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+
+/**
+ * Scenes and shots (F1):
+ *   add_scene   { name, location_master_id, time_of_day?, weather?, style_override? } — master must be locked
+ *   add_shot    { scene_id, footage_url, confirm_credits } — generates through VFX Studio with the
+ *               scene's LOCKED location plate as the background (no Flux, no free prompt),
+ *               grade 'none' (neutral), effective style snapshot stored on the shot; charged.
+ *   sync        { scene_id? } — pull finished VFX outputs into the shots (pre-grade)
+ *   set_anchor  { scene_id, shot_id, at_seconds? } — approve a frame as the scene anchor
+ *   grade_scene { scene_id } — LUT + anchor match every ready shot, measure ΔE; no generation
+ *   override    { scene_id, style_override } — scene-level override (exposure, LUT)
+ */
+export async function POST(req: NextRequest) {
+  try {
+    await primeRates();
+    const body = await req.json();
+    const email = (body.user_email || '').trim().toLowerCase();
+    const supabase = serviceClient();
+    const film = await loadFilm(email, body.film_id || '', supabase);
+    if (!film) return NextResponse.json({ success: false, error: 'ไม่พบหนัง' }, { status: 404 });
+    const now = new Date().toISOString();
+
+    if (body.action === 'add_scene') {
+      const master = requireLockedMaster(film, String(body.location_master_id || ''), 'location');
+      film.scenes.push({ id: newId('scn'), order: film.scenes.length + 1, name: String(body.name || `ฉาก ${film.scenes.length + 1}`).trim(), location_master_id: master.id, time_of_day: String(body.time_of_day || ''), weather: String(body.weather || ''), style_override: body.style_override || {}, shots: [] });
+      await saveFilm(film, supabase);
+      return NextResponse.json({ success: true, film });
+    }
+
+    const scene = film.scenes.find((s) => s.id === body.scene_id);
+    if (!scene && body.action !== 'sync') return NextResponse.json({ success: false, error: 'ไม่พบฉาก' }, { status: 404 });
+
+    switch (body.action) {
+      case 'override': {
+        scene!.style_override = { ...(scene!.style_override || {}), ...(body.style_override || {}) };
+        break;
+      }
+      case 'add_shot': {
+        await assertTier(email, 'ultra', supabase); // Film Mode is a Studio/Production feature
+        if (!film.bible.locked_at) return NextResponse.json({ success: false, error: 'ล็อก Style Bible ก่อนสร้างช็อต (กันสไตล์เลื่อนกลางเรื่อง)' }, { status: 409 });
+        const master = requireLockedMaster(film, scene!.location_master_id, 'location');
+        const style = resolveEffectiveStyle(film, scene!);
+        const footageUrl = String(body.footage_url || '');
+        if (!footageUrl) return NextResponse.json({ success: false, error: 'ต้องมีฟุตเทจ' }, { status: 400 });
+        // Generate through VFX Studio, constrained by the film: plate = locked master, neutral grade
+        let project: VfxProject = {
+          id: vfxId('vfx'), user_email: email, user_id: film.user_id || body.user_id || '', name: `${film.title} · ${scene!.name} · ช็อต ${scene!.shots.length + 1}`,
+          footage_url: footageUrl, footage: { seconds: 0, width: 0, height: 0, fps: 0 }, reference_urls: [master.sheet_urls[0]],
+          instruction: `${master.name} — ${style.neutral_prompt_suffix}`, engine: 'matte', grade: 'none', shots: [], status: 'draft',
+          estimated_credits: 0, charged_credits: 0, created_at: now, updated_at: now
+        };
+        project = await analyzeFootage(project, supabase);
+        project = await planProject(project, 'matte', 'none');
+        for (const s of project.shots) for (const l of s.layers) {
+          if (l.type === 'background') { l.output = { image_url: master.sheet_urls[0] }; l.status = 'done'; l.version = 1; l.cost_credits = 0; l.params = { prompt: `plate: ${master.name} v${master.version}` }; }
+        }
+        project.estimated_credits = projectCredits(project);
+        const credits = project.estimated_credits;
+        if (Number(body.confirm_credits) !== credits) {
+          await saveProject(project, supabase);
+          return NextResponse.json({ success: false, error: `ยืนยันราคาก่อน: ช็อตนี้ ${credits} เครดิต`, credits, project_id: project.id }, { status: 409 });
+        }
+        const isSuperAdmin = email === 'whootthira@gmail.com';
+        if (!isSuperAdmin) {
+          const { data: wl } = await supabase.from('whitelist').select('generation_limit').eq('email', email).maybeSingle();
+          const cost = Math.round(credits * 10);
+          if (!wl || (wl.generation_limit || 0) < cost) return NextResponse.json({ success: false, error: `เครดิตไม่พอ (ต้องการ ${credits})` }, { status: 403 });
+          await supabase.from('whitelist').update({ generation_limit: (wl.generation_limit || 0) - cost }).eq('email', email);
+        }
+        project.charged_credits = credits;
+        for (const s of project.shots) await startShot(project, s, supabase);
+        await persist(project, supabase);
+        const shot: FilmShot = {
+          id: newId('fsh'), order: scene!.shots.length + 1, vfx_project_id: project.id, vfx_shot_id: project.shots[0]?.id || '',
+          master_versions: [{ master_id: master.id, version: master.version }], effective_style: style, status: 'processing', updated_at: now
+        };
+        master.used_by.push({ version: master.version, shot_id: shot.id });
+        scene!.shots.push(shot);
+        break;
+      }
+      case 'sync': {
+        for (const sc of film.scenes.filter((s) => !body.scene_id || s.id === body.scene_id)) {
+          for (const sh of sc.shots) {
+            if (sh.status !== 'processing') continue;
+            const p = await loadProject(email, sh.vfx_project_id, supabase);
+            const vs = p?.shots.find((x) => x.id === sh.vfx_shot_id) || p?.shots[0];
+            if (!vs) continue;
+            if ((vs.status === 'review' || vs.status === 'approved') && vs.output_url) { sh.pre_grade_url = vs.output_url; sh.status = 'ready'; sh.updated_at = now; }
+            else if (vs.status === 'failed') { sh.status = 'failed'; sh.error = vs.error; sh.updated_at = now; }
+          }
+        }
+        break;
+      }
+      case 'set_anchor': {
+        const sh = scene!.shots.find((x) => x.id === body.shot_id);
+        if (!sh?.pre_grade_url) return NextResponse.json({ success: false, error: 'ช็อตนี้ยังไม่มีผลลัพธ์' }, { status: 400 });
+        const at = Number(body.at_seconds) || 0.5;
+        const frame = await extractFrame(sh.pre_grade_url, at);
+        scene!.anchor_frame_url = await putFile(`films/${email}/${film.id}/${scene!.id}_anchor_${Date.now()}.jpg`, frame, 'image/jpeg', supabase);
+        scene!.anchor_from_shot_id = sh.id;
+        break;
+      }
+      case 'grade_scene': {
+        if (!scene!.anchor_frame_url) return NextResponse.json({ success: false, error: 'ตั้ง anchor frame ของฉากก่อน (อนุมัติเฟรมจากช็อตแรก)' }, { status: 400 });
+        const style = resolveEffectiveStyle(film, scene!);
+        const results: any[] = [];
+        for (const sh of scene!.shots) {
+          if (!sh.pre_grade_url || sh.status === 'processing' || sh.status === 'failed') continue;
+          try {
+            const g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
+            sh.post_grade_url = await putFile(`films/${email}/${film.id}/${scene!.id}_${sh.id}_b${film.bible.version}_${Date.now()}.mp4`, g.video, 'video/mp4', supabase);
+            sh.delta_e = g.deltaE;
+            sh.passed = g.deltaE < style.delta_e_threshold;
+            sh.status = 'graded';
+            sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
+            sh.updated_at = now;
+            results.push({ shot_id: sh.id, delta_e: g.deltaE, passed: sh.passed, lut: g.lutApplied });
+          } catch (e: any) {
+            sh.error = `grade: ${e?.message || e}`;
+            results.push({ shot_id: sh.id, error: sh.error });
+          }
+        }
+        await saveFilm(film, supabase);
+        const measured = results.filter((r) => typeof r.delta_e === 'number');
+        const mean = measured.length ? +(measured.reduce((s, r) => s + r.delta_e, 0) / measured.length).toFixed(2) : null;
+        return NextResponse.json({ success: true, film, results, mean_delta_e: mean, threshold: style.delta_e_threshold });
+      }
+      default:
+        return NextResponse.json({ success: false, error: 'ไม่รู้จักคำสั่ง' }, { status: 400 });
+    }
+    await saveFilm(film, supabase);
+    return NextResponse.json({ success: true, film });
+  } catch (e: any) {
+    console.error('[Film scenes]', e);
+    return NextResponse.json({ success: false, error: e?.message || 'ทำรายการไม่สำเร็จ' }, { status: 500 });
+  }
+}

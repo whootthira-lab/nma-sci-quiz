@@ -915,7 +915,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                   : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              🧑‍🏫 ผู้สอน AI (Avatar)
+              🎭 นักแสดง AI (Avatar)
             </button>
             <button
               type="button"

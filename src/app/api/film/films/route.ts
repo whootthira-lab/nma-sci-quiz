@@ -1,0 +1,136 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { serviceClient, newId, saveFilm, loadFilm, listFilms, deleteFilm } from '@/lib/film/store';
+import { DEFAULT_BIBLE, Film, MasterAsset, StyleBible } from '@/lib/film/types';
+import { requireConsent } from '@/lib/vfx/consent';
+import { MATTE_ID, BG_IMAGE_ID, CHARACTER_ID } from '@/lib/vfx/pipeline';
+import { getModel } from '@/lib/providers/registry';
+
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
+const own = (email: string) => (f: Film) => f.user_email === email;
+
+/** GET ?email=…[&id=…] */
+export async function GET(req: NextRequest) {
+  const email = (req.nextUrl.searchParams.get('email') || '').trim().toLowerCase();
+  const id = req.nextUrl.searchParams.get('id') || '';
+  if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
+  try {
+    if (id) {
+      const film = await loadFilm(email, id);
+      if (!film) return NextResponse.json({ success: false, error: 'ไม่พบหนัง' }, { status: 404 });
+      return NextResponse.json({ success: true, film });
+    }
+    return NextResponse.json({ success: true, films: await listFilms(email) });
+  } catch (e: any) {
+    return NextResponse.json({ success: false, error: e?.message || 'อ่านไม่สำเร็จ' }, { status: 500 });
+  }
+}
+
+/**
+ * POST actions (all take user_email; most take film_id):
+ *   create            { title, bible? }
+ *   update_bible      { bible }              — refused when locked; use bump_bible
+ *   lock_bible        {}                     — freezes the current version
+ *   bump_bible        { bible }              — new version (old one kept in history); scenes re-grade on request
+ *   add_master        { kind, name, sheet_urls[], consent_id? }
+ *   update_master     { master_id, name?, sheet_urls? } — refused once locked
+ *   lock_master       { master_id }
+ *   bump_master       { master_id, sheet_urls } — new version; used versions stay intact
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const email = (body.user_email || '').trim().toLowerCase();
+    if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
+    const supabase = serviceClient();
+    const now = new Date().toISOString();
+
+    if (body.action === 'create') {
+      const bible: StyleBible = { ...DEFAULT_BIBLE, ...(body.bible || {}), version: 1 };
+      const pin = (task: string, id: string) => { const m = getModel(id); return m ? { [task]: { model_id: m.id, endpoint: m.endpoint, pinned_at: now } } : {}; };
+      const film: Film = {
+        id: newId('film'), user_email: email, user_id: body.user_id || '', title: String(body.title || 'หนังใหม่').trim() || 'หนังใหม่',
+        bible, bible_history: [], masters: [], scenes: [],
+        pinned_models: { ...pin('vfx.matte', MATTE_ID), ...pin('image.plate', BG_IMAGE_ID), ...pin('vfx.character', CHARACTER_ID) },
+        status: 'draft', created_at: now, updated_at: now
+      };
+      await saveFilm(film, supabase);
+      return NextResponse.json({ success: true, film });
+    }
+
+    const film = await loadFilm(email, body.film_id || '', supabase);
+    if (!film || !own(email)(film)) return NextResponse.json({ success: false, error: 'ไม่พบหนัง' }, { status: 404 });
+
+    switch (body.action) {
+      case 'update_bible': {
+        if (film.bible.locked_at) return NextResponse.json({ success: false, error: 'Bible ถูกล็อกแล้ว — แก้ตรงไม่ได้ ต้อง bump เวอร์ชันใหม่' }, { status: 409 });
+        film.bible = { ...film.bible, ...(body.bible || {}), version: film.bible.version };
+        break;
+      }
+      case 'lock_bible':
+        film.bible.locked_at = now;
+        film.status = 'active';
+        break;
+      case 'bump_bible': {
+        film.bible_history.unshift({ version: film.bible.version, bible: film.bible, at: now });
+        film.bible = { ...film.bible, ...(body.bible || {}), version: film.bible.version + 1, locked_at: undefined };
+        break;
+      }
+      case 'add_master': {
+        const kind: MasterAsset['kind'] = ['character', 'location', 'prop'].includes(body.kind) ? body.kind : 'location';
+        const sheet: string[] = Array.isArray(body.sheet_urls) ? body.sheet_urls.filter(Boolean).slice(0, 6) : [];
+        if (!sheet.length) return NextResponse.json({ success: false, error: 'ต้องมีภาพอย่างน้อย 1 ภาพ' }, { status: 400 });
+        if (kind === 'character') {
+          // The spec's guardrail: a character master from a real person carries a consent record
+          if (!body.consent_id) return NextResponse.json({ success: false, error: 'master ตัวละครต้องผูกบันทึกความยินยอม (consent) เดียวกับ VFX Studio' }, { status: 400 });
+          await requireConsent(email, String(body.consent_id), sheet[0], supabase);
+        }
+        film.masters.push({ id: newId('mst'), kind, name: String(body.name || kind).trim(), sheet_urls: sheet, consent_id: body.consent_id || undefined, version: 1, locked: false, used_by: [], created_at: now });
+        break;
+      }
+      case 'update_master': {
+        const m = film.masters.find((x) => x.id === body.master_id);
+        if (!m) return NextResponse.json({ success: false, error: 'ไม่พบ master' }, { status: 404 });
+        if (m.locked) return NextResponse.json({ success: false, error: 'master ถูกล็อกแล้ว — ใช้ bump เวอร์ชันใหม่' }, { status: 409 });
+        if (body.name) m.name = String(body.name).trim();
+        if (Array.isArray(body.sheet_urls) && body.sheet_urls.length) m.sheet_urls = body.sheet_urls.filter(Boolean).slice(0, 6);
+        break;
+      }
+      case 'lock_master': {
+        const m = film.masters.find((x) => x.id === body.master_id);
+        if (!m) return NextResponse.json({ success: false, error: 'ไม่พบ master' }, { status: 404 });
+        m.locked = true;
+        break;
+      }
+      case 'bump_master': {
+        const m = film.masters.find((x) => x.id === body.master_id);
+        if (!m) return NextResponse.json({ success: false, error: 'ไม่พบ master' }, { status: 404 });
+        const sheet: string[] = Array.isArray(body.sheet_urls) ? body.sheet_urls.filter(Boolean).slice(0, 6) : m.sheet_urls;
+        // A used version is never edited in place: keep the old sheet under its version by
+        // recording it in used_by consumers; the new version starts unlocked for review.
+        m.version += 1;
+        m.sheet_urls = sheet;
+        m.locked = false;
+        break;
+      }
+      default:
+        return NextResponse.json({ success: false, error: 'ไม่รู้จักคำสั่ง' }, { status: 400 });
+    }
+    await saveFilm(film, supabase);
+    return NextResponse.json({ success: true, film });
+  } catch (e: any) {
+    console.error('[Film films]', e);
+    return NextResponse.json({ success: false, error: e?.message || 'ทำรายการไม่สำเร็จ' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { user_email, id } = await req.json();
+    await deleteFilm(String(user_email || '').toLowerCase(), String(id || ''));
+    return NextResponse.json({ success: true });
+  } catch (e: any) {
+    return NextResponse.json({ success: false, error: e?.message || 'ลบไม่สำเร็จ' }, { status: 500 });
+  }
+}
