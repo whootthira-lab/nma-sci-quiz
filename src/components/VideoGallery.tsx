@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2, Copy, Check, Cpu, Repeat } from 'lucide-react';
+import { Download, Trash2, Film, Clock, AlertCircle, RefreshCw, Loader2, Copy, Check, Cpu, Repeat, Flag } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { getUserGenerations, deleteGeneration } from '@/lib/supabase-db';
 import { stashRegen } from '@/lib/regen';
@@ -286,6 +286,21 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
                     ดาวน์โหลด
                   </button>
                 )}
+                <button
+                  onClick={async () => {
+                    // Content Policy §5: anyone may report a result; it lands in the review queue
+                    const reason = prompt('รายงานผลงานนี้ — เหตุผล: 1 ภาพลักษณ์ของฉันโดยไม่ยินยอม · 2 ผู้เยาว์ · 3 ความรุนแรงทางเพศ · 4 แอบอ้าง/หลอกลวง · 5 ลิขสิทธิ์ · 6 อื่นๆ\nพิมพ์ตัวเลขและรายละเอียด (ถ้ามี)', '');
+                    if (reason === null) return;
+                    const code = (reason.trim().match(/^[1-6]/) || ['6'])[0];
+                    const map: Record<string, string> = { '1': 'my_likeness', '2': 'minor', '3': 'sexual_violence', '4': 'impersonation', '5': 'copyright', '6': 'other' };
+                    const res = await fetch('/api/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, generation_id: gen.id, url: gen.video_url, reason: map[code], note: reason.replace(/^[1-6]\s*/, '') }) }).then((r) => r.json()).catch(() => ({ success: false }));
+                    alert(res.success ? 'ส่งรายงานแล้ว ผู้ตรวจจะพิจารณาภายใน 24 ชั่วโมงทำการ' : `ส่งรายงานไม่สำเร็จ: ${res.error || ''}`);
+                  }}
+                  className="p-2 rounded-xl text-text-muted hover:text-amber-400 hover:bg-amber-400/10 transition-all"
+                  title="รายงานผลงานนี้"
+                >
+                  <Flag className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => handleDelete(gen.id, gen.storage_path)}
                   disabled={deleting === gen.id}

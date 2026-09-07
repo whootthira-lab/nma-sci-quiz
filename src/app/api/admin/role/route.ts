@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { audit } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +50,8 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
-    const { user_email, target_email, make_admin } = await req.json();
+    const body = await req.json();
+    const { user_email, target_email, make_admin } = body;
     if (!user_email || !target_email) {
       return NextResponse.json({ success: false, error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
     }
@@ -76,14 +78,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Roles (Content Policy §6): user · reviewer (moderation queue only) · admin. The older
+    // `make_admin` boolean still works; `role` names any of the three.
+    const requested = typeof body.role === 'string' ? body.role : (make_admin ? 'admin' : 'user');
+    const role = ['admin', 'reviewer', 'user'].includes(requested) ? requested : 'user';
     const { error } = await supabase
       .from('profiles')
-      .update({ role: make_admin ? 'admin' : 'user' })
+      .update({ role })
       .eq('id', profile.id);
     if (error) throw error;
 
-    console.log(`[Admin Role] ${target} → ${make_admin ? 'admin' : 'user'} (by ${user_email})`);
-    return NextResponse.json({ success: true, role: make_admin ? 'admin' : 'user' });
+    await audit({ kind: 'role_changed', actor: String(user_email).toLowerCase(), target, detail: { role } });
+    console.log(`[Admin Role] ${target} → ${role} (by ${user_email})`);
+    return NextResponse.json({ success: true, role });
   } catch (error: any) {
     console.error('[Admin Role POST]', error);
     return NextResponse.json({ success: false, error: error.message || 'เปลี่ยนสิทธิ์ไม่สำเร็จ' }, { status: 500 });

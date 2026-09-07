@@ -13,6 +13,7 @@ import { loadFxLibrary, FxParams } from './fx';
 import { watermarkVideo } from './watermark';
 import { qaShot } from './qa';
 import { requireConsent } from './consent';
+import { POLICY_VERSION } from '@/lib/moderation';
 
 export const CHARACTER_ID = 'char-motion-control';
 
@@ -311,7 +312,8 @@ async function insertLayerJob(supabase: SupabaseClient, project: VfxProject, sho
       storage_path: storagePath,
       storage_provider: 'supabase',
       api_provider: 'fal',
-      duration_estimate: Math.ceil(shot.end - shot.start)
+      duration_estimate: Math.ceil(shot.end - shot.start),
+      provenance: { ai_generated: true, model_endpoint: endpoint, created_by: project.user_email, policy_version: POLICY_VERSION, at: new Date().toISOString(), consent_id: l.type === 'character' ? l.params.consent_id : undefined }
     }
   });
 }

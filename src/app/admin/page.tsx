@@ -31,6 +31,14 @@ export default function AdminPage() {
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
+  // Moderation queue + audit viewer
+  const [reports, setReports] = useState<any[]>([]);
+  const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  const [auditDate, setAuditDate] = useState(new Date().toISOString().slice(0, 10));
+  const [modBusy, setModBusy] = useState(false);
+  const loadReports = async () => { const j = await fetch(`/api/admin/moderation?email=${encodeURIComponent(user?.email || '')}&status=open`).then((r) => r.json()).catch(() => null); if (j?.success) setReports(j.reports); };
+  const loadAudit = async () => { const j = await fetch(`/api/admin/moderation?email=${encodeURIComponent(user?.email || '')}&audit=${auditDate}`).then((r) => r.json()).catch(() => null); if (j?.success) setAuditEvents(j.events); };
+  useEffect(() => { if (user?.email) loadReports(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.email]);
   // Credit packages (direction pivot)
   const [pkgEmail, setPkgEmail] = useState('');
   const [pkgId, setPkgId] = useState('creator');
@@ -688,6 +696,47 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Moderation queue + audit (Content Policy §5–6) */}
+        <div className="glow-card p-6 mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-lg font-display font-semibold text-text-primary font-thai">คิวรายงานและ audit log</h2>
+            <div className="flex items-center gap-2 text-xs font-thai">
+              <button type="button" onClick={loadReports} className="px-3 py-1.5 rounded-lg bg-[#1C1C1E] border border-white/10 text-white">รีเฟรชรายงาน</button>
+              <input type="date" value={auditDate} onChange={(e) => setAuditDate(e.target.value)} className="px-2 py-1.5 rounded-lg bg-[#1C1C1E] border border-white/10 text-white" />
+              <button type="button" onClick={loadAudit} className="px-3 py-1.5 rounded-lg bg-[#1C1C1E] border border-white/10 text-white">ดู audit วันนี้</button>
+            </div>
+          </div>
+          <p className="text-xs text-text-muted font-thai mb-3">นโยบายฉบับเต็ม: docs/CONTENT_POLICY.md · ผู้ตรวจ (reviewer) และผู้ดูแลตัดสินได้ ทุกคำตัดสินเข้า audit log</p>
+          {reports.length === 0 ? <p className="text-xs text-text-muted font-thai">ไม่มีรายงานที่เปิดอยู่</p> : (
+            <div className="space-y-2">
+              {reports.map((r) => (
+                <div key={r.id} className="rounded-xl border border-white/10 bg-surface-2/30 p-3 text-xs font-thai space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2 text-text-primary">
+                    <span className="px-2 py-0.5 rounded-md bg-accent-danger/20 text-accent-danger">{({ my_likeness: 'ภาพลักษณ์ของฉัน', minor: 'ผู้เยาว์', sexual_violence: 'ความรุนแรงทางเพศ', impersonation: 'แอบอ้าง', copyright: 'ลิขสิทธิ์', other: 'อื่นๆ' } as any)[r.reason] || r.reason}</span>
+                    <span>โดย {r.reporter}</span><span className="text-text-muted">{new Date(r.at).toLocaleString('th-TH')}</span>
+                    {r.owner_email && <span className="text-text-muted">เจ้าของ: {r.owner_email}</span>}
+                    {r.url && <a href={r.url} target="_blank" rel="noreferrer" className="text-[#D4AF37] underline">เปิดผลงาน</a>}
+                  </div>
+                  {r.note && <p className="text-text-muted">{r.note}</p>}
+                  <div className="flex flex-wrap gap-1.5">
+                    {([['dismissed', 'ยกคำร้อง'], ['removed', 'ลบผลงาน'], ['user_suspended', 'ลบ + ระงับบัญชี']] as const).map(([d, label]) => (
+                      <button key={d} type="button" disabled={modBusy} onClick={async () => { const note = prompt('เหตุผลการตัดสิน (บันทึกใน audit)', '') ?? ''; if (!note && d !== 'dismissed') return; setModBusy(true); try { const j = await fetch('/api/admin/moderation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, action: 'decide', report_id: r.id, decision: d, note }) }).then((x) => x.json()); if (!j.success) alert(j.error); await loadReports(); } finally { setModBusy(false); } }} className={`px-3 py-1 rounded-lg border ${d === 'dismissed' ? 'border-white/10 text-white' : 'border-accent-danger/40 text-accent-danger'} disabled:opacity-40`}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {auditEvents.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-[11px] font-thai">
+                <thead><tr className="text-text-muted text-left"><th className="py-1 pr-3">เวลา</th><th className="pr-3">เหตุการณ์</th><th className="pr-3">ผู้ทำ</th><th className="pr-3">เป้าหมาย</th><th>รายละเอียด</th></tr></thead>
+                <tbody>{auditEvents.map((e) => <tr key={e.id} className="border-t border-white/5 text-text-primary"><td className="py-1 pr-3 whitespace-nowrap">{new Date(e.at).toLocaleTimeString('th-TH')}</td><td className="pr-3 font-mono">{e.kind}</td><td className="pr-3">{e.actor}</td><td className="pr-3 font-mono">{(e.target || '').slice(0, 40)}</td><td className="text-text-muted">{JSON.stringify(e.detail || {}).slice(0, 160)}</td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Credit packages by tier (direction pivot) */}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
+import { moderateText } from '@/lib/moderation';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmitCompat } from '@/lib/providers/fal';
 import { padSpeechWithSilence, generateTTS, generateGeminiTTS, generateGoogleTTS, generateOpenAITTS, generateCosyVoiceTTS } from '@/lib/tts';
@@ -326,6 +327,11 @@ export async function POST(req: NextRequest) {
     const scriptText = formData.get('script_text') as string;
     const situationPrompt = formData.get('situation_prompt') as string || '';
     const endSituationPrompt = formData.get('end_situation_prompt') as string || '';
+    // Content policy: script and scene text screened before TTS or any provider call
+    {
+      const screen = await moderateText([scriptText || '', situationPrompt, endSituationPrompt].join('\n'), { route: 'generate-video', user_email: String(formData.get('user_email') || '') });
+      if (!screen.allowed) return NextResponse.json({ success: false, error: screen.reason, policy_block: screen.category }, { status: 422 });
+    }
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
     const userEmail = formData.get('user_email') as string;

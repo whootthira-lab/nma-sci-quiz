@@ -4,6 +4,7 @@ import { analyzeFootage, planProject, projectCredits } from '@/lib/vfx/pipeline'
 import { loadTemplates } from '@/lib/vfx/templates';
 import { primeRates } from '@/lib/providers/rates';
 import { recommendEngine, Preference } from '@/lib/providers/router';
+import { moderateText } from '@/lib/moderation';
 import type { VfxProject } from '@/lib/vfx/types';
 
 export const maxDuration = 300;
@@ -33,6 +34,8 @@ export async function POST(req: NextRequest) {
     const template = body.template_id ? (await loadTemplates(supabase)).find((t) => t.id === body.template_id) : undefined;
     const instruction = String(body.instruction || template?.instruction || '').trim();
     if (!instruction) return NextResponse.json({ success: false, error: 'ต้องมีคำบรรยายฉากหรือเลือกเทมเพลต' }, { status: 400 });
+    const screen = await moderateText(instruction, { route: 'vfx/batch', user_email: email });
+    if (!screen.allowed) return NextResponse.json({ success: false, error: screen.reason, policy_block: screen.category }, { status: 422 });
     const pref: Preference = ['economy', 'balanced', 'quality'].includes(body.preference) ? body.preference : 'balanced';
     const engineFixed = body.engine === 'o3' || body.engine === 'matte' ? body.engine : template?.engine;
     const grade = ['none', 'match', 'warm', 'cool', 'cinematic'].includes(body.grade) ? body.grade : (template?.grade || 'match');

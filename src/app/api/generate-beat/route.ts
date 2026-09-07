@@ -7,6 +7,7 @@ import os from 'os';
 import path from 'path';
 import { falSubmit, FalSubmitError } from '@/lib/providers/fal';
 import { padSpeechWithSilence, generateTTS, generateGeminiTTS, generateGoogleTTS, generateOpenAITTS, generateCosyVoiceTTS } from '@/lib/tts';
+import { moderateText, POLICY_VERSION } from '@/lib/moderation';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -123,6 +124,10 @@ export async function POST(req: NextRequest) {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // ── content policy: the lines and the situation are screened before any model is called
+    const screen = await moderateText([situation, ...lines.map((l) => l.text || '')].join('\n'), { route: 'generate-beat', user_email: userEmail });
+    if (!screen.allowed) return NextResponse.json({ success: false, error: screen.reason, policy_block: screen.category }, { status: 422 });
 
     // ── permission (same rule as every other route: a failed lookup is not a verdict)
     const isSuperAdmin = userEmail === 'whootthira@gmail.com';
@@ -244,7 +249,8 @@ export async function POST(req: NextRequest) {
             api_provider: 'fal',
             aspect_ratio: aspectRatio,
             duration_estimate: duration,
-            beat_lines: lines.map((l, i) => ({ speaker: l.speaker, text: l.text, seconds: +secs[i].toFixed(2) }))
+            beat_lines: lines.map((l, i) => ({ speaker: l.speaker, text: l.text, seconds: +secs[i].toFixed(2) })),
+            provenance: { ai_generated: true, model_endpoint: BEAT_ENDPOINT, created_by: userEmail, policy_version: POLICY_VERSION, at: new Date().toISOString() }
           }
         });
       }

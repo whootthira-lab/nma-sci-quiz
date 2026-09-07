@@ -4,6 +4,7 @@ import { baseAppId, falStatus, falResult, falSubmitCompat } from '@/lib/provider
 import { compositeBackground, gradeVideo } from '@/lib/vfx/composite';
 import { loadProject as loadVfxProject } from '@/lib/vfx/store';
 import { onLayerJobDone, onLayerJobFailed, persist as persistVfx } from '@/lib/vfx/pipeline';
+import { POLICY_VERSION } from '@/lib/moderation';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
@@ -677,12 +678,21 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Update generation status in Supabase
+      // Update generation status in Supabase — every finished output carries provenance
+      // (Content Policy §4): AI-generated, which model, who, when, under which policy version.
+      const provenance = genRow?.metadata?.provenance || {
+        ai_generated: true,
+        model_endpoint: modelEndpoint,
+        created_by: genRow?.metadata?.user_email || undefined,
+        policy_version: POLICY_VERSION,
+        at: new Date().toISOString()
+      };
       const { error: dbError } = await supabase
         .from('generations')
         .update({
           status: 'completed',
           video_url: publicUrl,
+          metadata: { ...(genRow?.metadata || {}), provenance },
           updated_at: new Date().toISOString()
         })
         .eq('fal_request_id', requestId);

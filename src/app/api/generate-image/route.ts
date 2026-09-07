@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
+import { moderateText } from '@/lib/moderation';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmitCompat } from '@/lib/providers/fal';
 
@@ -166,6 +167,11 @@ export async function POST(req: NextRequest) {
 
     // Get input parameters
     const prompt = formData.get('prompt') as string;
+    // Content policy: screened before enhancement or any provider call
+    {
+      const screen = await moderateText(prompt || '', { route: 'generate-image', user_email: String(formData.get('user_email') || '') });
+      if (!screen.allowed) return NextResponse.json({ success: false, error: screen.reason, policy_block: screen.category }, { status: 422 });
+    }
     const imageFile = formData.get('image') as File | null;
     const maskFile = formData.get('mask') as File | null;
     // Photos routinely exceed the platform's request body limit (413), so the browser may

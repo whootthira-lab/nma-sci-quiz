@@ -4,6 +4,7 @@ import { serviceClient, loadProject, saveProject } from '@/lib/vfx/store';
 import { planProject, projectCredits } from '@/lib/vfx/pipeline';
 import { loadTemplates, SceneTemplate } from '@/lib/vfx/templates';
 import { recommendEngine, Preference } from '@/lib/providers/router';
+import { moderateText } from '@/lib/moderation';
 
 export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
@@ -37,6 +38,8 @@ export async function POST(req: NextRequest) {
     if (typeof body.instruction === 'string' && body.instruction.trim()) project.instruction = body.instruction.trim();
     if (Array.isArray(body.reference_urls)) project.reference_urls = body.reference_urls.filter(Boolean).slice(0, 4);
     if (!project.instruction) return NextResponse.json({ success: false, error: 'พิมพ์คำบรรยายฉากใหม่ที่ต้องการก่อน' }, { status: 400 });
+    const screen = await moderateText([project.instruction, ...Object.values(body.prompts || {}).map(String)].join('\n'), { route: 'vfx/plan', user_email: email });
+    if (!screen.allowed) return NextResponse.json({ success: false, error: screen.reason, policy_block: screen.category }, { status: 422 });
 
     // Edited per-shot prompts arrive as {shot_id: prompt}; they win over the writer's
     if (body.prompts && typeof body.prompts === 'object') {
