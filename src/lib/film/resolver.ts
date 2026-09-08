@@ -27,20 +27,23 @@ export interface EffectiveStyle {
 
 export function resolveEffectiveStyle(film: Film, scene: FilmScene, shotOverride: Partial<FilmScene['style_override']> = {}): EffectiveStyle {
   const b = film.bible;
+  // film → act → scene → shot: each layer wins only on the keys it sets
+  const ao = (film.acts || []).find((a) => a.id === scene.act_id)?.style_override || {};
   const so = scene.style_override || {};
   const master = film.masters.find((m) => m.id === scene.location_master_id) || null;
-  const lighting = { ...b.lighting_rules, ...(so.lighting_rules || {}), ...(shotOverride.lighting_rules || {}) };
-  const lens = { ...b.lens, ...(so.lens || {}), ...(shotOverride.lens || {}) };
+  const lighting = { ...b.lighting_rules, ...(ao.lighting_rules || {}), ...(so.lighting_rules || {}), ...(shotOverride.lighting_rules || {}) };
+  const lens = { ...b.lens, ...(ao.lens || {}), ...(so.lens || {}), ...(shotOverride.lens || {}) };
   return {
     bible_version: b.version,
     palette: b.palette,
-    lut_url: shotOverride.lut_url ?? so.lut_url ?? b.lut_url,
-    lut_name: shotOverride.lut_name ?? so.lut_name ?? b.lut_name,
+    lut_url: shotOverride.lut_url ?? so.lut_url ?? ao.lut_url ?? b.lut_url,
+    lut_name: shotOverride.lut_name ?? so.lut_name ?? ao.lut_name ?? b.lut_name,
     lighting_rules: lighting,
     lens,
     aspect: b.aspect,
     fps: b.fps,
-    exposure_stops: shotOverride.exposure_stops ?? so.exposure_stops ?? 0,
+    // exposure stops add up across layers (an act at -1 and a scene at +0.5 → -0.5)
+    exposure_stops: (ao.exposure_stops || 0) + (so.exposure_stops || 0) + (shotOverride.exposure_stops || 0),
     delta_e_threshold: b.delta_e_threshold,
     location: master ? { master_id: master.id, version: master.version, name: master.name, plate_url: master.sheet_urls[0] } : null,
     anchor_frame_url: scene.anchor_frame_url,

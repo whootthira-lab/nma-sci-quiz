@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       const pin = (task: string, id: string) => { const m = getModel(id); return m ? { [task]: { model_id: m.id, endpoint: m.endpoint, pinned_at: now } } : {}; };
       const film: Film = {
         id: newId('film'), user_email: email, user_id: body.user_id || '', title: String(body.title || 'หนังใหม่').trim() || 'หนังใหม่',
-        bible, bible_history: [], masters: [], scenes: [],
+        bible, bible_history: [], masters: [], acts: [{ id: newId('act'), order: 1, name: 'องก์ 1', style_override: {} }], scenes: [],
         pinned_models: { ...pin('vfx.matte', MATTE_ID), ...pin('image.plate', BG_IMAGE_ID), ...pin('vfx.character', CHARACTER_ID) },
         status: 'draft', created_at: now, updated_at: now
       };
@@ -112,6 +112,52 @@ export async function POST(req: NextRequest) {
         m.version += 1;
         m.sheet_urls = sheet;
         m.locked = false;
+        break;
+      }
+      // ── F2 structure: acts, overrides, ordering ──
+      case 'add_act': {
+        film.acts.push({ id: newId('act'), order: film.acts.length + 1, name: String(body.name || `องก์ ${film.acts.length + 1}`).trim(), style_override: body.style_override || {} });
+        break;
+      }
+      case 'update_act': {
+        const a = film.acts.find((x) => x.id === body.act_id);
+        if (!a) return NextResponse.json({ success: false, error: 'ไม่พบองก์' }, { status: 404 });
+        if (typeof body.name === 'string' && body.name.trim()) a.name = body.name.trim();
+        if (body.style_override && typeof body.style_override === 'object') a.style_override = { ...a.style_override, ...body.style_override };
+        break;
+      }
+      case 'move': {
+        // { kind: 'act'|'scene'|'shot', id, dir: -1|1 } — swap with the neighbour in the same parent
+        const dir = Number(body.dir) === -1 ? -1 : 1;
+        const swap = <T extends { order: number }>(list: T[], id: string, key: (x: T) => string) => {
+          const sorted = [...list].sort((x, y) => x.order - y.order);
+          const i = sorted.findIndex((x) => key(x) === id);
+          const j = i + dir;
+          if (i < 0 || j < 0 || j >= sorted.length) return false;
+          const oi = sorted[i].order; sorted[i].order = sorted[j].order; sorted[j].order = oi;
+          return true;
+        };
+        if (body.kind === 'act') swap(film.acts, String(body.id), (x) => x.id);
+        else if (body.kind === 'scene') {
+          const sc = film.scenes.find((x) => x.id === body.id);
+          if (sc) swap(film.scenes.filter((x) => x.act_id === sc.act_id), sc.id, (x) => x.id);
+        } else if (body.kind === 'shot') {
+          const sc = film.scenes.find((x) => x.shots.some((s) => s.id === body.id));
+          if (sc) {
+            // shots are a chain: reordering rewires prev_shot_id along the new order
+            swap(sc.shots, String(body.id), (x) => x.id);
+            const sorted = [...sc.shots].sort((x, y) => x.order - y.order);
+            sorted.forEach((s, i) => { s.prev_shot_id = i > 0 ? sorted[i - 1].id : undefined; });
+          }
+        }
+        break;
+      }
+      case 'move_scene_to_act': {
+        const sc = film.scenes.find((x) => x.id === body.scene_id);
+        const a = film.acts.find((x) => x.id === body.act_id);
+        if (!sc || !a) return NextResponse.json({ success: false, error: 'ไม่พบฉากหรือองก์' }, { status: 404 });
+        sc.act_id = a.id;
+        sc.order = film.scenes.filter((x) => x.act_id === a.id).length;
         break;
       }
       default:

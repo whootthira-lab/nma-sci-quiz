@@ -27,7 +27,8 @@ export default function FilmStudio() {
   const [bibleDraft, setBibleDraft] = useState<StyleBible | null>(null);
   const [masterForm, setMasterForm] = useState<{ kind: MasterAsset['kind']; name: string; urls: string[]; consent_id: string }>({ kind: 'location', name: '', urls: [], consent_id: '' });
   const [consents, setConsents] = useState<ConsentRecord[]>([]);
-  const [sceneForm, setSceneForm] = useState<{ name: string; master: string; time: string; weather: string }>({ name: '', master: '', time: 'กลางวัน', weather: 'แจ่มใส' });
+  const [sceneForm, setSceneForm] = useState<{ name: string; master: string; time: string; weather: string; act: string }>({ name: '', master: '', time: 'กลางวัน', weather: 'แจ่มใส', act: '' });
+  const [showStyle, setShowStyle] = useState<string>(''); // shot id whose effective style is open
   const [shotFootage, setShotFootage] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const [gradeReport, setGradeReport] = useState<Record<string, any>>({});
@@ -230,16 +231,34 @@ export default function FilmStudio() {
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 bg-[#FAF8F5] border border-gray-100 p-4 rounded-2xl text-xs">
               <FilmIcon className="w-4 h-4 text-[#D4AF37]" />
+              <select value={sceneForm.act} onChange={(e) => setSceneForm({ ...sceneForm, act: e.target.value })} className="px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
+                <option value="">องก์แรก</option>{[...(film.acts || [])].sort((a, b) => a.order - b.order).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
               <input value={sceneForm.name} onChange={(e) => setSceneForm({ ...sceneForm, name: e.target.value })} placeholder="ชื่อฉาก" className="px-3 py-1.5 border border-gray-200 rounded-lg" />
               <select value={sceneForm.master} onChange={(e) => setSceneForm({ ...sceneForm, master: e.target.value })} className="px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
                 <option value="">สถานที่ (master ที่ล็อกแล้ว)…</option>{film.masters.filter((m) => m.kind === 'location' && m.locked).map((m) => <option key={m.id} value={m.id}>{m.name} v{m.version}</option>)}
               </select>
               <input value={sceneForm.time} onChange={(e) => setSceneForm({ ...sceneForm, time: e.target.value })} placeholder="ช่วงเวลา" className="w-24 px-2 py-1.5 border border-gray-200 rounded-lg" />
               <input value={sceneForm.weather} onChange={(e) => setSceneForm({ ...sceneForm, weather: e.target.value })} placeholder="สภาพอากาศ" className="w-24 px-2 py-1.5 border border-gray-200 rounded-lg" />
-              <button type="button" disabled={!!busy || !sceneForm.master} onClick={async () => { const j = await act('/api/film/scenes', { action: 'add_scene', name: sceneForm.name, location_master_id: sceneForm.master, time_of_day: sceneForm.time, weather: sceneForm.weather }, 'กำลังเพิ่มฉาก...'); if (j) setSceneForm({ ...sceneForm, name: '' }); }} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40 flex items-center gap-1"><Plus className="w-3 h-3" /> เพิ่มฉาก</button>
+              <button type="button" disabled={!!busy || !sceneForm.master} onClick={async () => { const j = await act('/api/film/scenes', { action: 'add_scene', name: sceneForm.name, location_master_id: sceneForm.master, time_of_day: sceneForm.time, weather: sceneForm.weather, act_id: sceneForm.act || undefined }, 'กำลังเพิ่มฉาก...'); if (j) setSceneForm({ ...sceneForm, name: '' }); }} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40 flex items-center gap-1"><Plus className="w-3 h-3" /> เพิ่มฉาก</button>
+              <button type="button" disabled={!!busy} onClick={() => { const name = prompt('ชื่อองก์ใหม่', `องก์ ${(film.acts?.length || 0) + 1}`); if (name) act('/api/film/films', { action: 'add_act', name }, 'กำลังเพิ่มองก์...'); }} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 flex items-center gap-1"><Plus className="w-3 h-3" /> เพิ่มองก์</button>
             </div>
 
-            {film.scenes.map((scene) => {
+            {/* Structure (F2): film → act → scene → shot; move buttons reorder, overrides per layer */}
+            {[...(film.acts || [])].sort((a, b) => a.order - b.order).map((actItem, ai, actsSorted) => (
+            <div key={actItem.id} className="rounded-2xl border border-[#D4AF37]/30 bg-[#FAF8F5] p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="px-2 py-0.5 rounded-lg bg-[#D4AF37] text-[#1A1A1A] font-bold">องก์ {actItem.order}</span>
+                <input defaultValue={actItem.name} onBlur={(e) => e.target.value !== actItem.name && act('/api/film/films', { action: 'update_act', act_id: actItem.id, name: e.target.value }, 'บันทึกชื่อองก์...')} className="px-2 py-1 border border-gray-200 rounded-lg bg-white font-semibold" />
+                <label className="flex items-center gap-1 text-gray-500">exposure องก์ <input type="number" step={0.25} min={-2} max={2} value={actItem.style_override?.exposure_stops || 0} onChange={(e) => act('/api/film/films', { action: 'update_act', act_id: actItem.id, style_override: { exposure_stops: Number(e.target.value) } }, 'บันทึก override องก์...')} className="w-14 px-1 py-0.5 border border-gray-200 rounded" /> stop</label>
+                <label className="flex items-center gap-1 text-gray-500">LUT องก์ <input type="file" accept=".cube" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const [url] = await uploadMany([f], 'films_lut'); act('/api/film/films', { action: 'update_act', act_id: actItem.id, style_override: { lut_url: url, lut_name: f.name } }, 'บันทึก LUT องก์...'); }} className="text-[10px] w-40" />{actItem.style_override?.lut_name && <span className="text-[#1A1A1A]">{actItem.style_override.lut_name}</span>}</label>
+                <span className="ml-auto flex gap-1">
+                  <button type="button" disabled={!!busy || ai === 0} onClick={() => act('/api/film/films', { action: 'move', kind: 'act', id: actItem.id, dir: -1 }, 'ย้าย...')} className="px-2 py-0.5 rounded border border-gray-300 bg-white disabled:opacity-30">↑</button>
+                  <button type="button" disabled={!!busy || ai === actsSorted.length - 1} onClick={() => act('/api/film/films', { action: 'move', kind: 'act', id: actItem.id, dir: 1 }, 'ย้าย...')} className="px-2 py-0.5 rounded border border-gray-300 bg-white disabled:opacity-30">↓</button>
+                </span>
+              </div>
+              {film.scenes.filter((s) => s.act_id === actItem.id).length === 0 && <p className="text-[11px] text-gray-400">ยังไม่มีฉากในองก์นี้</p>}
+            {film.scenes.filter((s) => s.act_id === actItem.id).sort((a, b) => a.order - b.order).map((scene, si, scenesSorted) => {
               const master = film.masters.find((m) => m.id === scene.location_master_id);
               const report = gradeReport[scene.id];
               return (
@@ -249,6 +268,13 @@ export default function FilmStudio() {
                     <span className="font-semibold text-[#1A1A1A]">{scene.name}</span>
                     <span className="text-gray-500">📍 {master?.name} v{master?.version} · {scene.time_of_day} · {scene.weather}</span>
                     {scene.anchor_frame_url ? <img src={scene.anchor_frame_url} alt="anchor" title="anchor frame" className="w-10 h-6 object-cover rounded border border-[#D4AF37]" /> : <span className="text-amber-700">ยังไม่มี anchor</span>}
+                    <span className="flex gap-1">
+                      <button type="button" disabled={!!busy || si === 0} onClick={() => act('/api/film/films', { action: 'move', kind: 'scene', id: scene.id, dir: -1 }, 'ย้าย...')} className="px-1.5 py-0.5 rounded border border-gray-300 bg-white disabled:opacity-30">↑</button>
+                      <button type="button" disabled={!!busy || si === scenesSorted.length - 1} onClick={() => act('/api/film/films', { action: 'move', kind: 'scene', id: scene.id, dir: 1 }, 'ย้าย...')} className="px-1.5 py-0.5 rounded border border-gray-300 bg-white disabled:opacity-30">↓</button>
+                      {(film.acts || []).length > 1 && (
+                        <select value={scene.act_id} onChange={(e) => act('/api/film/films', { action: 'move_scene_to_act', scene_id: scene.id, act_id: e.target.value }, 'ย้ายฉาก...')} className="px-1 py-0.5 border border-gray-200 rounded bg-white text-[10px]">{[...film.acts].sort((a, b) => a.order - b.order).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+                      )}
+                    </span>
                     <label className="ml-auto flex items-center gap-1 text-gray-500">exposure <input type="number" step={0.25} min={-2} max={2} value={scene.style_override?.exposure_stops || 0} onChange={(e) => act('/api/film/scenes', { action: 'override', scene_id: scene.id, style_override: { exposure_stops: Number(e.target.value) } }, 'บันทึก override...')} className="w-14 px-1 py-0.5 border border-gray-200 rounded" /> stop</label>
                     <button type="button" disabled={!!busy || !scene.anchor_frame_url || !scene.shots.some((s) => s.pre_grade_url)} onClick={() => gradeScene(scene)} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> grade ทั้งฉาก (LUT + anchor)</button>
                   </div>
@@ -258,13 +284,25 @@ export default function FilmStudio() {
                     </p>
                   )}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {scene.shots.map((sh) => (
-                      <div key={sh.id} className={`rounded-xl border p-2 space-y-1 ${sh.status === 'failed' ? 'border-red-300' : sh.passed === false ? 'border-amber-300' : 'border-gray-200'}`}>
-                        <div className="flex items-center gap-1.5"><span className="font-semibold">ช็อต {sh.order}</span><span className="text-gray-500">{({ processing: 'กำลังสร้าง', ready: 'พร้อม grade', graded: 'grade แล้ว', failed: 'ล้มเหลว', draft: 'ร่าง' } as any)[sh.status]}</span>{sh.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}{typeof sh.delta_e === 'number' && <span className={`ml-auto px-1.5 rounded-md ${sh.passed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>ΔE {sh.delta_e}</span>}</div>
+                    {[...scene.shots].sort((a, b) => a.order - b.order).map((sh, shi, shotsSorted) => (
+                      <div key={sh.id} className={`rounded-xl border p-2 space-y-1 ${sh.status === 'failed' ? 'border-red-300' : sh.status === 'approved' ? 'border-green-400' : sh.passed === false ? 'border-amber-300' : 'border-gray-200'}`}>
+                        <div className="flex items-center gap-1.5 flex-wrap"><span className="font-semibold">ช็อต {sh.order}</span><span className="text-gray-500">{({ processing: 'กำลังสร้าง', ready: 'พร้อม grade', graded: 'grade แล้ว', approved: 'อนุมัติแล้ว', failed: 'ล้มเหลว', draft: 'ร่าง' } as any)[sh.status]}</span>{sh.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}{sh.chain_frame_url && <span title="ต่อจากช็อตก่อนหน้า (เฟรมสุดท้ายเป็น reference)" className="text-[#D4AF37]">🔗</span>}{typeof sh.delta_e === 'number' && <span className={`ml-auto px-1.5 rounded-md ${sh.passed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>ΔE {sh.delta_e}</span>}
+                          <span className="flex gap-0.5">
+                            <button type="button" disabled={!!busy || shi === 0} onClick={() => act('/api/film/films', { action: 'move', kind: 'shot', id: sh.id, dir: -1 }, 'ย้าย...')} className="px-1 rounded border border-gray-300 bg-white disabled:opacity-30">↑</button>
+                            <button type="button" disabled={!!busy || shi === shotsSorted.length - 1} onClick={() => act('/api/film/films', { action: 'move', kind: 'shot', id: sh.id, dir: 1 }, 'ย้าย...')} className="px-1 rounded border border-gray-300 bg-white disabled:opacity-30">↓</button>
+                            <button type="button" onClick={() => setShowStyle(showStyle === sh.id ? '' : sh.id)} title="effective style ที่ resolve แล้ว" className="px-1 rounded border border-gray-300 bg-white">ℹ︎</button>
+                          </span>
+                        </div>
+                        {showStyle === sh.id && (
+                          <pre className="text-[9px] leading-tight bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify({ bible_v: sh.effective_style?.bible_version, lut: sh.effective_style?.lut_name || null, exposure: sh.effective_style?.exposure_stops, lighting: sh.effective_style?.lighting_rules, lens: sh.effective_style?.lens, location: sh.effective_style?.location?.name, master_v: sh.master_versions, chained: !!sh.chain_frame_url, graded_with: sh.effective_style?.graded_with }, null, 1)}</pre>
+                        )}
                         {(sh.post_grade_url || sh.pre_grade_url) ? <video src={sh.post_grade_url || sh.pre_grade_url} controls className="w-full rounded-lg bg-black" /> : <div className="aspect-video rounded-lg bg-gray-100" />}
                         <div className="flex flex-wrap gap-1.5">
                           {sh.pre_grade_url && <button type="button" disabled={!!busy} onClick={() => act('/api/film/scenes', { action: 'set_anchor', scene_id: scene.id, shot_id: sh.id, at_seconds: 0.5 }, 'กำลังบันทึก anchor frame...')} className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${scene.anchor_from_shot_id === sh.id ? 'bg-[#D4AF37]/20 border-[#D4AF37]' : 'bg-white border-gray-300'}`}><Anchor className="w-3 h-3" /> {scene.anchor_from_shot_id === sh.id ? 'anchor ของฉาก' : 'ใช้เป็น anchor'}</button>}
                           {sh.post_grade_url && sh.pre_grade_url && <a href={sh.pre_grade_url} target="_blank" rel="noreferrer" className="px-2 py-0.5 rounded-md border border-gray-300 bg-white">ดู pre-grade</a>}
+                          {(sh.status === 'ready' || sh.status === 'graded' || sh.status === 'approved') && (
+                            <button type="button" disabled={!!busy} onClick={() => act('/api/film/scenes', { action: 'approve_shot', scene_id: scene.id, shot_id: sh.id, value: sh.status !== 'approved' }, sh.status === 'approved' ? 'เปิดช็อตใหม่...' : 'กำลังอนุมัติ...')} className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${sh.status === 'approved' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]'}`}><CheckCircle2 className="w-3 h-3" /> {sh.status === 'approved' ? 'อนุมัติแล้ว (กดเพื่อเปิดใหม่)' : 'อนุมัติ → ปลดล็อกช็อตถัดไป'}</button>
+                          )}
                         </div>
                         {sh.error && <p className="text-red-600">{sh.error}</p>}
                       </div>
@@ -278,6 +316,8 @@ export default function FilmStudio() {
                 </div>
               );
             })}
+            </div>
+            ))}
           </section>
         </>
       )}

@@ -58,7 +58,9 @@ export async function extractFrame(videoUrl: string, atSeconds: number): Promise
     const v = path.join(dir, 'v.mp4'); const out = path.join(dir, 'f.jpg');
     await fetchToFile(videoUrl, v);
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(v).inputOptions([`-ss ${atSeconds.toFixed(2)}`]).outputOptions(['-frames:v 1', '-q:v 2']).on('end', () => resolve()).on('error', (e: any) => reject(e)).save(out);
+      // negative = from the end (last frame for shot chaining), same trick as /api/extract-frame
+      const seek = atSeconds < 0 ? `-sseof ${atSeconds.toFixed(2)}` : `-ss ${atSeconds.toFixed(2)}`;
+      ffmpeg(v).inputOptions([seek]).outputOptions(['-frames:v 1', '-q:v 2']).on('end', () => resolve()).on('error', (e: any) => reject(e)).save(out);
     });
     return fs.readFileSync(out);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

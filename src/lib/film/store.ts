@@ -15,10 +15,19 @@ export async function saveFilm(film: Film, supabase: SupabaseClient = serviceCli
   if (error) throw new Error(`บันทึกหนังไม่สำเร็จ: ${error.message}`);
 }
 
+/** F2 hierarchy on films written before it: one default act holding every scene. */
+export function ensureActs(film: Film): Film {
+  if (!Array.isArray(film.acts) || !film.acts.length) {
+    film.acts = [{ id: newId('act'), order: 1, name: 'องก์ 1', style_override: {} }];
+  }
+  for (const s of film.scenes) if (!s.act_id || !film.acts.some((a) => a.id === s.act_id)) s.act_id = film.acts[0].id;
+  return film;
+}
+
 export async function loadFilm(email: string, id: string, supabase: SupabaseClient = serviceClient()): Promise<Film | null> {
   const { data, error } = await supabase.storage.from(BUCKET).download(filmPath(email, id));
   if (error || !data) return null;
-  try { return JSON.parse(await data.text()) as Film; } catch { return null; }
+  try { return ensureActs(JSON.parse(await data.text()) as Film); } catch { return null; }
 }
 
 export async function listFilms(email: string, supabase: SupabaseClient = serviceClient()): Promise<{ id: string; title: string; status: string; scenes: number; shots: number; bible_version: number; updated_at: string }[]> {

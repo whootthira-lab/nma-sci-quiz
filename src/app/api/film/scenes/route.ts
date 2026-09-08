@@ -35,7 +35,9 @@ export async function POST(req: NextRequest) {
 
     if (body.action === 'add_scene') {
       const master = requireLockedMaster(film, String(body.location_master_id || ''), 'location');
-      film.scenes.push({ id: newId('scn'), order: film.scenes.length + 1, name: String(body.name || `ฉาก ${film.scenes.length + 1}`).trim(), location_master_id: master.id, time_of_day: String(body.time_of_day || ''), weather: String(body.weather || ''), style_override: body.style_override || {}, shots: [] });
+      const act = film.acts.find((a) => a.id === body.act_id) || [...film.acts].sort((a, b) => a.order - b.order)[0];
+      const inAct = film.scenes.filter((s) => s.act_id === act.id).length;
+      film.scenes.push({ id: newId('scn'), act_id: act.id, order: inAct + 1, name: String(body.name || `ฉาก ${film.scenes.length + 1}`).trim(), location_master_id: master.id, time_of_day: String(body.time_of_day || ''), weather: String(body.weather || ''), style_override: body.style_override || {}, shots: [] });
       await saveFilm(film, supabase);
       return NextResponse.json({ success: true, film });
     }
@@ -55,10 +57,26 @@ export async function POST(req: NextRequest) {
         const style = resolveEffectiveStyle(film, scene!);
         const footageUrl = String(body.footage_url || '');
         if (!footageUrl) return NextResponse.json({ success: false, error: 'ต้องมีฟุตเทจ' }, { status: 400 });
+        // Shot chaining (F2): within a scene shots run in order — the previous one must be
+        // approved, and its last frame (post-matte, pre-grade) rides along as a secondary
+        // reference so the look carries over. Scenes are independent and may run in parallel.
+        const prev = [...scene!.shots].sort((a, b) => a.order - b.order).slice(-1)[0];
+        let chainFrameUrl: string | undefined;
+        if (prev) {
+          if (prev.status !== 'approved') {
+            return NextResponse.json({ success: false, error: `ช็อต ${prev.order} ของฉากนี้ยังไม่ถูกอนุมัติ — อนุมัติก่อนจึงสร้างช็อตถัดไปได้ (ต่างฉากรันขนานได้)`, chain_blocked: true }, { status: 409 });
+          }
+          if (prev.pre_grade_url) {
+            try {
+              const frame = await extractFrame(prev.pre_grade_url, -0.3);
+              chainFrameUrl = await putFile(`films/${email}/${film.id}/${scene!.id}_${prev.id}_last.jpg`, frame, 'image/jpeg', supabase);
+            } catch (e) { console.warn('[Film chain] last frame unavailable:', (e as any)?.message || e); }
+          }
+        }
         // Generate through VFX Studio, constrained by the film: plate = locked master, neutral grade
         let project: VfxProject = {
           id: vfxId('vfx'), user_email: email, user_id: film.user_id || body.user_id || '', name: `${film.title} · ${scene!.name} · ช็อต ${scene!.shots.length + 1}`,
-          footage_url: footageUrl, footage: { seconds: 0, width: 0, height: 0, fps: 0 }, reference_urls: [master.sheet_urls[0]],
+          footage_url: footageUrl, footage: { seconds: 0, width: 0, height: 0, fps: 0 }, reference_urls: chainFrameUrl ? [master.sheet_urls[0], chainFrameUrl] : [master.sheet_urls[0]],
           instruction: `${master.name} — ${style.neutral_prompt_suffix}`, engine: 'matte', grade: 'none', shots: [], status: 'draft',
           estimated_credits: 0, charged_credits: 0, created_at: now, updated_at: now
         };
@@ -84,8 +102,9 @@ export async function POST(req: NextRequest) {
         for (const s of project.shots) await startShot(project, s, supabase);
         await persist(project, supabase);
         const shot: FilmShot = {
-          id: newId('fsh'), order: scene!.shots.length + 1, vfx_project_id: project.id, vfx_shot_id: project.shots[0]?.id || '',
-          master_versions: [{ master_id: master.id, version: master.version }], effective_style: style, status: 'processing', updated_at: now
+          id: newId('fsh'), order: scene!.shots.length + 1, prev_shot_id: prev?.id, chain_frame_url: chainFrameUrl,
+          vfx_project_id: project.id, vfx_shot_id: project.shots[0]?.id || '',
+          master_versions: [{ master_id: master.id, version: master.version }], effective_style: { ...style, chain_frame_url: chainFrameUrl }, status: 'processing', updated_at: now
         };
         master.used_by.push({ version: master.version, shot_id: shot.id });
         scene!.shots.push(shot);
@@ -102,6 +121,17 @@ export async function POST(req: NextRequest) {
             else if (vs.status === 'failed') { sh.status = 'failed'; sh.error = vs.error; sh.updated_at = now; }
           }
         }
+        break;
+      }
+      case 'approve_shot': {
+        // Review gate for chaining: a graded (or at least ready) shot can be approved; approving
+        // un-approves nothing else. `value: false` reopens it.
+        const sh = scene!.shots.find((x) => x.id === body.shot_id);
+        if (!sh) return NextResponse.json({ success: false, error: 'ไม่พบช็อต' }, { status: 404 });
+        if (body.value === false) { sh.status = sh.post_grade_url ? 'graded' : 'ready'; break; }
+        if (!['ready', 'graded'].includes(sh.status)) return NextResponse.json({ success: false, error: 'อนุมัติได้เฉพาะช็อตที่เสร็จแล้ว' }, { status: 400 });
+        sh.status = 'approved';
+        sh.updated_at = now;
         break;
       }
       case 'set_anchor': {
@@ -124,7 +154,7 @@ export async function POST(req: NextRequest) {
             sh.post_grade_url = await putFile(`films/${email}/${film.id}/${scene!.id}_${sh.id}_b${film.bible.version}_${Date.now()}.mp4`, g.video, 'video/mp4', supabase);
             sh.delta_e = g.deltaE;
             sh.passed = g.deltaE < style.delta_e_threshold;
-            sh.status = 'graded';
+            if (sh.status !== 'approved') sh.status = 'graded'; // a re-grade does not reopen an approved shot
             sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
             sh.updated_at = now;
             results.push({ shot_id: sh.id, delta_e: g.deltaE, passed: sh.passed, lut: g.lutApplied });

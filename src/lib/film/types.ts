@@ -45,16 +45,28 @@ export interface MasterAsset {
   created_at: string;
 }
 
+export interface FilmAct {
+  id: string;
+  order: number;
+  name: string;
+  /** act-level override (e.g. exposure -1 stop for a night act, another LUT) */
+  style_override: Partial<Pick<StyleBible, 'lut_url' | 'lut_name' | 'lighting_rules' | 'lens'>> & { exposure_stops?: number };
+}
+
 export interface FilmShot {
   id: string;
   order: number;
+  /** shot chaining (F2): the previous shot in the scene; its last frame rides along as a
+   *  secondary reference, and this shot may not run until that one is approved */
+  prev_shot_id?: string;
+  chain_frame_url?: string;
   /** the VFX Studio project/shot that generated it (matte engine, plate = location master) */
   vfx_project_id: string;
   vfx_shot_id: string;
   master_versions: { master_id: string; version: number }[];
   /** what the shot was generated with — audit snapshot from the resolver */
   effective_style: Record<string, any>;
-  status: 'draft' | 'processing' | 'ready' | 'graded' | 'failed';
+  status: 'draft' | 'processing' | 'ready' | 'graded' | 'approved' | 'failed';
   pre_grade_url?: string;
   post_grade_url?: string;
   /** measured after grade against the scene anchor */
@@ -66,6 +78,8 @@ export interface FilmShot {
 
 export interface FilmScene {
   id: string;
+  /** the act this scene belongs to (F2 hierarchy: film → act → scene → shot) */
+  act_id?: string;
   order: number;
   name: string;
   location_master_id: string;
@@ -86,6 +100,7 @@ export interface Film {
   bible: StyleBible;
   bible_history: { version: number; bible: StyleBible; at: string }[];
   masters: MasterAsset[];
+  acts: FilmAct[];
   scenes: FilmScene[];
   /** provider + model pinned per task at film creation (F1 records; F5 migrates) */
   pinned_models: Record<string, { model_id: string; endpoint: string; pinned_at: string }>;
