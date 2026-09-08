@@ -26,6 +26,7 @@ interface Character {
   avatar_side_url?: string;
   avatar_side_path?: string;
   lora_status?: string;
+  registry?: { status: string; source: string; consent_id?: string | null } | null;
   lora_job_id?: string;
   lora_model_url?: string;
   lora_trigger_word?: string;
@@ -940,6 +941,17 @@ export default function CharactersPage() {
                       <span className="text-[10px] bg-accent-primary/10 text-accent-primary border border-accent-primary/20 px-2 py-0.5 rounded-md font-mono mt-1 inline-block">
                         Code: {char.code}
                       </span>
+                      {char.registry && (
+                        <span className={`ml-1.5 text-[10px] px-2 py-0.5 rounded-md inline-flex items-center gap-1 border ${char.registry.status === 'active' ? 'bg-green-500/10 text-green-300 border-green-500/30' : char.registry.status === 'disabled' ? 'bg-red-500/10 text-red-300 border-red-500/30' : char.registry.status === 'under_review' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-white/5 text-text-muted border-white/10'}`} title={`ทะเบียน: ${char.registry.source} · ${char.registry.status}`}>
+                          🗂 {({ draft: 'ร่าง', under_review: 'รอตรวจ', active: 'ผ่านตรวจ', disabled: 'ระงับ' } as any)[char.registry.status]}
+                        </span>
+                      )}
+                      {char.is_owner && char.registry?.status === 'draft' && (
+                        <button type="button" onClick={async () => { const r = await fetch('/api/characters/registry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, character_id: char.id, action: 'submit' }) }).then((x) => x.json()); alert(r.success ? 'ส่งตรวจแล้ว' : r.error); fetchCharactersList(); }} className="ml-1.5 text-[10px] px-2 py-0.5 rounded-md bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 font-thai">ส่งตรวจ</button>
+                      )}
+                      {char.is_owner && !char.registry && (
+                        <button type="button" onClick={async () => { const r = await fetch('/api/characters/registry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, character_id: char.id, action: 'register' }) }).then((x) => x.json()); alert(r.success ? 'ขึ้นทะเบียนแล้ว' : r.error); fetchCharactersList(); }} className="ml-1.5 text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-text-muted border border-white/10 font-thai">ขึ้นทะเบียน</button>
+                      )}
                       {!char.is_owner && (
                         <span className="ml-1.5 text-[10px] bg-white/5 text-text-muted border border-white/10 px-2 py-0.5 rounded-md inline-block font-thai">
                           👥 แชร์มาให้

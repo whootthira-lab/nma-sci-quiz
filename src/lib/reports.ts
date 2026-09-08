@@ -75,9 +75,20 @@ export async function takedownGeneration(generationId: string, by: string, note:
 }
 
 export async function disableCharacter(characterId: string, by: string, note: string, sb: SupabaseClient = client()): Promise<void> {
-  const { error } = await sb.from('characters').update({ status: 'disabled' }).eq('id', characterId);
-  if (error) throw new Error(`ระงับตัวละครไม่สำเร็จ: ${error.message}`);
-  await audit({ kind: 'character_disabled', actor: by, target: characterId, detail: { note } });
+  // Disabling lives in the registry (the characters table has no status column); a
+  // character without a record yet is registered first so the decision has somewhere to land.
+  const { loadRecord, transition } = await import('@/lib/registry');
+  let rec = await loadRecord(characterId, sb);
+  if (!rec) {
+    const { data: ch } = await sb.from('characters').select('id, name, user_id, avatar_front_url, avatar_45_url, avatar_side_url').eq('id', characterId).maybeSingle();
+    if (!ch) throw new Error('ไม่พบตัวละคร');
+    const { data: prof } = await sb.from('profiles').select('email').eq('id', ch.user_id).maybeSingle();
+    const { registerCharacter } = await import('@/lib/registry');
+    rec = await registerCharacter({ character_id: ch.id, owner_email: prof?.email || 'unknown', name: ch.name, avatar_front_url: ch.avatar_front_url, avatar_45_url: ch.avatar_45_url, avatar_side_url: ch.avatar_side_url }, sb);
+  }
+  if (rec.review.status !== 'disabled') await transition(characterId, 'disabled', by, note, sb);
+  // the library already honours is_disabled/disabled_reason — keep both in step
+  await sb.from('characters').update({ is_disabled: true, disabled_reason: note || 'ระงับโดยผู้ตรวจ' }).eq('id', characterId);
 }
 
 export async function suspendUser(email: string, by: string, note: string, sb: SupabaseClient = client()): Promise<void> {

@@ -57,10 +57,14 @@ export async function GET(req: NextRequest) {
     });
 
     // Mark what the caller may change, so the UI never offers an action that would be refused
-    const characters = visible.map((c: any) => ({
+    // Registry state rides along so the library can show it and offer "ส่งตรวจ"
+    const { loadRecord } = await import('@/lib/registry');
+    const recs = await Promise.all(visible.map((c: any) => loadRecord(c.id, supabase).catch(() => null)));
+    const characters = visible.map((c: any, i: number) => ({
       ...c,
       is_owner: !!myId && c.user_id === myId,
-      shared_with: Array.isArray(c.shared_with) ? c.shared_with : []
+      shared_with: Array.isArray(c.shared_with) ? c.shared_with : [],
+      registry: recs[i] ? { status: recs[i]!.review.status, source: recs[i]!.source, consent_id: recs[i]!.consent_id || null } : null
     }));
 
     return NextResponse.json({ success: true, characters, is_admin: elevated });

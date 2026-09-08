@@ -360,6 +360,11 @@ export async function POST(req: NextRequest) {
 
     // Character library, speech speed and emotion extraction
     const characterId = formData.get('character_id') as string || '';
+    if (characterId) {
+      const { checkCharacterUsable } = await import('@/lib/registry');
+      const gate = await checkCharacterUsable(characterId, userEmail || 'anonymous');
+      if (!gate.ok) return NextResponse.json({ success: false, error: gate.reason, registry_status: gate.status }, { status: 403 });
+    }
     const characterName = formData.get('character_name') as string || '';
     const characterDescription = formData.get('character_description') as string || '';
     const characterNegativePrompt = formData.get('character_negative_prompt') as string || '';

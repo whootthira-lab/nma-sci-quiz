@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { registerCharacter } from '@/lib/registry';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,7 +67,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data });
+    // Registry record (Content Policy §3–4): provenance + review state. Never blocks creation.
+    let registry: any = null;
+    try {
+      registry = await registerCharacter({
+        character_id: data.id, owner_email: String(characterData.user_email).toLowerCase(), name: characterData.name,
+        avatar_front_url: characterData.avatar_front_url, avatar_45_url: characterData.avatar_45_url, avatar_side_url: characterData.avatar_side_url,
+        lora_status: characterData.lora_status, lora_model_url: characterData.lora_model_url, lora_trigger_word: characterData.lora_trigger_word, lora_dataset_url: characterData.lora_dataset_url,
+        consent_id: characterData.consent_id || null, source_hint: characterData.source_hint
+      }, supabase);
+    } catch (regErr: any) {
+      console.warn('[Create Character API] registry record failed:', regErr?.message || regErr);
+    }
+
+    return NextResponse.json({ success: true, data, registry: registry ? { status: registry.review.status, source: registry.source } : null });
   } catch (error: any) {
     console.error('[Create Character API Error]', error);
     return NextResponse.json(

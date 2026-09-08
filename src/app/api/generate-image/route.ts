@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { guard } from '@/lib/auth-server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
 import { moderateText } from '@/lib/moderation';
+import { checkCharacterUsable } from '@/lib/registry';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmitCompat } from '@/lib/providers/fal';
 
@@ -366,6 +367,12 @@ export async function POST(req: NextRequest) {
     let characterDescription = '';
     let characterEmotion = '';
 
+    if (characterId) {
+      // Registry gate (Content Policy §3): a disabled character never drives a job; a
+      // not-yet-reviewed one is refused only when REGISTRY_ENFORCE=1
+      const gate = await checkCharacterUsable(characterId, userEmail || 'anonymous', supabase);
+      if (!gate.ok) return NextResponse.json({ success: false, error: gate.reason, registry_status: gate.status }, { status: 403 });
+    }
     if (characterId) {
       try {
         const { data: charData } = await supabase

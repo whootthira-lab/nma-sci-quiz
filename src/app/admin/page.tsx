@@ -31,6 +31,13 @@ export default function AdminPage() {
   const [mode1Enabled, setMode1Enabled] = useState(true);
   const [mode2Enabled, setMode2Enabled] = useState(true);
   const [safetyFilterDisabled, setSafetyFilterDisabled] = useState(false);
+  // Character registry queue
+  const [registry, setRegistry] = useState<any[]>([]);
+  const [regStatus, setRegStatus] = useState<'under_review' | 'draft' | 'active' | 'disabled'>('under_review');
+  const [regBusy, setRegBusy] = useState(false);
+  const loadRegistry = async (status = regStatus) => { const j = await fetch(`/api/admin/registry?email=${encodeURIComponent(user?.email || '')}&status=${status}`).then((r) => r.json()).catch(() => null); if (j?.success) setRegistry(j.records); };
+  const regAct = async (id: string, to: string) => { const note = prompt('เหตุผล (บันทึกใน audit)', '') ?? ''; setRegBusy(true); try { const j = await fetch('/api/admin/registry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_email: user?.email, action: 'transition', character_id: id, to, note }) }).then((r) => r.json()); if (!j.success) alert(j.error); await loadRegistry(); } finally { setRegBusy(false); } };
+  useEffect(() => { if (user?.email) loadRegistry(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.email]);
   // Moderation queue + audit viewer
   const [reports, setReports] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
@@ -696,6 +703,39 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Character registry review queue (Content Policy §3–4) */}
+        <div className="glow-card p-6 mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-lg font-display font-semibold text-text-primary font-thai">ทะเบียนตัวละคร — คิวตรวจ</h2>
+            <div className="flex items-center gap-2 text-xs font-thai">
+              {(['under_review', 'draft', 'active', 'disabled'] as const).map((s) => <button key={s} type="button" onClick={() => { setRegStatus(s); loadRegistry(s); }} className={`px-3 py-1.5 rounded-lg border ${regStatus === s ? 'bg-[#D4AF37] text-black border-[#D4AF37]' : 'bg-[#1C1C1E] border-white/10 text-white'}`}>{({ under_review: 'รอตรวจ', draft: 'ร่าง', active: 'ผ่านตรวจ', disabled: 'ระงับ' } as any)[s]}</button>)}
+            </div>
+          </div>
+          <p className="text-xs text-text-muted font-thai mb-3">แหล่งที่มา: generated = สร้างในระบบ · uploaded = ภาพคนจริง (ต้องมี consent ก่อนอนุมัติ) · trained = LoRA · ตัวละครที่ "ระงับ" ใช้สร้างงานไม่ได้ทันที · ตั้ง REGISTRY_ENFORCE=1 เพื่อให้เฉพาะ "ผ่านตรวจ" ใช้ได้</p>
+          {registry.length === 0 ? <p className="text-xs text-text-muted font-thai">ไม่มีรายการในสถานะนี้</p> : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {registry.map((r) => (
+                <div key={r.character_id} className="rounded-xl border border-white/10 bg-surface-2/30 p-3 text-xs font-thai space-y-2">
+                  <div className="flex items-center gap-2">
+                    {r.assets?.[0]?.url && <img src={r.assets[0].url} alt="" className="w-12 h-12 rounded-lg object-cover" />}
+                    <div className="flex-1">
+                      <p className="text-text-primary font-semibold">{r.name} <span className="text-text-muted font-normal">· {r.source} · {r.owner_email}</span></p>
+                      <p className="text-text-muted">{r.assets?.length || 0} ภาพ{r.assets?.[0]?.sha256 ? ` · sha256 ${r.assets[0].sha256.slice(0, 12)}…` : ''}{r.consent_id ? ` · consent ${r.consent_id}` : r.source === 'uploaded' ? ' · ไม่มี consent' : ''}{r.lora?.status ? ` · LoRA ${r.lora.status}` : ''}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {r.review.status !== 'active' && <button type="button" disabled={regBusy} onClick={() => regAct(r.character_id, 'active')} className="px-3 py-1 rounded-lg border border-green-500/40 text-green-300 disabled:opacity-40">อนุมัติ (active)</button>}
+                    {r.review.status === 'under_review' && <button type="button" disabled={regBusy} onClick={() => regAct(r.character_id, 'draft')} className="px-3 py-1 rounded-lg border border-white/10 text-white disabled:opacity-40">ส่งกลับแก้</button>}
+                    {r.review.status !== 'disabled' && <button type="button" disabled={regBusy} onClick={() => regAct(r.character_id, 'disabled')} className="px-3 py-1 rounded-lg border border-accent-danger/40 text-accent-danger disabled:opacity-40">ระงับ</button>}
+                    {r.review.status === 'disabled' && <button type="button" disabled={regBusy} onClick={() => regAct(r.character_id, 'under_review')} className="px-3 py-1 rounded-lg border border-white/10 text-white disabled:opacity-40">เปิดตรวจใหม่</button>}
+                  </div>
+                  {r.review.history?.[0] && <p className="text-text-muted">ล่าสุด: {r.review.history[0].from} → {r.review.history[0].to} โดย {r.review.history[0].by}{r.review.history[0].note ? ` — ${r.review.history[0].note}` : ''}</p>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Moderation queue + audit (Content Policy §5–6) */}
