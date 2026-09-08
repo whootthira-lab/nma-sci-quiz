@@ -149,7 +149,9 @@ export async function ensurePrivateBucket(supabase = serviceClient()): Promise<v
   if (bucketReady) return;
   const { data } = await supabase.storage.getBucket(PRIVATE_BUCKET);
   if (!data) {
-    const { error } = await supabase.storage.createBucket(PRIVATE_BUCKET, { public: false, fileSizeLimit: 524288000 });
+    // No per-bucket size limit: the project's global upload limit applies (a bucket limit above
+    // it is refused — "The object exceeded the maximum allowed size" on the first deploy).
+    const { error } = await supabase.storage.createBucket(PRIVATE_BUCKET, { public: false });
     if (error && !/already exists/i.test(error.message)) throw new Error(`สร้างคลังส่วนตัวไม่สำเร็จ: ${error.message}`);
   }
   bucketReady = true;
