@@ -132,6 +132,13 @@ export async function transition(characterId: string, to: ReviewStatus, by: stri
   rec.review.history.unshift({ at: new Date().toISOString(), by, from, to, note });
   rec.review.status = to;
   await saveRecord(rec, sb);
+  // The library's own flag follows the registry, so a disabled character disappears from
+  // pickers immediately and comes back when a reviewer reopens it.
+  if (to === 'disabled') {
+    await sb.from('characters').update({ is_disabled: true, disabled_reason: note || 'ระงับโดยผู้ตรวจ', disabled_by: by, disabled_at: new Date().toISOString() }).eq('id', characterId);
+  } else if (from === 'disabled') {
+    await sb.from('characters').update({ is_disabled: false, disabled_reason: null, disabled_by: null, disabled_at: null }).eq('id', characterId);
+  }
   await audit({ kind: to === 'disabled' ? 'character_disabled' : 'registry_transition', actor: by, target: characterId, detail: { from, to, note } });
   return rec;
 }
