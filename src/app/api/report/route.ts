@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createReport, ReportReason } from '@/lib/reports';
 
 export const dynamic = 'force-dynamic';
@@ -8,6 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const reporter = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, reporter); if (g instanceof NextResponse) return g; }
     if (!reporter) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
     const reasons: ReportReason[] = ['my_likeness', 'minor', 'sexual_violence', 'impersonation', 'copyright', 'other'];
     const reason: ReportReason = reasons.includes(body.reason) ? body.reason : 'other';

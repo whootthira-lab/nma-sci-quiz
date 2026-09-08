@@ -102,6 +102,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // 0. Every same-origin /api/ call carries the session token, so the server can verify
+    //    who is asking instead of trusting the user_email in the body (src/lib/auth-server.ts).
+    //    Installed once per page; reads the current session at call time so refreshed tokens win.
+    const w = window as any;
+    if (!w.__kruthAuthFetch) {
+      const original = window.fetch.bind(window);
+      w.__kruthAuthFetch = true;
+      window.fetch = async (input: any, init?: RequestInit) => {
+        try {
+          const url = typeof input === 'string' ? input : input?.url || '';
+          const sameOriginApi = url.startsWith('/api/') || url.startsWith(`${window.location.origin}/api/`);
+          if (sameOriginApi) {
+            const { data } = await supabase.auth.getSession();
+            const token = data?.session?.access_token;
+            if (token) {
+              const headers = new Headers(init?.headers || (typeof input !== 'string' ? input?.headers : undefined) || {});
+              if (!headers.has('authorization')) headers.set('Authorization', `Bearer ${token}`);
+              return original(input, { ...(init || {}), headers });
+            }
+          }
+        } catch { /* fall through to a plain fetch */ }
+        return original(input, init);
+      };
+    }
+
     // 1. Check current session
     supabase.auth.getSession().then((res: any) => {
       const session = res?.data?.session;

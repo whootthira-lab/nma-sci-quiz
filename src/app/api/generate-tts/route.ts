@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 
 export const maxDuration = 300; 
 export const dynamic = 'force-dynamic';
@@ -228,6 +229,7 @@ export async function POST(req: NextRequest) {
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
     const userEmail = formData.get('user_email') as string;
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const ttsProvider = formData.get('tts_provider') as string || 'google';
 
     if (!imageFile || !scriptText || !userEmail) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { loadTemplates, saveTemplate, deleteTemplate, SceneTemplate } from '@/lib/vfx/templates';
 import { serviceClient, loadProject, newId } from '@/lib/vfx/store';
 
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
     const supabase = serviceClient();
     let t: SceneTemplate;

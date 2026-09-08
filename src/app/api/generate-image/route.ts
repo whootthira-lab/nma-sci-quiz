@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
 import { moderateText } from '@/lib/moderation';
 import { createClient } from '@supabase/supabase-js';
@@ -185,6 +186,7 @@ export async function POST(req: NextRequest) {
     const cameraZoom = formData.get('camera_zoom') as string || 'default';
     const characterId = formData.get('character_id') as string || '';
     const userEmail = formData.get('user_email') as string;
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const userId = formData.get('user_id') as string;
     const strength = parseFloat(formData.get('strength') as string || '0.65');
     const aspectRatio = formData.get('aspect_ratio') as string || '1:1';

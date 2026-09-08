@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, listProjects, loadProject, saveProject, deleteProject, newId, signDeep } from '@/lib/vfx/store';
 import { analyzeFootage } from '@/lib/vfx/pipeline';
@@ -13,6 +14,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const email = (req.nextUrl.searchParams.get('email') || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const id = req.nextUrl.searchParams.get('id') || '';
     if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
     const supabase = serviceClient();
@@ -34,6 +36,7 @@ export async function POST(req: NextRequest) {
     await primeRates(); // billed prices before anything is quoted or charged
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const userId = body.user_id || '';
     const footageUrl = body.footage_url || '';
     const references: string[] = Array.isArray(body.reference_urls) ? body.reference_urls.filter(Boolean).slice(0, LIMITS.maxReferences) : [];

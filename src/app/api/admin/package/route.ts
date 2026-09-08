@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { PACKAGES, grantPackage, loadAccount, saveAccount } from '@/lib/credits/packages';
 
@@ -15,6 +16,7 @@ async function isAdmin(email: string) {
 /** GET ?email=<admin>[&for=<user>] → packages, and that user's account tier/history */
 export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').toLowerCase();
+  { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
   const target = (req.nextUrl.searchParams.get('for') || '').toLowerCase();
   if (!(await isAdmin(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ดูแลระบบ' }, { status: 403 });
   const account = target ? await loadAccount(target) : null;
@@ -26,6 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!(await isAdmin(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ดูแลระบบ' }, { status: 403 });
     const target = String(body.target_email || '').toLowerCase();
     if (!target) return NextResponse.json({ success: false, error: 'ระบุอีเมลผู้ใช้' }, { status: 400 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createConsent, listConsents, revokeConsent, CONSENT_STATEMENT_TH, CONSENT_STATEMENT_VERSION } from '@/lib/vfx/consent';
 import { signDeep } from '@/lib/vfx/store';
 
@@ -8,6 +9,7 @@ export const dynamic = 'force-dynamic';
 /** GET ?email= → the caller's consent records + the statement text to show. */
 export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').trim().toLowerCase();
+  { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
   if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
   try {
     return NextResponse.json({ success: true, consents: await signDeep(await listConsents(email)), statement: CONSENT_STATEMENT_TH, statement_version: CONSENT_STATEMENT_VERSION });
@@ -21,6 +23,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
     if (body.action === 'revoke') {
       await revokeConsent(email, String(body.id || ''));

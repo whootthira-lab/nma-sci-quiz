@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { videoUrls, user_email, user_id, title, aspectRatio, baseImageUrl, faceTags, normalize, trimSilence, colorMatch } = body;
+    { const g = await guard(req, user_email); if (g instanceof NextResponse) return g; }
     let videoClips = body.videoClips;
 
     // Backward compatibility with Phase 1 payload

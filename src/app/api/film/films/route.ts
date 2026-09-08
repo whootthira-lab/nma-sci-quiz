@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { serviceClient, newId, saveFilm, loadFilm, listFilms, deleteFilm } from '@/lib/film/store';
 import { signDeep } from '@/lib/vfx/store';
 import { DEFAULT_BIBLE, Film, MasterAsset, StyleBible } from '@/lib/film/types';
@@ -14,6 +15,7 @@ const own = (email: string) => (f: Film) => f.user_email === email;
 /** GET ?email=…[&id=…] */
 export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').trim().toLowerCase();
+  { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
   const id = req.nextUrl.searchParams.get('id') || '';
   if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
   try {
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
     const supabase = serviceClient();
     const now = new Date().toISOString();

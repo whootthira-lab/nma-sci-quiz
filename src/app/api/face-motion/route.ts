@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 
 async function uploadToSupabaseStorage(
@@ -221,6 +222,7 @@ export async function POST(req: NextRequest) {
     const drivingVideoFile = formData.get('driving_video') as File;
     const modelId = formData.get('model_id') as string || 'liveportrait';
     const userEmail = formData.get('user_email') as string;
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const userId = formData.get('user_id') as string;
     const storageProvider = formData.get('storage_provider') as string || 'supabase';
 

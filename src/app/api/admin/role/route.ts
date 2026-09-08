@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { audit } from '@/lib/audit';
 
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { user_email, target_email, make_admin } = body;
+    { const g = await guard(req, user_email); if (g instanceof NextResponse) return g; }
     if (!user_email || !target_email) {
       return NextResponse.json({ success: false, error: 'ข้อมูลไม่ครบถ้วน' }, { status: 400 });
     }

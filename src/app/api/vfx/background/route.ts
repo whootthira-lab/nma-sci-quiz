@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { falSubmit, falStatus, falResult, FalSubmitError, normalizeOutput } from '@/lib/providers/fal';
 import { assertRunnable, estimateCost } from '@/lib/providers/registry';
@@ -71,6 +72,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const userEmail: string = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const userId: string = body.user_id || '';
     const footageUrl: string = body.footage_url || '';
     const footageSeconds = Number(body.footage_seconds) || 0;

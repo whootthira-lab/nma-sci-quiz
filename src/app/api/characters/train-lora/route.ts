@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
 import { createClient } from '@supabase/supabase-js';
 import JSZip from 'jszip';
@@ -107,6 +108,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const characterId = formData.get('character_id') as string;
     const userEmail = formData.get('user_email') as string;
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const triggerWordRaw = formData.get('trigger_word') as string || '';
     const steps = parseInt(formData.get('steps') as string || '1000', 10);
     const imageFiles = formData.getAll('images') as File[];

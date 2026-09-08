@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { listReports, decideReport, takedownGeneration, disableCharacter, Decision } from '@/lib/reports';
 import { auditDay } from '@/lib/audit';
@@ -17,6 +18,7 @@ async function isStaff(email: string): Promise<boolean> {
 /** GET ?email=<staff>&status=open|closed  |  ?email=&audit=YYYY-MM-DD */
 export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').toLowerCase();
+  { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
   if (!(await isStaff(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ตรวจ/ผู้ดูแล' }, { status: 403 });
   const day = req.nextUrl.searchParams.get('audit');
   if (day) return NextResponse.json({ success: true, events: await auditDay(day) });
@@ -29,6 +31,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!(await isStaff(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ตรวจ/ผู้ดูแล' }, { status: 403 });
     const note = String(body.note || '').slice(0, 500);
     switch (body.action) {

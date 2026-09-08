@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { primeRates } from '@/lib/providers/rates';
 import { serviceClient, loadProject } from '@/lib/vfx/store';
 import { startShot, projectCredits, persist } from '@/lib/vfx/pipeline';
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
     await primeRates(); // billed prices before anything is quoted or charged
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const supabase = serviceClient();
     const project = await loadProject(email, body.project_id || '', supabase);
     if (!project) return NextResponse.json({ success: false, error: 'ไม่พบโปรเจกต์' }, { status: 404 });

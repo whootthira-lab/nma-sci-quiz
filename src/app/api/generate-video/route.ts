@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { geminiUrl, geminiText } from '@/lib/gemini';
 import { moderateText } from '@/lib/moderation';
 import { createClient } from '@supabase/supabase-js';
@@ -335,6 +336,7 @@ export async function POST(req: NextRequest) {
     const voiceId = formData.get('voice_id') as string;
     const aspectRatio = (formData.get('aspect_ratio') as string) || '16:9';
     const userEmail = formData.get('user_email') as string;
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const userId = formData.get('user_id') as string;
     const modelType = formData.get('model_type') as string || 'fast';
     const skipEnhance = formData.get('skip_enhance') === 'true'; // opt out of the LLM prompt enhancer to save tokens

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const userEmail: string = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const userId: string = body.user_id || '';
     const aspectRatio: string = ['16:9', '9:16', '1:1'].includes(body.aspect_ratio) ? body.aspect_ratio : '16:9';
     const characters: BeatCharacter[] = Array.isArray(body.characters) ? body.characters : [];

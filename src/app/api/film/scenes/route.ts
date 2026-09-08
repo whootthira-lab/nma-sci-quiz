@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { serviceClient, newId, saveFilm, loadFilm } from '@/lib/film/store';
 import { loadProject, saveProject, newId as vfxId, putFile } from '@/lib/vfx/store';
 import { analyzeFootage, planProject, startShot, persist, projectCredits } from '@/lib/vfx/pipeline';
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
     await primeRates();
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const supabase = serviceClient();
     const film = await loadFilm(email, body.film_id || '', supabase);
     if (!film) return NextResponse.json({ success: false, error: 'ไม่พบหนัง' }, { status: 404 });

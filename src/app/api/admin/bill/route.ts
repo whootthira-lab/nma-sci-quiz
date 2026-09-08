@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { parseUsageCsv, buildRateTable, saveRateTable, loadRateTable, primeRates, creditsFromUsd } from '@/lib/providers/rates';
 import { MODELS } from '@/lib/providers/registry';
@@ -17,6 +18,7 @@ async function isAdmin(email: string) {
 /** GET ?email= → the billed rate table and how it maps onto the registry. */
 export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').toLowerCase();
+  { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
   if (!(await isAdmin(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ดูแลระบบ' }, { status: 403 });
   const table = await loadRateTable(true);
   await primeRates();
@@ -32,6 +34,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     if (!(await isAdmin(email))) return NextResponse.json({ success: false, error: 'เฉพาะผู้ดูแลระบบ' }, { status: 403 });
     const csv = String(body.csv || '');
     if (csv.length < 20) return NextResponse.json({ success: false, error: 'ไม่พบข้อมูล CSV' }, { status: 400 });

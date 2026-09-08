@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { loadFxLibrary, saveFxLibrary, fxClipPath, fxClipUrl, FxElement } from '@/lib/vfx/fx';
 import { serviceClient } from '@/lib/vfx/store';
 import { probeVideo, fetchToFile } from '@/lib/vfx/composite';
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const supabase = serviceClient();
     const { data: profile } = await supabase.from('profiles').select('role').eq('email', email).maybeSingle();
     const isAdmin = email === 'whootthira@gmail.com' || profile?.role === 'admin';

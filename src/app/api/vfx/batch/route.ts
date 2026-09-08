@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { serviceClient, saveProject, newId } from '@/lib/vfx/store';
 import { analyzeFootage, planProject, projectCredits } from '@/lib/vfx/pipeline';
 import { loadTemplates } from '@/lib/vfx/templates';
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const userId = body.user_id || '';
     const footageUrls: string[] = Array.isArray(body.footage_urls) ? body.footage_urls.filter(Boolean).slice(0, 10) : [];
     if (!email || !userId || !footageUrls.length) return NextResponse.json({ success: false, error: 'ต้องมีอีเมล ผู้ใช้ และฟุตเทจอย่างน้อย 1 ไฟล์' }, { status: 400 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { guard } from '@/lib/auth-server';
 import { serviceClient, loadProject, saveProject, resolveUrl } from '@/lib/vfx/store';
 
 export const maxDuration = 300;
@@ -13,6 +14,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const email = (body.user_email || '').trim().toLowerCase();
+    { const g = await guard(req, email); if (g instanceof NextResponse) return g; }
     const supabase = serviceClient();
     const project = await loadProject(email, body.project_id || '', supabase);
     if (!project) return NextResponse.json({ success: false, error: 'ไม่พบโปรเจกต์' }, { status: 404 });
@@ -31,7 +33,8 @@ export async function POST(req: NextRequest) {
       const aspect = r > 1.2 ? '16:9' : r < 0.85 ? '9:16' : '1:1';
       const res = await fetch(`${req.nextUrl.origin}/api/merge-dialogue`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // forward the caller's session so the merge route can verify it too
+        headers: { 'Content-Type': 'application/json', Authorization: req.headers.get('authorization') || '' },
         body: JSON.stringify({
           title: `${project.name} (VFX export)`,
           videoClips: await Promise.all(approved.map(async (s) => ({ videoUrl: await resolveUrl(s.output_url!, supabase), cropX: null, cropY: null, cropW: null, cropH: null }))),
