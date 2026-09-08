@@ -149,6 +149,7 @@ export async function getUserGenerations(email: string) {
     image_url: row.source_image_url,
     video_url: row.video_url,
     storage_path: row.metadata?.storage_path || '',
+    hidden: row.metadata?.hidden === true, // intermediate artifacts (VFX layer jobs) stay out of the gallery
     status: row.status,
     created_at: { toDate: () => new Date(row.created_at) }, // Mock Firebase Timestamp toDate() function
     expires_at: { toDate: () => new Date(new Date(row.created_at).getTime() + 24 * 60 * 60 * 1000) },
@@ -230,7 +231,8 @@ async function readJson(res: Response, fallback: string) {
 
 export async function uploadToStorage(
   file: File | Blob,
-  path: string
+  path: string,
+  opts: { private?: boolean } = {}
 ): Promise<string> {
   const asFile = file instanceof File ? file : new File([file], 'upload.png', { type: file.type });
 
@@ -238,21 +240,25 @@ export async function uploadToStorage(
   // the server issues a one-shot permit for this exact filename and the photo then goes
   // straight to storage. Sending the bytes through the server instead would cap them at
   // ~4.5 MB, which an ordinary phone photo passes without trouble.
+  // `private: true` (VFX/Film files) uses the private bucket; the returned string is a
+  // private:// ref that the server turns into signed URLs on demand.
   try {
     const signRes = await fetch('/api/characters/upload', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path })
+      body: JSON.stringify({ path, bucket: opts.private ? 'private' : undefined })
     });
     const signed = await readJson(signRes, 'ขอสิทธิ์อัปโหลดไม่สำเร็จ');
     if (signed.success && signed.token) {
       const { error } = await supabase.storage
-        .from('kruth-ai-assets')
+        .from(signed.bucket || 'kruth-ai-assets')
         .uploadToSignedUrl(path, signed.token, asFile, { contentType: asFile.type || 'image/png' });
       if (error) throw error;
       return signed.url as string;
     }
+    if (opts.private) throw new Error(signed.error || 'อัปโหลดเข้าคลังส่วนตัวไม่สำเร็จ');
   } catch (err) {
+    if (opts.private) throw err; // never fall back to a public relay for private files
     console.warn('[uploadToStorage] direct upload unavailable, relaying through server:', err);
   }
 

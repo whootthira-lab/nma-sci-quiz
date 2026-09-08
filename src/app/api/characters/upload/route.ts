@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { ensurePrivateBucket, PRIVATE_BUCKET, privateRef } from '@/lib/vfx/store';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -24,19 +25,24 @@ function serviceClient() {
  */
 export async function PUT(req: NextRequest) {
   try {
-    const { path } = await req.json();
+    const { path, bucket } = await req.json();
     if (!path) {
       return NextResponse.json({ success: false, error: 'ต้องระบุตำแหน่งจัดเก็บ' }, { status: 400 });
     }
 
     const supabase = serviceClient();
+    // `bucket: 'private'` → the private bucket (VFX/Film files); the reply is a private://
+    // ref instead of a public URL, and only signed URLs will ever point at the file.
+    const usePrivate = bucket === 'private';
+    if (usePrivate) await ensurePrivateBucket(supabase);
+    const bucketName = usePrivate ? PRIVATE_BUCKET : 'kruth-ai-assets';
     const { data, error } = await supabase.storage
-      .from('kruth-ai-assets')
+      .from(bucketName)
       .createSignedUploadUrl(path, { upsert: true });
     if (error) throw error;
 
-    const { data: { publicUrl } } = supabase.storage.from('kruth-ai-assets').getPublicUrl(path);
-    return NextResponse.json({ success: true, token: data.token, path: data.path, url: publicUrl });
+    const url = usePrivate ? privateRef(path) : supabase.storage.from('kruth-ai-assets').getPublicUrl(path).data.publicUrl;
+    return NextResponse.json({ success: true, token: data.token, path: data.path, url, bucket: bucketName });
   } catch (error: any) {
     console.error('[Character Upload Sign]', error);
     return NextResponse.json(

@@ -55,7 +55,7 @@ export default function FilmStudio() {
   };
   const act = async (path: string, body: any, label: string) => {
     setBusy(label); setError('');
-    try { const j = await api(path, { film_id: film?.id, ...body }); setFilm(j.film); setBibleDraft(j.film.bible); return j; }
+    try { const j = await api(path, { film_id: film?.id, ...body }); const fresh = await fetch(`/api/film/films?email=${encodeURIComponent(email)}&id=${film?.id}`).then((r) => r.json()); const doc = fresh.success ? fresh.film : j.film; setFilm(doc); setBibleDraft(doc.bible); return { ...j, film: doc }; }
     catch (err: any) { setError(err.message); return null; }
     finally { setBusy(''); }
   };
@@ -71,7 +71,7 @@ export default function FilmStudio() {
         const p = await fetch(`/api/vfx/projects?email=${encodeURIComponent(email)}&id=${sh.vfx_project_id}`).then((r) => r.json()).catch(() => null);
         for (const s of p?.project?.shots || []) for (const l of s.layers) if (l.status === 'processing' && l.job_request_id) fetch('/api/video-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: l.job_request_id, videoPath: `vfx_shots/${email}/${sh.vfx_project_id}/${s.id}_${l.type}.mp4`, modelType: 'vfx', storageProvider: 'supabase' }) }).catch(() => {});
       }
-      try { const j = await api('/api/film/scenes', { film_id: film.id, action: 'sync' }); setFilm(j.film); } catch { /* next tick */ }
+      try { await api('/api/film/scenes', { film_id: film.id, action: 'sync' }); const fresh = await fetch(`/api/film/films?email=${encodeURIComponent(email)}&id=${film.id}`).then((r) => r.json()); if (fresh.success) setFilm(fresh.film); } catch { /* next tick */ }
     }, 12000);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
   }, [film, email]);
@@ -79,7 +79,7 @@ export default function FilmStudio() {
   const safe = (n: string) => n.replace(/[^\w.-]+/g, '_').slice(-60);
   const uploadMany = async (files: File[], prefix: string) => {
     setUploading(true);
-    try { const out: string[] = []; for (const f of files) out.push(await uploadToStorage(f, `${prefix}/${email}/${Date.now()}_${safe(f.name)}`)); return out; }
+    try { const out: string[] = []; for (const f of files) out.push(await uploadToStorage(f, `${prefix}/${email}/${Date.now()}_${safe(f.name)}`, { private: true })); return out; }
     finally { setUploading(false); }
   };
 
@@ -95,7 +95,7 @@ export default function FilmStudio() {
         if (!confirm(`ช็อตนี้ ${e.payload.credits} เครดิต (ตัดคน + วางบนฉาก master "${film.masters.find((m) => m.id === scene.location_master_id)?.name}") ยืนยัน?`)) return;
         j = await api('/api/film/scenes', { film_id: film.id, action: 'add_shot', scene_id: scene.id, footage_url: url, confirm_credits: e.payload.credits });
       }
-      setFilm(j.film); setShotFootage((p) => ({ ...p, [scene.id]: '' }));
+      const fresh = await fetch(`/api/film/films?email=${encodeURIComponent(email)}&id=${film.id}`).then((r) => r.json()); setFilm(fresh.success ? fresh.film : j.film); setShotFootage((p) => ({ ...p, [scene.id]: '' }));
     } catch (err: any) { setError(err.message); } finally { setBusy(''); }
   };
 

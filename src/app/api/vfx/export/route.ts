@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { serviceClient, loadProject, saveProject } from '@/lib/vfx/store';
+import { serviceClient, loadProject, saveProject, resolveUrl } from '@/lib/vfx/store';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -23,6 +23,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `ยังมี ${pending.length} ช็อตที่ไม่ได้อนุมัติ — อนุมัติให้ครบ หรือเลือก "ส่งออกเฉพาะที่อนุมัติ"`, pending: pending.length }, { status: 409 });
     }
 
+    // Single shot: the export IS that shot — keep the private ref (signed on read). Several
+    // shots: merge-dialogue needs reachable inputs (signed) and writes the cut to the public bucket.
     let url = approved[0].output_url!;
     if (approved.length > 1) {
       const r = project.footage.width / Math.max(1, project.footage.height);
@@ -32,7 +34,7 @@ export async function POST(req: NextRequest) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: `${project.name} (VFX export)`,
-          videoClips: approved.map((s) => ({ videoUrl: s.output_url, cropX: null, cropY: null, cropW: null, cropH: null })),
+          videoClips: await Promise.all(approved.map(async (s) => ({ videoUrl: await resolveUrl(s.output_url!, supabase), cropX: null, cropY: null, cropW: null, cropH: null }))),
           user_email: email,
           user_id: project.user_id,
           aspectRatio: aspect,

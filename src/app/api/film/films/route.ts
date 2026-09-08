@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serviceClient, newId, saveFilm, loadFilm, listFilms, deleteFilm } from '@/lib/film/store';
+import { signDeep } from '@/lib/vfx/store';
 import { DEFAULT_BIBLE, Film, MasterAsset, StyleBible } from '@/lib/film/types';
-import { requireConsent } from '@/lib/vfx/consent';
+import { requireConsent, loadConsent } from '@/lib/vfx/consent';
 import { MATTE_ID, BG_IMAGE_ID, CHARACTER_ID } from '@/lib/vfx/pipeline';
 import { getModel } from '@/lib/providers/registry';
 
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
     if (id) {
       const film = await loadFilm(email, id);
       if (!film) return NextResponse.json({ success: false, error: 'ไม่พบหนัง' }, { status: 404 });
-      return NextResponse.json({ success: true, film });
+      return NextResponse.json({ success: true, film: await signDeep(film) });
     }
     return NextResponse.json({ success: true, films: await listFilms(email) });
   } catch (e: any) {
@@ -79,7 +80,12 @@ export async function POST(req: NextRequest) {
       }
       case 'add_master': {
         const kind: MasterAsset['kind'] = ['character', 'location', 'prop'].includes(body.kind) ? body.kind : 'location';
-        const sheet: string[] = Array.isArray(body.sheet_urls) ? body.sheet_urls.filter(Boolean).slice(0, 6) : [];
+        let sheet: string[] = Array.isArray(body.sheet_urls) ? body.sheet_urls.filter(Boolean).slice(0, 6) : [];
+        if (kind === 'character' && body.consent_id) {
+          // the face of record is the consent's own (private ref), never a URL the browser sent
+          const c = await loadConsent(email, String(body.consent_id), supabase);
+          if (c) sheet = [c.face_url, ...sheet.filter((u) => !/^https?:/.test(u) || u === c.face_url)].filter((u, i, a) => a.indexOf(u) === i);
+        }
         if (!sheet.length) return NextResponse.json({ success: false, error: 'ต้องมีภาพอย่างน้อย 1 ภาพ' }, { status: 400 });
         if (kind === 'character') {
           // The spec's guardrail: a character master from a real person carries a consent record

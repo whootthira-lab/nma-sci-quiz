@@ -23,7 +23,9 @@ export function gradeChain(grade: string): string {
 }
 
 export async function fetchToFile(url: string, file: string) {
-  const res = await fetch(url);
+  // private:// refs (VFX/Film storage) become short-lived signed URLs here
+  const { resolveUrl } = await import('./store');
+  const res = await fetch(await resolveUrl(url));
   if (!res.ok) throw new Error(`ดาวน์โหลดไฟล์ไม่สำเร็จ (${res.status}): ${url.slice(0, 80)}`);
   fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createConsent, listConsents, revokeConsent, CONSENT_STATEMENT_TH, CONSENT_STATEMENT_VERSION } from '@/lib/vfx/consent';
+import { signDeep } from '@/lib/vfx/store';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
   const email = (req.nextUrl.searchParams.get('email') || '').trim().toLowerCase();
   if (!email) return NextResponse.json({ success: false, error: 'ต้องระบุอีเมล' }, { status: 400 });
   try {
-    return NextResponse.json({ success: true, consents: await listConsents(email), statement: CONSENT_STATEMENT_TH, statement_version: CONSENT_STATEMENT_VERSION });
+    return NextResponse.json({ success: true, consents: await signDeep(await listConsents(email)), statement: CONSENT_STATEMENT_TH, statement_version: CONSENT_STATEMENT_VERSION });
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e?.message || 'อ่านบันทึกไม่สำเร็จ' }, { status: 500 });
   }

@@ -171,7 +171,7 @@ export default function VideoGallery({ refreshTrigger }: VideoGalleryProps) {
 
       {/* Video Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {generations.map((gen) => (
+        {generations.filter((gen: any) => !gen.hidden).map((gen) => (
           <div key={gen.id} className="glow-card overflow-hidden">
             {/* Result: an image generation stores its output in the same field, so pick
                 the element that matches instead of always mounting a video player. */}

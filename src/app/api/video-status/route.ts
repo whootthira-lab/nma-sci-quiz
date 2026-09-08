@@ -606,7 +606,12 @@ export async function POST(req: NextRequest) {
       }
 
       let publicUrl = '';
-      if (finalStorageProvider === 'firebase') {
+      const isVfxLayerJob = genRow?.metadata?.mode === 'vfx-layer';
+      if (isVfxLayerJob) {
+        // Intermediate VFX/Film artifact: the project keeps its own copy in the private bucket
+        // (onLayerJobDone below); no public copy is written and the row stays out of the gallery.
+        console.log('[VFX layer] skipping public copy — private storage owns this artifact');
+      } else if (finalStorageProvider === 'firebase') {
         publicUrl = await uploadToFirebaseStorage(videoBuffer, videoPath, contentType);
       } else {
         // Upload to Supabase Storage
@@ -691,8 +696,8 @@ export async function POST(req: NextRequest) {
         .from('generations')
         .update({
           status: 'completed',
-          video_url: publicUrl,
-          metadata: { ...(genRow?.metadata || {}), provenance },
+          video_url: publicUrl || null,
+          metadata: { ...(genRow?.metadata || {}), provenance, ...(isVfxLayerJob ? { hidden: true } : {}) },
           updated_at: new Date().toISOString()
         })
         .eq('fal_request_id', requestId);

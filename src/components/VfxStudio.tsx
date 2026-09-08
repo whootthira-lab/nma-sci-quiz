@@ -125,7 +125,7 @@ export default function VfxStudio() {
       const out: { name: string; url: string }[] = [];
       for (const f of files) {
         if (f.size > 200 * 1024 * 1024) throw new Error(`${f.name} ใหญ่เกิน 200 MB`);
-        out.push({ name: f.name, url: await uploadToStorage(f, `vfx_footage/${email}/${Date.now()}_${safeName(f.name)}`) });
+        out.push({ name: f.name, url: await uploadToStorage(f, `vfx_footage/${email}/${Date.now()}_${safeName(f.name)}`, { private: true }) });
       }
       setBatchUrls((prev) => [...prev, ...out].slice(0, 10));
     } catch (err: any) { setError(err.message || 'อัปโหลดไม่สำเร็จ'); } finally { setUploading(false); }
@@ -188,6 +188,13 @@ export default function VfxStudio() {
   }, [email]);
   useEffect(() => { loadList(); }, [loadList]);
 
+  // Documents hold private:// refs; only the GET route signs them, so every mutation re-reads.
+  const refreshProject = async (id: string) => {
+    const r = await fetch(`/api/vfx/projects?email=${encodeURIComponent(email)}&id=${id}`).then((x) => x.json());
+    if (r.success) setProject(r.project);
+    return r.success ? r.project : null;
+  };
+
   const openProject = async (id: string) => {
     setError('');
     const r = await fetch(`/api/vfx/projects?email=${encodeURIComponent(email)}&id=${id}`).then((x) => x.json());
@@ -228,7 +235,7 @@ export default function VfxStudio() {
     setFootageUrl('');
     setUploading(true);
     try {
-      setFootageUrl(await uploadToStorage(f, `vfx_footage/${email}/${Date.now()}_${safeName(f.name)}`));
+      setFootageUrl(await uploadToStorage(f, `vfx_footage/${email}/${Date.now()}_${safeName(f.name)}`, { private: true }));
     } catch (err: any) { setError(err.message || 'อัปโหลดไม่สำเร็จ'); } finally { setUploading(false); }
   };
   const handleRefs = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -237,7 +244,7 @@ export default function VfxStudio() {
     setUploading(true);
     try {
       const urls: string[] = [];
-      for (const f of files) urls.push(await uploadToStorage(f, `vfx_refs/${email}/${Date.now()}_${safeName(f.name)}`));
+      for (const f of files) urls.push(await uploadToStorage(f, `vfx_refs/${email}/${Date.now()}_${safeName(f.name)}`, { private: true }));
       setRefUrls((prev) => [...prev, ...urls].slice(0, 4));
     } catch (err: any) { setError(err.message || 'อัปโหลดภาพอ้างอิงไม่สำเร็จ'); } finally { setUploading(false); }
   };
@@ -248,7 +255,7 @@ export default function VfxStudio() {
     setError('');
     try {
       const r = await api('/api/vfx/projects', { footage_url: footageUrl, reference_urls: refUrls, name, instruction, engine: engine === 'auto' ? 'matte' : engine, grade });
-      setProject(r.project);
+      await refreshProject(r.project.id);
       setPrompts({});
       await loadList();
       if (instruction.trim()) await plan(r.project);
@@ -261,7 +268,7 @@ export default function VfxStudio() {
     setError('');
     try {
       const r = await api('/api/vfx/plan', { project_id: p.id, instruction: instruction || p.instruction, reference_urls: refUrls.length ? refUrls : p.reference_urls, engine, preference, grade, prompts, template_id: templateId || undefined });
-      setProject(r.project);
+      await refreshProject(p.id);
       setEngineReason(r.engine_reason || '');
       setPrompts(Object.fromEntries(r.project.shots.map((s: VfxShot) => [s.id, s.layers.find((l) => l.type === 'background' || l.type === 'edit')?.params?.prompt || ''])));
       setConfirmed(false);
@@ -277,8 +284,8 @@ export default function VfxStudio() {
       const edited = Object.entries(prompts).some(([id, p]) => p !== (project.shots.find((s) => s.id === id)?.layers.find((l) => l.type === 'background' || l.type === 'edit')?.params?.prompt || ''));
       let current = project;
       if (edited) current = (await api('/api/vfx/plan', { project_id: project.id, engine: project.engine, grade: project.grade, prompts, template_id: templateId || undefined })).project;
-      const r = await api('/api/vfx/run', { project_id: current.id, confirm_credits: pendingCredits(current) });
-      setProject(r.project);
+      await api('/api/vfx/run', { project_id: current.id, confirm_credits: pendingCredits(current) });
+      await refreshProject(current.id);
       setConfirmed(false);
     } catch (err: any) { setError(err.message); } finally { setBusy(''); }
   };
@@ -288,8 +295,8 @@ export default function VfxStudio() {
     setBusy(`${action}...`);
     setError('');
     try {
-      const r = await api('/api/vfx/shot', { project_id: project.id, shot_id: shot.id, action, ...extra });
-      setProject(r.project);
+      await api('/api/vfx/shot', { project_id: project.id, shot_id: shot.id, action, ...extra });
+      await refreshProject(project.id);
     } catch (err: any) { setError(err.message); } finally { setBusy(''); }
   };
 
@@ -298,8 +305,8 @@ export default function VfxStudio() {
     setBusy('กำลังรวมช็อตที่อนุมัติ...');
     setError('');
     try {
-      const r = await api('/api/vfx/export', { project_id: project.id, allow_partial: allowPartial });
-      setProject(r.project);
+      await api('/api/vfx/export', { project_id: project.id, allow_partial: allowPartial });
+      await refreshProject(project.id);
       await loadList();
     } catch (err: any) { setError(err.message); } finally { setBusy(''); }
   };
@@ -585,7 +592,7 @@ export default function VfxStudio() {
                           <div className="rounded-lg border border-[#D4AF37]/40 bg-white p-3 space-y-2">
                             <p className="font-semibold text-[#1A1A1A]">บันทึกความยินยอมใช้ภาพลักษณ์</p>
                             <div className="flex flex-wrap gap-3 items-start">
-                              <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; setConsentForm((x) => ({ ...x, facePreview: URL.createObjectURL(f), busy: true })); try { const url = await uploadToStorage(f, `vfx_faces/${email}/${Date.now()}_${safeName(f.name)}`); setConsentForm((x) => ({ ...x, faceUrl: url, busy: false })); } catch (err: any) { setConsentForm((x) => ({ ...x, busy: false, error: err.message })); } }} className="text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-[#1A1A1A] file:text-[#D4AF37]" />
+                              <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; setConsentForm((x) => ({ ...x, facePreview: URL.createObjectURL(f), busy: true })); try { const url = await uploadToStorage(f, `vfx_faces/${email}/${Date.now()}_${safeName(f.name)}`, { private: true }); setConsentForm((x) => ({ ...x, faceUrl: url, busy: false })); } catch (err: any) { setConsentForm((x) => ({ ...x, busy: false, error: err.message })); } }} className="text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-[#1A1A1A] file:text-[#D4AF37]" />
                               {consentForm.facePreview && <img src={consentForm.facePreview} alt="" className="w-14 h-14 rounded-lg object-cover border" />}
                               <input value={consentForm.name} onChange={(e) => setConsentForm((x) => ({ ...x, name: e.target.value }))} placeholder="ชื่อบุคคลในภาพ" className="px-3 py-1.5 border border-gray-200 rounded-lg" />
                               <select value={consentForm.basis} onChange={(e) => setConsentForm((x) => ({ ...x, basis: e.target.value as 'self' | 'release' }))} className="px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
@@ -593,7 +600,7 @@ export default function VfxStudio() {
                                 <option value="release">ผู้อื่น — มีหนังสือยินยอม</option>
                               </select>
                               {consentForm.basis === 'release' && (
-                                <input type="file" accept="image/*,.pdf" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { const url = await uploadToStorage(f, `vfx_releases/${email}/${Date.now()}_${safeName(f.name)}`); setConsentForm((x) => ({ ...x, releaseUrl: url })); } catch (err: any) { setConsentForm((x) => ({ ...x, error: err.message })); } }} className="text-xs" title="แนบหนังสือยินยอม (ภาพหรือ PDF)" />
+                                <input type="file" accept="image/*,.pdf" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { const url = await uploadToStorage(f, `vfx_releases/${email}/${Date.now()}_${safeName(f.name)}`, { private: true }); setConsentForm((x) => ({ ...x, releaseUrl: url })); } catch (err: any) { setConsentForm((x) => ({ ...x, error: err.message })); } }} className="text-xs" title="แนบหนังสือยินยอม (ภาพหรือ PDF)" />
                               )}
                             </div>
                             <label className="flex items-start gap-2 text-[11px] text-gray-700 cursor-pointer"><input type="checkbox" checked={consentForm.confirmed} onChange={(e) => setConsentForm((x) => ({ ...x, confirmed: e.target.checked }))} className="mt-0.5 accent-[#D4AF37]" /> {consentStatement}</label>

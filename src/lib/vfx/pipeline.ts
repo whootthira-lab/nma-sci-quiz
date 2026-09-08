@@ -8,7 +8,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { falSubmit, falStatus, falResult, normalizeOutput, FalSubmitError } from '@/lib/providers/fal';
 import { assertRunnable, estimateCost } from '@/lib/providers/registry';
 import { compositeBackground, gradeVideo, fetchToFile, probeVideo, FxInput } from './composite';
-import { newId, putFile, saveProject } from './store';
+import { newId, putFile, saveProject, resolveUrl } from './store';
 import { loadFxLibrary, FxParams } from './fx';
 import { watermarkVideo } from './watermark';
 import { qaShot } from './qa';
@@ -331,8 +331,8 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const model = assertRunnable(CHARACTER_ID);
       await requireConsent(project.user_email, character.params.consent_id, character.params.face_url, supabase);
       const { requestId } = await falSubmit(model.endpoint, {
-        image_url: character.params.face_url,
-        video_url: shot.clip_url,
+        image_url: await resolveUrl(character.params.face_url, supabase),
+        video_url: await resolveUrl(shot.clip_url, supabase),
         character_orientation: 'video',
         keep_original_sound: true,
         prompt: character.params.prompt || 'the person performs exactly the reference motion, natural expression, consistent identity'
@@ -353,7 +353,7 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const matte = shot.layers.find((l) => l.type === 'matte')!;
       if (matte.status !== 'done') {
         const model = assertRunnable(MATTE_ID);
-        const { requestId } = await falSubmit(model.endpoint, { video_url: sourceClip(shot), output_codec: 'h264', subject_is_person: true, refine_foreground_edges: true });
+        const { requestId } = await falSubmit(model.endpoint, { video_url: await resolveUrl(sourceClip(shot), supabase), output_codec: 'h264', subject_is_person: true, refine_foreground_edges: true });
         matte.status = 'processing';
         matte.job_request_id = requestId;
         await insertLayerJob(supabase, project, shot, matte, model.endpoint, model.id, requestId, `vfx_shots/${project.user_email}/${project.id}/${shot.id}_${ts}_matte.mp4`, `matte: shot ${shot.order}`);
@@ -366,8 +366,8 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const model = assertRunnable(O3_EDIT_ID);
       const refs = project.reference_urls.slice(0, 3);
       const prompt = `Replace the entire background and environment of @Video1 with ${edit.params.prompt}${refs.length ? `, matching the look of ${refs.map((_, i) => `@Image${i + 1}`).join(' and ')}` : ''}. Keep the person, their face, clothing, motion, timing and camera framing exactly as in @Video1. Relight the person naturally to match. No text, no extra people.`;
-      const body: Record<string, any> = { video_url: sourceClip(shot), prompt, keep_audio: true };
-      if (refs.length) body.image_urls = refs;
+      const body: Record<string, any> = { video_url: await resolveUrl(sourceClip(shot), supabase), prompt, keep_audio: true };
+      if (refs.length) body.image_urls = await Promise.all(refs.map((u) => resolveUrl(u, supabase)));
       const { requestId } = await falSubmit(model.endpoint, body);
       edit.status = 'processing';
       edit.job_request_id = requestId;
@@ -412,7 +412,7 @@ export async function compositeShot(project: VfxProject, shot: VfxShot, supabase
   if (!matte?.output.color_url || !matte.output.alpha_url || !bg?.output.image_url || !comp) return;
   comp.status = 'processing';
   try {
-    const colorRes = await fetch(matte.output.color_url);
+    const colorRes = await fetch(await resolveUrl(matte.output.color_url, supabase));
     if (!colorRes.ok) throw new Error('matte colour clip unreachable');
     const preset = grade?.enabled ? grade.params.preset : 'none';
     // Resolve the chosen stock effects to clip URLs; an element that left the library is skipped

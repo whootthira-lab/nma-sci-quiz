@@ -132,8 +132,70 @@ export function publicUrl(path: string, supabase = serviceClient()): string {
   return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-/** Upload a buffer to the app bucket and return its public URL. */
-export async function putFile(path: string, body: Buffer, contentType: string, supabase = serviceClient()): Promise<string> {
+/**
+ * Private storage (Content Policy §7–8). VFX Studio and Film Mode keep their files —
+ * uploaded footage, references, faces, and every output — in a bucket that has no public
+ * URLs. A private file is referred to everywhere as `private://<path>`; whoever needs a
+ * real URL (the browser, a provider, ffmpeg) gets a signed one that expires. Older public
+ * URLs are untouched, so nothing already made stops working.
+ */
+export const PRIVATE_BUCKET = 'kruth-private';
+export const PRIVATE_OUTPUTS = process.env.PRIVATE_OUTPUTS !== '0';
+const PRIVATE_PREFIX = 'private://';
+const SIGN_TTL_SECONDS = 60 * 60;
+
+let bucketReady = false;
+export async function ensurePrivateBucket(supabase = serviceClient()): Promise<void> {
+  if (bucketReady) return;
+  const { data } = await supabase.storage.getBucket(PRIVATE_BUCKET);
+  if (!data) {
+    const { error } = await supabase.storage.createBucket(PRIVATE_BUCKET, { public: false, fileSizeLimit: 524288000 });
+    if (error && !/already exists/i.test(error.message)) throw new Error(`สร้างคลังส่วนตัวไม่สำเร็จ: ${error.message}`);
+  }
+  bucketReady = true;
+}
+
+export const isPrivateRef = (u: string | undefined | null) => !!u && u.startsWith(PRIVATE_PREFIX);
+export const privateRef = (path: string) => `${PRIVATE_PREFIX}${path}`;
+export const privatePath = (ref: string) => ref.slice(PRIVATE_PREFIX.length);
+
+/** Turn a private ref into a signed URL (1 h). Public/other URLs pass through unchanged. */
+export async function resolveUrl(u: string, supabase = serviceClient(), ttl = SIGN_TTL_SECONDS): Promise<string> {
+  if (!isPrivateRef(u)) return u;
+  const { data, error } = await supabase.storage.from(PRIVATE_BUCKET).createSignedUrl(privatePath(u), ttl);
+  if (error || !data?.signedUrl) throw new Error(`สร้างลิงก์ชั่วคราวไม่สำเร็จ (${privatePath(u)}): ${error?.message || 'no url'}`);
+  return data.signedUrl;
+}
+
+/** Replace every `private://` string inside a document with a signed URL (for the browser). */
+export async function signDeep<T>(value: T, supabase = serviceClient()): Promise<T> {
+  const cache = new Map<string, string>();
+  const walk = async (v: any): Promise<any> => {
+    if (typeof v === 'string') {
+      if (!isPrivateRef(v)) return v;
+      if (!cache.has(v)) { try { cache.set(v, await resolveUrl(v, supabase)); } catch { cache.set(v, ''); } }
+      return cache.get(v);
+    }
+    if (Array.isArray(v)) return Promise.all(v.map(walk));
+    if (v && typeof v === 'object') {
+      const out: any = {};
+      for (const [k, x] of Object.entries(v)) out[k] = await walk(x);
+      return out;
+    }
+    return v;
+  };
+  return walk(value);
+}
+
+/** Upload a buffer. Private by default for VFX/Film outputs; returns a `private://` ref or a public URL. */
+export async function putFile(path: string, body: Buffer, contentType: string, supabase = serviceClient(), opts: { private?: boolean } = {}): Promise<string> {
+  const priv = opts.private ?? PRIVATE_OUTPUTS;
+  if (priv) {
+    await ensurePrivateBucket(supabase);
+    const { error } = await supabase.storage.from(PRIVATE_BUCKET).upload(path, body, { contentType, upsert: true });
+    if (error) throw new Error(`อัปโหลดไฟล์ไม่สำเร็จ (${path}): ${error.message}`);
+    return privateRef(path);
+  }
   const { error } = await supabase.storage.from(BUCKET).upload(path, body, { contentType, upsert: true });
   if (error) throw new Error(`อัปโหลดไฟล์ไม่สำเร็จ (${path}): ${error.message}`);
   return publicUrl(path, supabase);

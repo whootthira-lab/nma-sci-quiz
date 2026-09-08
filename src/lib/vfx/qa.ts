@@ -4,6 +4,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { fetchToFile, probeVideo } from './composite';
+import { resolveUrl } from './store';
 import { geminiUrl, geminiText } from '@/lib/gemini';
 
 /**
@@ -46,7 +47,7 @@ Reply with JSON only: {"flags": [subset of "edge_halo","lighting_mismatch","fram
       parts.push({ inline_data: { mime_type: 'image/jpeg', data: fs.readFileSync(f).toString('base64') } });
     }
     if (context.identityUrl) {
-      const r = await fetch(context.identityUrl);
+      const r = await fetch(await resolveUrl(context.identityUrl));
       if (r.ok) parts.push({ inline_data: { mime_type: r.headers.get('content-type')?.includes('png') ? 'image/png' : 'image/jpeg', data: Buffer.from(await r.arrayBuffer()).toString('base64') } });
     }
     const res = await fetch(`${geminiUrl()}?key=${key}`, {
@@ -83,7 +84,7 @@ export async function isPublicFigure(imageUrl: string): Promise<{ publicFigure: 
   const key = process.env.GEMINI_API_KEY || '';
   if (!key) return null;
   try {
-    const r = await fetch(imageUrl);
+    const r = await fetch(await resolveUrl(imageUrl));
     if (!r.ok) return null;
     const data = Buffer.from(await r.arrayBuffer()).toString('base64');
     const res = await fetch(`${geminiUrl()}?key=${key}`, {

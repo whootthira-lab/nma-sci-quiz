@@ -4,6 +4,7 @@ import { serviceClient, loadProject } from '@/lib/vfx/store';
 import { redoBackground, regradeShot, startShot, persist, setShotFx, rollbackLayer, redoMatte, setShotCharacter, BG_IMAGE_CREDITS } from '@/lib/vfx/pipeline';
 import type { VfxGrade } from '@/lib/vfx/types';
 import { assertTier } from '@/lib/credits/packages';
+import { loadConsent } from '@/lib/vfx/consent';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -69,7 +70,9 @@ export async function POST(req: NextRequest) {
         await assertTier(email, 'pro', supabase);
         // Character layer (Phase 3): consent required; charged for the actor clip plus the
         // matte/edit that must be redone on it. Passing no face clears the character.
-        const choice = body.face_url ? { face_url: String(body.face_url), consent_id: String(body.consent_id || ''), prompt: body.prompt ? String(body.prompt) : undefined } : null;
+        // The face comes from the consent record itself (the browser only ever sees signed URLs)
+        const consent = body.consent_id ? await loadConsent(email, String(body.consent_id), supabase) : null;
+        const choice = consent ? { face_url: consent.face_url, consent_id: consent.id, prompt: body.prompt ? String(body.prompt) : undefined } : (body.face_url || body.consent_id) ? (() => { throw new Error('ไม่พบบันทึกความยินยอมที่เลือก'); })() : null;
         await setShotCharacter(project, shot, choice, supabase);
         const credits = shot.layers.filter((l) => l.enabled && l.status === 'pending' && l.cost_credits).reduce((s, l) => s + l.cost_credits, 0);
         await charge(credits);

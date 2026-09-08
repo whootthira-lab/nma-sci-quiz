@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { primeRates } from '@/lib/providers/rates';
-import { serviceClient, listProjects, loadProject, saveProject, deleteProject, newId } from '@/lib/vfx/store';
+import { serviceClient, listProjects, loadProject, saveProject, deleteProject, newId, signDeep } from '@/lib/vfx/store';
 import { analyzeFootage } from '@/lib/vfx/pipeline';
 import type { VfxProject } from '@/lib/vfx/types';
 import { VFX_PHASE1_LIMITS as LIMITS } from '@/lib/vfx/types';
@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
     if (id) {
       const project = await loadProject(email, id, supabase);
       if (!project) return NextResponse.json({ success: false, error: 'ไม่พบโปรเจกต์' }, { status: 404 });
-      return NextResponse.json({ success: true, project });
+      // private:// refs become signed URLs (1 h) for the browser; the document itself keeps refs
+      return NextResponse.json({ success: true, project: await signDeep(project, supabase) });
     }
     return NextResponse.json({ success: true, projects: await listProjects(email, supabase) });
   } catch (e: any) {
