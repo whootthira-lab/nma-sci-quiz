@@ -61,17 +61,30 @@ export interface FalSubmitResult {
   raw: any;
 }
 
+/**
+ * Where Fal should call back when a job finishes. The webhook is a TRIGGER only: our
+ * handler re-reads the job from Fal and runs the usual completion path (video-status),
+ * so a forged or delayed callback can at most cause one extra poll. Polling and the cron
+ * driver stay as the fallback. FAL_WEBHOOKS=0 turns it off.
+ */
+export function falWebhookUrl(): string {
+  if (process.env.FAL_WEBHOOKS === '0') return '';
+  return process.env.FAL_WEBHOOK_URL || 'https://kruth-ai-video.vercel.app/api/webhooks/fal';
+}
+
 /** Queue a job. Throws FalSubmitError with the provider's own reason on refusal. */
 export async function falSubmit(
   endpoint: string,
   body: Record<string, any>,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; webhook?: boolean } = {}
 ): Promise<FalSubmitResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20000);
+  const hook = opts.webhook === false ? '' : falWebhookUrl();
+  const url = `https://queue.fal.run/${endpoint}${hook ? `?fal_webhook=${encodeURIComponent(hook)}` : ''}`;
   let res: Response;
   try {
-    res = await fetch(`https://queue.fal.run/${endpoint}`, {
+    res = await fetch(url, {
       method: 'POST',
       headers: {
         'Authorization': `Key ${falKey()}`,
