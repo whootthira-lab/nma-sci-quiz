@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     };
     project = await analyzeFootage(project, supabase);
     await saveProject(project, supabase);
-    return NextResponse.json({ success: true, project });
+    return NextResponse.json({ success: true, project: await signDeep(project, supabase) });
   } catch (e: any) {
     console.error('[VFX projects]', e);
     return NextResponse.json({ success: false, error: e?.message || 'สร้างโปรเจกต์ไม่สำเร็จ' }, { status: 500 });
