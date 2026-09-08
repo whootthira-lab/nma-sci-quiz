@@ -55,8 +55,9 @@ export async function POST(req: NextRequest) {
         lora_job_id: characterData.lora_job_id || null,
         lora_model_url: characterData.lora_model_url || null,
         lora_trigger_word: characterData.lora_trigger_word || null,
+        // `lora_dataset_path` is not a column on the live table (PostgREST: "Could not find the
+        // 'lora_dataset_path' column") — every character creation was failing with 500 on it.
         lora_dataset_url: characterData.lora_dataset_url || null,
-        lora_dataset_path: characterData.lora_dataset_path || null,
         lora_steps: characterData.lora_steps || 1000
       })
       .select('*')
