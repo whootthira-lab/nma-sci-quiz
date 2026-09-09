@@ -151,6 +151,11 @@ export async function POST(req: NextRequest) {
         const style = resolveEffectiveStyle(film, scene!);
         const results: any[] = [];
         const masterPlate = film.masters.find((m) => m.id === scene!.location_master_id)?.sheet_urls[0];
+        // One grade+QA pass is ~30 s per shot on this host; the function has 300 s. Retries are
+        // spent only while there is budget left, so a 5-shot scene with 2 retries each cannot
+        // time out — shots past the budget are flagged with the retries they got.
+        const started = Date.now();
+        const budgetLeft = () => Date.now() - started < 170_000;
         for (const sh of scene!.shots) {
           if (!sh.pre_grade_url || sh.status === 'processing' || sh.status === 'failed') continue;
           try {
@@ -158,7 +163,7 @@ export async function POST(req: NextRequest) {
             // Bible's ΔE after the match is re-graded harder — up to twice — before it is flagged.
             let retries = 0;
             let g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
-            while (g.deltaE >= style.delta_e_threshold && retries < 2) {
+            while (g.deltaE >= style.delta_e_threshold && retries < 2 && budgetLeft()) {
               retries++;
               g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 + 0.15 * retries });
             }
