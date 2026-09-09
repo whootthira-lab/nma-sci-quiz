@@ -84,6 +84,9 @@ export interface VfxProject {
   estimated_credits: number;
   charged_credits: number;
   export_url?: string;
+  /** Film Mode pinning (F5): registry model id per task ('vfx.matte', 'vfx.character',
+   *  'image.plate') this project must use — never the registry default */
+  pinned?: Record<string, string>;
   created_at: string;
   updated_at: string;
 }

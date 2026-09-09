@@ -12,7 +12,8 @@ export type AuditKind =
   | 'takedown' | 'character_disabled' | 'user_suspended'
   | 'consent_created' | 'consent_revoked'
   | 'package_granted' | 'tier_set' | 'role_changed'
-  | 'rates_imported' | 'registry_transition';
+  | 'rates_imported' | 'registry_transition'
+  | 'film_migration_applied';
 
 export interface AuditEvent {
   id: string;

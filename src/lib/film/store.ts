@@ -24,6 +24,9 @@ export function ensureActs(film: Film): Film {
   // F4 continuity DB on films written before it
   if (!Array.isArray(film.continuity)) film.continuity = [];
   if (!Array.isArray(film.continuity_proposals)) film.continuity_proposals = [];
+  // F5
+  if (!Array.isArray(film.migrations)) film.migrations = [];
+  if (!Array.isArray(film.exports)) film.exports = [];
   return film;
 }
 

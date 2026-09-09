@@ -6,7 +6,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { falSubmit, falStatus, falResult, normalizeOutput, FalSubmitError } from '@/lib/providers/fal';
-import { assertRunnable, estimateCost } from '@/lib/providers/registry';
+import { assertRunnable, estimateCost, type ModelEntry } from '@/lib/providers/registry';
 import { compositeBackground, gradeVideo, fetchToFile, probeVideo, FxInput } from './composite';
 import { newId, putFile, saveProject, resolveUrl } from './store';
 import { loadFxLibrary, FxParams } from './fx';
@@ -45,6 +45,16 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 export const MATTE_ID = 'matte-veed-fast';
 export const O3_EDIT_ID = 'vedit-o3';
 export const BG_IMAGE_ID = 'flux-dev';
+
+/** Film Mode pinning (F5): a project carries the registry ids it must use; otherwise the
+ *  defaults above. The registry entry's endpoint is what actually runs — the id is stable. */
+export function pinnedModel(project: VfxProject | undefined, task: 'vfx.matte' | 'vfx.character' | 'image.plate'): ModelEntry {
+  const fallback = task === 'vfx.matte' ? MATTE_ID : task === 'vfx.character' ? CHARACTER_ID : BG_IMAGE_ID;
+  const id = project?.pinned?.[task] || fallback;
+  const m = assertRunnable(id);
+  if (m.task !== (task === 'image.plate' ? 'image.t2i' : task)) throw new Error(`โมเดล ${id} ไม่ใช่โมเดลสำหรับ ${task}`);
+  return m;
+}
 export const BG_IMAGE_CREDITS = 3;
 export const RUN_FEE_CREDITS = 1;
 
@@ -219,7 +229,7 @@ export async function planProject(project: VfxProject, engine: VfxEngine, grade:
   project.engine = engine;
   project.grade = grade;
   const prompts = await writeBackgroundPrompts(project);
-  const matte = assertRunnable(MATTE_ID);
+  const matte = pinnedModel(project, 'vfx.matte');
   const o3 = assertRunnable(O3_EDIT_ID);
   project.shots.forEach((shot, i) => {
     const secs = Math.ceil(shot.end - shot.start);
@@ -255,8 +265,7 @@ export async function planProject(project: VfxProject, engine: VfxEngine, grade:
 
 // ───────────────────────────── 3. run ─────────────────────────────
 
-async function generateBackgroundImage(prompt: string, w: number, h: number): Promise<string> {
-  const model = assertRunnable(BG_IMAGE_ID);
+async function generateBackgroundImage(prompt: string, w: number, h: number, model = assertRunnable(BG_IMAGE_ID)): Promise<string> {
   const r = w && h ? w / h : 16 / 9;
   const size = r > 1.6 ? 'landscape_16_9' : r > 1.1 ? 'landscape_4_3' : r > 0.9 ? 'square_hd' : r > 0.65 ? 'portrait_4_3' : 'portrait_16_9';
   const { requestId } = await falSubmit(model.endpoint, {
@@ -328,7 +337,7 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
     // Runs only with a consent record on the layer (checked when the layer was set, and again here).
     const character = shot.layers.find((l) => l.type === 'character');
     if (character?.enabled && character.status !== 'done') {
-      const model = assertRunnable(CHARACTER_ID);
+      const model = pinnedModel(project, 'vfx.character');
       await requireConsent(project.user_email, character.params.consent_id, character.params.face_url, supabase);
       const { requestId } = await falSubmit(model.endpoint, {
         image_url: await resolveUrl(character.params.face_url, supabase),
@@ -347,12 +356,13 @@ export async function startShot(project: VfxProject, shot: VfxShot, supabase: Su
       const bg = shot.layers.find((l) => l.type === 'background')!;
       if (bg.status !== 'done') {
         bg.status = 'processing';
-        const url = await generateBackgroundImage(bg.params.prompt, shot.width, shot.height);
+        const url = await generateBackgroundImage(bg.params.prompt, shot.width, shot.height, pinnedModel(project, 'image.plate'));
         setLayerOutput(bg, { image_url: url });
       }
       const matte = shot.layers.find((l) => l.type === 'matte')!;
       if (matte.status !== 'done') {
-        const model = assertRunnable(MATTE_ID);
+        const model = pinnedModel(project, 'vfx.matte');
+        matte.model_id = model.id;
         const { requestId } = await falSubmit(model.endpoint, { video_url: await resolveUrl(sourceClip(shot), supabase), output_codec: 'h264', subject_is_person: true, refine_foreground_edges: true });
         matte.status = 'processing';
         matte.job_request_id = requestId;
@@ -606,7 +616,7 @@ export async function setShotCharacter(
     return;
   }
   await requireConsent(project.user_email, choice.consent_id, choice.face_url, supabase);
-  const model = assertRunnable(CHARACTER_ID);
+  const model = pinnedModel(project, 'vfx.character');
   const secs = Math.ceil(shot.end - shot.start);
   const cost = estimateCost(model.id, secs).creditsShown;
   if (!ch) {

@@ -59,6 +59,10 @@ export default function FilmStudio() {
   const [contReport, setContReport] = useState<Record<string, any>>({});
   const [contEdit, setContEdit] = useState<{ scene_id: string; subject_id: string; draft: ContinuityFields; props: string } | null>(null);
   const [contHistory, setContHistory] = useState<string>(''); // "sceneId:subjectId" whose history is open
+  const [migPick, setMigPick] = useState<Record<string, string>>({}); // task → candidate model id
+  const [rerender, setRerender] = useState(false);
+  const [exportForm, setExportForm] = useState<{ scope: 'film' | 'act' | 'scene'; id: string; unapproved: boolean; render: boolean }>({ scope: 'film', id: '', unapproved: false, render: false });
+  const [lastExport, setLastExport] = useState<any>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const api = async (path: string, body: any) => {
@@ -252,6 +256,82 @@ export default function FilmStudio() {
               </div>
               <p className="text-[10px] text-gray-400">master ที่ล็อกแล้วแก้ทับไม่ได้ — bump เป็นเวอร์ชันใหม่ ช็อตที่ใช้เวอร์ชันเก่าไม่ถูกแตะ · ภาพแรกของสถานที่คือ plate ที่ทุกช็อตในฉากใช้ร่วมกัน</p>
             </div>
+          </section>
+
+          {/* ── Pinned models + migration (F5) ── */}
+          <section className="bg-[#FAF8F5] border border-gray-100 p-5 rounded-2xl space-y-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2"><Lock className="w-4 h-4 text-[#D4AF37]" /> โมเดลที่ปักหมุด</h3>
+              <span className="text-[10px] text-gray-400">ทุกช็อตของหนังใช้โมเดลเวอร์ชันนี้เท่านั้น ไม่อัปเกรดเอง · ตรวจว่า endpoint ยังมีชีวิตและมีตัวเลือกใหม่ที่พิสูจน์แล้วหรือไม่</span>
+              <button type="button" disabled={!!busy} onClick={() => act('/api/film/films', { action: 'check_models' }, 'กำลังตรวจ endpoint ที่ปักหมุด (ยิงคำขอเปล่า ไม่มีค่าใช้จ่าย)...')} className="ml-auto px-3 py-1.5 rounded-lg bg-white border border-gray-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> ตรวจโมเดล</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {Object.entries(film.pinned_models).map(([task, pin]) => {
+                const h = film.model_health?.tasks.find((t) => t.task === task);
+                const open = film.migrations.find((m) => m.task === task && m.status !== 'applied' && m.status !== 'rejected');
+                return (
+                  <div key={task} className="rounded-xl border border-gray-200 bg-white p-2.5 space-y-1">
+                    <p className="text-gray-500">{({ 'vfx.matte': 'ตัดคน (matte)', 'image.plate': 'plate (ภาพฉาก)', 'vfx.character': 'ตัวละคร' } as any)[task] || task}</p>
+                    <p className="font-semibold text-[#1A1A1A]">{pin.model_id}</p>
+                    <p className="text-[10px] text-gray-400 break-all">{pin.endpoint}</p>
+                    {pin.migrated_from?.length ? <p className="text-[10px] text-gray-400">ย้ายมาจาก {pin.migrated_from.map((x) => x.model_id).join(' → ')}</p> : null}
+                    {h && (
+                      <p className={`text-[10px] ${h.alive === false || !h.in_registry ? 'text-red-600' : h.alive === null ? 'text-amber-700' : 'text-green-700'}`}>
+                        {h.alive === true ? '● endpoint มีชีวิต' : h.alive === false ? '● endpoint หายไป' : '● ตรวจไม่ได้'} · {h.in_registry ? 'ตรงกับ registry' : 'ไม่ตรง registry!'} · {new Date(film.model_health!.checked_at).toLocaleString('th-TH')}
+                      </p>
+                    )}
+                    {h && h.candidates.length > 0 && !open && (task === 'vfx.matte' || task === 'vfx.character') && (
+                      <div className="flex gap-1 items-center pt-1">
+                        <select value={migPick[task] || ''} onChange={(e) => setMigPick({ ...migPick, [task]: e.target.value })} className="flex-1 px-1.5 py-1 border border-gray-200 rounded bg-white text-[10px]">
+                          <option value="">ตัวเลือกที่พิสูจน์แล้ว…</option>{h.candidates.map((c) => <option key={c.model_id} value={c.model_id}>{c.label} · {c.credits_per_unit} cr/หน่วย</option>)}
+                        </select>
+                        <button type="button" disabled={!!busy || !migPick[task]} onClick={() => act('/api/film/films', { action: 'propose_migration', task, to_model_id: migPick[task] }, 'เสนอย้ายโมเดล...')} className="px-2 py-1 rounded bg-[#1A1A1A] text-[#D4AF37] disabled:opacity-40">เสนอย้าย</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {film.migrations.filter((m) => m.status !== 'rejected').slice(0, 3).map((m) => (
+              <div key={m.id} className={`rounded-xl border p-3 space-y-2 ${m.status === 'applied' ? 'border-green-300 bg-green-50' : 'border-[#D4AF37] bg-white'}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold">{m.from.model_id} → {m.to.model_id}</span>
+                  <span className="text-gray-500">{m.to.label}</span>
+                  <span className={`px-1.5 py-0.5 rounded-md text-[10px] ${m.status === 'applied' ? 'bg-green-200 text-green-800' : m.status === 'tested' ? (m.passed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800') : 'bg-gray-100 text-gray-600'}`}>
+                    {({ proposed: 'เสนอแล้ว — รอทดสอบ', testing: 'กำลังทดสอบตัวอย่าง', tested: m.passed ? 'ตัวอย่างผ่าน QA' : 'ตัวอย่างไม่ผ่าน QA', applied: `ย้ายแล้ว${m.forced ? ' (บังคับ)' : ''}${m.rerendered ? ` · re-render ${m.rerendered} ช็อต` : ''}` } as any)[m.status]}
+                  </span>
+                  {m.credits > 0 && <span className="text-gray-500">ใช้ {m.credits} เครดิต</span>}
+                  <span className="ml-auto flex flex-wrap gap-1">
+                    {(m.status === 'proposed' || (m.status === 'tested' && !m.passed)) && (
+                      <button type="button" disabled={!!busy} onClick={async () => { const p = await act('/api/film/scenes', { action: 'test_migration', migration_id: m.id }, 'ประเมินค่าใช้จ่าย...'); if (!p?.preview) return; if (confirm(`ทดสอบกับ ${p.samples.length} ช็อตตัวอย่าง ใช้ ${p.credits} เครดิต (ช็อตจริงไม่ถูกแตะ) ดำเนินการ?`)) act('/api/film/scenes', { action: 'test_migration', migration_id: m.id, confirm_credits: true }, 'กำลังส่งช็อตตัวอย่างไปเรนเดอร์ด้วยโมเดลใหม่...'); }} className="px-2 py-1 rounded bg-[#1A1A1A] text-[#D4AF37]">ทดสอบ 3 ช็อต</button>
+                    )}
+                    {m.status === 'testing' && <button type="button" disabled={!!busy} onClick={() => act('/api/film/scenes', { action: 'sync_migration', migration_id: m.id }, 'กำลังดึงผลตัวอย่าง + grade + QA...')} className="px-2 py-1 rounded bg-white border border-gray-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> อัปเดตผล</button>}
+                    {m.status === 'tested' && (
+                      <label className="flex items-center gap-1 text-[10px] text-gray-500"><input type="checkbox" checked={rerender} onChange={(e) => setRerender(e.target.checked)} /> re-render ช็อตเดิมทั้งหมดด้วย (หักเครดิตต่อช็อต)</label>
+                    )}
+                    {m.status === 'tested' && (
+                      <button type="button" disabled={!!busy} onClick={() => { if (!m.passed && !confirm('ตัวอย่างไม่ผ่าน QA — บังคับย้ายทั้งเรื่อง? (จะถูกบันทึกว่าบังคับ)')) return; act('/api/film/films', { action: 'apply_migration', migration_id: m.id, rerender, force: !m.passed }, 'กำลังย้ายทั้งเรื่อง...'); }} className={`px-2 py-1 rounded ${m.passed ? 'bg-[#1A1A1A] text-[#D4AF37]' : 'bg-white border border-red-300 text-red-600'}`}>{m.passed ? 'ย้ายทั้งเรื่อง' : 'บังคับย้าย'}</button>
+                    )}
+                    {m.status !== 'applied' && <button type="button" disabled={!!busy} onClick={() => act('/api/film/films', { action: 'reject_migration', migration_id: m.id }, 'ปฏิเสธ...')} className="px-2 py-1 rounded bg-white border border-gray-300">ปฏิเสธ</button>}
+                  </span>
+                </div>
+                {m.samples.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {m.samples.map((s) => {
+                      const sc = film.scenes.find((x) => x.id === s.scene_id); const sh = sc?.shots.find((x) => x.id === s.shot_id);
+                      return (
+                        <div key={s.vfx_project_id} className={`rounded-lg border p-1.5 text-[10px] ${s.status === 'failed' ? 'border-red-300' : s.qa && !s.qa.passed ? 'border-amber-300' : 'border-gray-200'}`}>
+                          <p className="font-semibold">ฉาก {sc?.order} ช็อต {sh?.order} · {({ processing: 'กำลังเรนเดอร์', ready: 'เสร็จ', failed: 'ล้มเหลว' } as any)[s.status]}</p>
+                          {s.output_url && <video src={s.output_url} controls className="w-full rounded bg-black mt-1" />}
+                          {s.qa && <p className={s.qa.passed ? 'text-green-700' : 'text-amber-800'}>QA {s.qa.passed ? 'ผ่าน' : 'ติดธง'} · ΔE {s.qa.color_delta_e} · hist {s.qa.histogram_score ?? '-'} · style {s.qa.style_distance ?? '-'}</p>}
+                          {s.error && <p className="text-red-600">{s.error}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
           </section>
 
           {/* ── Continuity Board (F4): subject × scene, editable, with history + VLM proposals ── */}
@@ -467,6 +547,31 @@ export default function FilmStudio() {
             })}
             </div>
             ))}
+          </section>
+
+          {/* ── Export (F5): EDL / FCP XML / manifest / QA report, optional MP4 ── */}
+          <section className="bg-[#FAF8F5] border border-gray-100 p-5 rounded-2xl space-y-3 text-xs">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2"><FilmIcon className="w-4 h-4 text-[#D4AF37]" /> ส่งออก (EDL / XML สำหรับ NLE + รายงาน QA)</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={`${exportForm.scope}:${exportForm.id}`} onChange={(e) => { const [scope, id] = e.target.value.split(':'); setExportForm({ ...exportForm, scope: scope as any, id }); }} className="px-2 py-1.5 border border-gray-200 rounded-lg bg-white">
+                <option value="film:">ทั้งเรื่อง</option>
+                {[...(film.acts || [])].sort((a, b) => a.order - b.order).map((a) => <option key={a.id} value={`act:${a.id}`}>องก์ {a.order} · {a.name}</option>)}
+                {orderedScenes(film).map((s) => <option key={s.id} value={`scene:${s.id}`}>ฉาก {s.order} · {s.name}</option>)}
+              </select>
+              <label className="flex items-center gap-1 text-gray-600"><input type="checkbox" checked={exportForm.unapproved} onChange={(e) => setExportForm({ ...exportForm, unapproved: e.target.checked })} /> รวมช็อตที่ยังไม่อนุมัติ</label>
+              <label className="flex items-center gap-1 text-gray-600"><input type="checkbox" checked={exportForm.render} onChange={(e) => setExportForm({ ...exportForm, render: e.target.checked })} /> เรนเดอร์ MP4 รวมด้วย</label>
+              <button type="button" disabled={!!busy} onClick={async () => { setBusy('กำลังสร้าง EDL/XML/รายงาน...'); setError(''); try { const j = await api('/api/film/export', { film_id: film.id, scope: exportForm.scope, scope_id: exportForm.id || undefined, include_unapproved: exportForm.unapproved, render: exportForm.render }); setLastExport(j); setFilm(j.film); } catch (e: any) { setError(e.message); } finally { setBusy(''); } }} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold">ส่งออก</button>
+            </div>
+            {(lastExport ? [lastExport.export, ...film.exports.filter((x) => x.id !== lastExport.export.id)] : film.exports).slice(0, 5).map((x: any) => (
+              <div key={x.id} className="rounded-xl border border-gray-200 bg-white px-3 py-2 flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{x.scope_name}</span><span className="text-gray-500">{x.shots} ช็อต · {x.seconds}s · {x.fps} fps · {new Date(x.at).toLocaleString('th-TH')}</span>
+                <span className="ml-auto flex flex-wrap gap-1.5">
+                  {(['edl', 'xml', 'manifest', 'qa_json', 'qa_csv', 'mp4'] as const).filter((k) => x.files[k]).map((k) => <a key={k} href={x.files[k]} target="_blank" rel="noreferrer" className="px-2 py-0.5 rounded-md border border-gray-300 bg-white">{({ edl: 'EDL', xml: 'FCP XML', manifest: 'manifest', qa_json: 'QA .json', qa_csv: 'QA .csv', mp4: 'MP4' } as any)[k]}</a>)}
+                </span>
+              </div>
+            ))}
+            {lastExport?.qa_summary && <p className="text-[10px] text-gray-500">สรุป QA: ΔE เฉลี่ย {lastExport.qa_summary.mean_delta_e ?? '-'} (เกณฑ์ {lastExport.qa_summary.delta_e_threshold}) · ติดธง QA {lastExport.qa_summary.qa_flagged} · ติดธง continuity {lastExport.qa_summary.continuity_flagged} · ลิงก์หมดอายุใน 1 ชม.</p>}
+            <p className="text-[10px] text-gray-400">ชื่อไฟล์คงที่ (S01_SH02.mp4) — ดาวน์โหลดคลิปตาม manifest ไว้โฟลเดอร์เดียวกับ EDL/XML แล้ว relink ใน Premiere / Resolve ได้ทันที</p>
           </section>
         </>
       )}

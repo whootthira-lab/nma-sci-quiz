@@ -8,6 +8,7 @@ import { effectiveContinuity, inspectContinuity, inspectableShots, diffState, is
 import { resolveEffectiveStyle, requireLockedMaster } from '@/lib/film/resolver';
 import { gradeToAnchor, extractFrame } from '@/lib/film/color';
 import { primeRates } from '@/lib/providers/rates';
+import { assertRunnable, estimateCost } from '@/lib/providers/registry';
 import type { VfxProject } from '@/lib/vfx/types';
 import type { FilmShot } from '@/lib/film/types';
 import { assertTier } from '@/lib/credits/packages';
@@ -47,9 +48,96 @@ export async function POST(req: NextRequest) {
     }
 
     const scene = film.scenes.find((s) => s.id === body.scene_id);
-    if (!scene && body.action !== 'sync') return NextResponse.json({ success: false, error: 'ไม่พบฉาก' }, { status: 404 });
+    const filmLevel = ['sync', 'test_migration', 'sync_migration'].includes(body.action);
+    if (!scene && !filmLevel) return NextResponse.json({ success: false, error: 'ไม่พบฉาก' }, { status: 404 });
 
     switch (body.action) {
+      case 'test_migration': {
+        // F5 "ทดสอบ": re-render up to 3 sample shots with the candidate model in fresh VFX
+        // projects (the real shots are untouched), charged like any generation.
+        await assertTier(email, 'ultra', supabase);
+        const m = film.migrations.find((x) => x.id === body.migration_id);
+        if (!m) return NextResponse.json({ success: false, error: 'ไม่พบรายการย้าย' }, { status: 404 });
+        if (m.status !== 'proposed' && m.status !== 'tested') return NextResponse.json({ success: false, error: `รายการนี้อยู่ในสถานะ ${m.status}` }, { status: 409 });
+        const to = assertRunnable(m.to.model_id);
+        const layerType = m.task === 'vfx.matte' ? 'matte' : 'character';
+        // samples: approved first, then graded/ready, spread across scenes, with an anchor to grade against
+        const pool: { scene: FilmShot & { scene_id: string } }[] = [];
+        for (const sc of film.scenes) for (const sh of sc.shots) if (sc.anchor_frame_url && sh.vfx_project_id && ['approved', 'graded', 'ready'].includes(sh.status)) pool.push({ scene: { ...sh, scene_id: sc.id } });
+        pool.sort((a, b) => (a.scene.status === 'approved' ? 0 : 1) - (b.scene.status === 'approved' ? 0 : 1));
+        const picked: (FilmShot & { scene_id: string })[] = [];
+        for (const p of pool) { if (picked.length >= 3) break; if (picked.filter((x) => x.scene_id === p.scene.scene_id).length >= 2 && pool.length > 3) continue; picked.push(p.scene); }
+        if (!picked.length) return NextResponse.json({ success: false, error: 'ไม่มีช็อตตัวอย่าง (ต้องมีช็อตที่เสร็จแล้วในฉากที่มี anchor)' }, { status: 409 });
+        // credits
+        let credits = 0;
+        const plans: { sh: FilmShot & { scene_id: string }; orig: VfxProject; vs: VfxProject['shots'][number]; cost: number }[] = [];
+        for (const sh of picked) {
+          const orig = await loadProject(email, sh.vfx_project_id, supabase);
+          const vs = orig?.shots.find((x) => x.id === sh.vfx_shot_id) || orig?.shots[0];
+          if (!orig || !vs) continue;
+          const secs = Math.ceil(vs.end - vs.start);
+          const cost = estimateCost(to.id, secs).creditsShown + (layerType === 'character' ? (vs.layers.find((l) => l.type === 'matte')?.cost_credits || 0) : 0);
+          credits += cost; plans.push({ sh, orig, vs, cost });
+        }
+        if (body.confirm_credits !== true) return NextResponse.json({ success: true, preview: true, samples: plans.map((p) => ({ shot_id: p.sh.id, scene_id: p.sh.scene_id, cost: p.cost })), credits, film });
+        if (email !== 'whootthira@gmail.com' && credits > 0) {
+          const { data: wl } = await supabase.from('whitelist').select('generation_limit').eq('email', email).maybeSingle();
+          const cost = Math.round(credits * 10);
+          if (!wl || (wl.generation_limit || 0) < cost) return NextResponse.json({ success: false, error: `เครดิตไม่พอ (ต้องการ ${credits})` }, { status: 403 });
+          await supabase.from('whitelist').update({ generation_limit: (wl.generation_limit || 0) - cost }).eq('email', email);
+        }
+        m.samples = [];
+        for (const p of plans) {
+          const shotCopy = JSON.parse(JSON.stringify(p.vs)) as VfxProject['shots'][number];
+          shotCopy.id = vfxId('shot'); shotCopy.status = 'draft'; shotCopy.output_url = undefined; shotCopy.error = undefined;
+          for (const l of shotCopy.layers) {
+            l.id = vfxId('lyr'); l.job_request_id = undefined; l.history = [];
+            if (l.type === layerType || l.type === 'composite' || (layerType === 'character' && l.type === 'matte')) { l.status = 'pending'; l.output = {}; l.version = 0; }
+            if (l.type === layerType) { l.model_id = to.id; l.cost_credits = estimateCost(to.id, Math.ceil(p.vs.end - p.vs.start)).creditsShown; }
+          }
+          const project: VfxProject = { ...JSON.parse(JSON.stringify(p.orig)), id: vfxId('vfx'), name: `${p.orig.name} · ทดสอบ ${to.label}`, shots: [shotCopy], status: 'planned', estimated_credits: p.cost, charged_credits: p.cost, export_url: undefined, pinned: { ...(p.orig.pinned || {}), [m.task]: to.id }, created_at: now, updated_at: now };
+          try {
+            await startShot(project, shotCopy, supabase);
+            await persist(project, supabase);
+            m.samples.push({ shot_id: p.sh.id, scene_id: p.sh.scene_id, vfx_project_id: project.id, status: 'processing' });
+          } catch (e: any) {
+            m.samples.push({ shot_id: p.sh.id, scene_id: p.sh.scene_id, vfx_project_id: project.id, status: 'failed', error: e?.message || String(e) });
+          }
+        }
+        m.credits += credits; m.status = 'testing'; m.passed = undefined; m.tested_at = undefined;
+        await saveFilm(film, supabase);
+        return NextResponse.json({ success: true, film, migration: m, credits });
+      }
+      case 'sync_migration': {
+        // pull sample outputs, grade each against its scene anchor and run the F3 QA; when all
+        // samples are settled the migration is 'tested' with passed = every sample passed
+        const m = film.migrations.find((x) => x.id === body.migration_id);
+        if (!m) return NextResponse.json({ success: false, error: 'ไม่พบรายการย้าย' }, { status: 404 });
+        for (const s of m.samples) {
+          if (s.status !== 'processing') continue;
+          const p = await loadProject(email, s.vfx_project_id, supabase);
+          const vs = p?.shots[0];
+          if (!p || !vs) { s.status = 'failed'; s.error = 'ไม่พบโปรเจกต์ตัวอย่าง'; continue; }
+          if (vs.status === 'failed') { s.status = 'failed'; s.error = vs.error || 'ล้มเหลว'; continue; }
+          if (!((vs.status === 'review' || vs.status === 'approved') && vs.output_url)) continue;
+          const sc = film.scenes.find((x) => x.id === s.scene_id)!;
+          try {
+            const style = resolveEffectiveStyle(film, sc);
+            const g = await gradeToAnchor(vs.output_url, sc.anchor_frame_url!, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
+            s.output_url = await putFile(`films/${email}/${film.id}/mig_${m.id}_${s.shot_id}.mp4`, g.video, 'video/mp4', supabase);
+            s.delta_e = g.deltaE;
+            const masterPlate = film.masters.find((x) => x.id === sc.location_master_id)?.sheet_urls[0];
+            s.qa = await runConsistencyCheck({ videoUrl: s.output_url, anchorImageUrl: sc.anchor_frame_url!, masterPlateUrl: masterPlate, deltaE: g.deltaE, deltaEThreshold: style.delta_e_threshold, retries: 0 });
+            s.status = 'ready';
+          } catch (e: any) { s.status = 'failed'; s.error = `grade: ${e?.message || e}`; }
+        }
+        if (m.status === 'testing' && m.samples.length && m.samples.every((s) => s.status !== 'processing')) {
+          m.status = 'tested'; m.tested_at = now;
+          m.passed = m.samples.every((s) => s.status === 'ready' && s.qa?.passed !== false);
+        }
+        await saveFilm(film, supabase);
+        return NextResponse.json({ success: true, film, migration: m });
+      }
       case 'override': {
         scene!.style_override = { ...(scene!.style_override || {}), ...(body.style_override || {}) };
         break;
@@ -82,7 +170,9 @@ export async function POST(req: NextRequest) {
           id: vfxId('vfx'), user_email: email, user_id: film.user_id || body.user_id || '', name: `${film.title} · ${scene!.name} · ช็อต ${scene!.shots.length + 1}`,
           footage_url: footageUrl, footage: { seconds: 0, width: 0, height: 0, fps: 0 }, reference_urls: chainFrameUrl ? [master.sheet_urls[0], chainFrameUrl] : [master.sheet_urls[0]],
           instruction: `${master.name} — ${style.neutral_prompt_suffix}${style.continuity_prompt ? `; continuity: ${style.continuity_prompt}` : ''}`, engine: 'matte', grade: 'none', shots: [], status: 'draft',
-          estimated_credits: 0, charged_credits: 0, created_at: now, updated_at: now
+          estimated_credits: 0, charged_credits: 0, created_at: now, updated_at: now,
+          // F5: the film's pinned models are what this project may use — never the registry default
+          pinned: Object.fromEntries(Object.entries(film.pinned_models).map(([task, v]) => [task, v.model_id]))
         };
         project = await analyzeFootage(project, supabase);
         project = await planProject(project, 'matte', 'none');

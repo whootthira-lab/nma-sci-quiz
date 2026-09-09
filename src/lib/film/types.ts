@@ -93,6 +93,35 @@ export interface ContinuityCheck {
   checked_at: string;
 }
 
+export interface FilmMigration {
+  id: string;
+  task: 'vfx.matte' | 'vfx.character';
+  from: { model_id: string; endpoint: string };
+  to: { model_id: string; endpoint: string; label: string };
+  status: 'proposed' | 'testing' | 'tested' | 'applied' | 'rejected';
+  /** up to 3 sample shots re-rendered with the candidate, graded and QA'd like real shots */
+  samples: { shot_id: string; scene_id: string; vfx_project_id: string; status: 'processing' | 'ready' | 'failed'; output_url?: string; delta_e?: number; qa?: FilmShot['qa']; error?: string }[];
+  passed?: boolean;
+  credits: number;
+  forced?: boolean;
+  rerendered?: number;
+  created_at: string;
+  tested_at?: string;
+  applied_at?: string;
+}
+
+export interface FilmExport {
+  id: string;
+  scope: 'film' | 'act' | 'scene';
+  scope_id?: string;
+  scope_name: string;
+  shots: number;
+  seconds: number;
+  fps: number;
+  files: { edl: string; xml: string; manifest: string; qa_json: string; qa_csv: string; mp4?: string };
+  at: string;
+}
+
 export const EMPTY_CONTINUITY: ContinuityFields = { wardrobe: '', hair: '', injuries: '', props_held: [], dirt_level: 'clean' };
 
 export interface FilmShot {
@@ -154,7 +183,13 @@ export interface Film {
   continuity: ContinuityState[];
   continuity_proposals: ContinuityProposal[];
   /** provider + model pinned per task at film creation (F1 records; F5 migrates) */
-  pinned_models: Record<string, { model_id: string; endpoint: string; pinned_at: string }>;
+  pinned_models: Record<string, { model_id: string; endpoint: string; pinned_at: string; migrated_from?: { model_id: string; endpoint: string; at: string; migration_id: string }[] }>;
+  /** F5: last liveness/registry check of the pinned models */
+  model_health?: { checked_at: string; tasks: { task: string; model_id: string; endpoint: string; alive: boolean | null; detail: string; verified: boolean; in_registry: boolean; candidates: { model_id: string; label: string; endpoint: string; credits_per_unit: number }[] }[] };
+  /** F5: migration flow — propose → test 3 sample shots → QA → apply to the whole film */
+  migrations: FilmMigration[];
+  /** F5: exports (EDL / XML / manifest / QA report / optional MP4) */
+  exports: FilmExport[];
   status: 'draft' | 'active' | 'archived';
   created_at: string;
   updated_at: string;
