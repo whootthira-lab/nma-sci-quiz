@@ -3,8 +3,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { uploadToStorage } from '@/lib/supabase-db';
-import type { Film, MasterAsset, FilmScene, StyleBible } from '@/lib/film/types';
-import { Clapperboard, Loader2, Lock, Unlock, Palette, MapPin, User, Plus, RefreshCw, CheckCircle2, AlertCircle, Trash2, Film as FilmIcon, Anchor } from 'lucide-react';
+import type { Film, MasterAsset, FilmScene, StyleBible, ContinuityFields } from '@/lib/film/types';
+import { EMPTY_CONTINUITY } from '@/lib/film/types';
+import { Clapperboard, Loader2, Lock, Unlock, Palette, MapPin, User, Plus, RefreshCw, CheckCircle2, AlertCircle, Trash2, Film as FilmIcon, Anchor, Shirt, Eye } from 'lucide-react';
+
+/** scenes in film order (act order, then scene order) — mirrors lib/film/continuity */
+function orderedScenes(film: Film): FilmScene[] {
+  const actOrder = new Map((film.acts || []).map((a) => [a.id, a.order] as const));
+  return [...film.scenes].sort((a, b) => (actOrder.get(a.act_id || '') ?? 0) - (actOrder.get(b.act_id || '') ?? 0) || a.order - b.order);
+}
+/** effective continuity of a subject in a scene: own state or the latest earlier scene's */
+function cellState(film: Film, sceneId: string, subjectId: string): { state: ContinuityFields; own: boolean; source: string; from?: FilmScene; rec?: Film['continuity'][number] } {
+  const scenes = orderedScenes(film);
+  const idx = scenes.findIndex((s) => s.id === sceneId);
+  for (let i = idx; i >= 0; i--) {
+    const rec = (film.continuity || []).find((c) => c.scene_id === scenes[i].id && c.subject_master_id === subjectId);
+    if (rec) return { state: { ...EMPTY_CONTINUITY, ...rec.state }, own: i === idx, source: rec.source, from: i === idx ? undefined : scenes[i], rec: i === idx ? rec : undefined };
+  }
+  return { state: { ...EMPTY_CONTINUITY }, own: false, source: 'none' };
+}
+function stateSummary(s: ContinuityFields): string {
+  const d: string[] = [];
+  if (s.wardrobe) d.push(`👕 ${s.wardrobe}`); if (s.hair) d.push(`💇 ${s.hair}`); if (s.injuries) d.push(`🩹 ${s.injuries}`);
+  if (s.props_held?.length) d.push(`✋ ${s.props_held.join(', ')}`); if (s.dirt_level && s.dirt_level !== 'clean') d.push(s.dirt_level === 'heavy' ? '🟤 สกปรกมาก' : '🟫 สกปรกเล็กน้อย');
+  if (s.notes) d.push(`📝 ${s.notes}`);
+  return d.join(' · ');
+}
 
 /**
  * Film Mode F1 — Bible Studio + masters + scenes with anchor-matched grading.
@@ -32,6 +56,9 @@ export default function FilmStudio() {
   const [shotFootage, setShotFootage] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
   const [gradeReport, setGradeReport] = useState<Record<string, any>>({});
+  const [contReport, setContReport] = useState<Record<string, any>>({});
+  const [contEdit, setContEdit] = useState<{ scene_id: string; subject_id: string; draft: ContinuityFields; props: string } | null>(null);
+  const [contHistory, setContHistory] = useState<string>(''); // "sceneId:subjectId" whose history is open
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const api = async (path: string, body: any) => {
@@ -227,6 +254,96 @@ export default function FilmStudio() {
             </div>
           </section>
 
+          {/* ── Continuity Board (F4): subject × scene, editable, with history + VLM proposals ── */}
+          {film.masters.some((m) => m.kind === 'character' || m.kind === 'prop') && film.scenes.length > 0 && (
+            <section className="bg-[#FAF8F5] border border-gray-100 p-5 rounded-2xl space-y-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-2"><Shirt className="w-4 h-4 text-[#D4AF37]" /> Continuity Board</h3>
+              <p className="text-[10px] text-gray-400">สถานะของตัวละคร/พร็อพต่อฉาก (เสื้อผ้า ทรงผม บาดแผล พร็อพที่ถือ ความสกปรก) — ฉากถัดไปสืบทอดค่าล่าสุดจนกว่าจะตั้งใหม่ · resolver แนบ state นี้ให้ทุกช็อตที่สร้าง และ VLM ใช้ตรวจช็อตที่เสร็จแล้ว · หลังอนุมัติช็อต ระบบเสนอ state ที่เห็นในเฟรมสุดท้าย คุณยืนยันก่อนบันทึก</p>
+              {(film.continuity_proposals || []).length > 0 && (
+                <div className="space-y-1.5">
+                  {film.continuity_proposals.map((p) => {
+                    const sc = film.scenes.find((s) => s.id === p.scene_id); const subj = film.masters.find((m) => m.id === p.subject_master_id); const sh = sc?.shots.find((s) => s.id === p.from_shot_id);
+                    return (
+                      <div key={p.id} className="rounded-xl border border-[#D4AF37] bg-white px-3 py-2 text-[11px] flex flex-wrap items-center gap-2">
+                        <Eye className="w-3.5 h-3.5 text-[#D4AF37]" />
+                        <span className="font-semibold">{subj?.name}</span> <span className="text-gray-500">ฉาก {sc?.order} {sc?.name} · จากช็อต {sh?.order} ที่อนุมัติ</span>
+                        <span className="text-gray-700">{p.diff.join(' · ')}</span>
+                        <span className="ml-auto flex gap-1">
+                          <button type="button" disabled={!!busy} onClick={() => act('/api/film/films', { action: 'confirm_proposal', proposal_id: p.id }, 'บันทึก state...')} className="px-2 py-0.5 rounded-md bg-[#1A1A1A] text-[#D4AF37]">ยืนยัน</button>
+                          <button type="button" disabled={!!busy} onClick={() => act('/api/film/films', { action: 'reject_proposal', proposal_id: p.id }, 'ปฏิเสธ...')} className="px-2 py-0.5 rounded-md border border-gray-300 bg-white">ไม่ใช่</button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="text-[11px] border-separate border-spacing-0 min-w-full">
+                  <thead>
+                    <tr>
+                      <th className="text-left px-2 py-1 text-gray-500 font-medium sticky left-0 bg-[#FAF8F5]">subject</th>
+                      {orderedScenes(film).map((sc) => <th key={sc.id} className="text-left px-2 py-1 text-gray-500 font-medium min-w-[180px]">ฉาก {sc.order} · {sc.name}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {film.masters.filter((m) => m.kind === 'character' || m.kind === 'prop').map((subj) => (
+                      <tr key={subj.id} className="align-top">
+                        <td className="px-2 py-1.5 sticky left-0 bg-[#FAF8F5] border-t border-gray-100">
+                          <span className="flex items-center gap-1 font-semibold text-[#1A1A1A]">{subj.sheet_urls[0] && <img src={subj.sheet_urls[0]} alt="" className="w-6 h-6 rounded object-cover" />}{subj.name}</span>
+                          <span className="text-gray-400">{subj.kind === 'character' ? 'ตัวละคร' : 'พร็อพ'}</span>
+                        </td>
+                        {orderedScenes(film).map((sc) => {
+                          const inScene = !Array.isArray(sc.subject_master_ids) || sc.subject_master_ids.includes(subj.id);
+                          const cell = cellState(film, sc.id, subj.id);
+                          const key = `${sc.id}:${subj.id}`;
+                          const editing = contEdit && contEdit.scene_id === sc.id && contEdit.subject_id === subj.id;
+                          const allSubjects = film.masters.filter((m) => m.kind === 'character' || m.kind === 'prop').map((m) => m.id);
+                          const toggleIn = () => { const cur = Array.isArray(sc.subject_master_ids) ? sc.subject_master_ids : allSubjects; const next = inScene ? cur.filter((id) => id !== subj.id) : [...cur, subj.id]; act('/api/film/scenes', { action: 'set_subjects', scene_id: sc.id, subject_master_ids: next }, 'บันทึก subject ของฉาก...'); };
+                          return (
+                            <td key={sc.id} className={`px-2 py-1.5 border-t border-l border-gray-100 ${inScene ? '' : 'bg-gray-50 opacity-60'}`}>
+                              {!inScene ? (
+                                <button type="button" onClick={toggleIn} className="text-gray-400 underline">ไม่อยู่ในฉากนี้ (กดเพื่อเพิ่ม)</button>
+                              ) : editing ? (
+                                <div className="space-y-1 bg-white border border-[#D4AF37] rounded-lg p-2 w-56">
+                                  {([['wardrobe', 'เสื้อผ้า'], ['hair', 'ทรงผม'], ['injuries', 'บาดแผล/ร่องรอย']] as const).map(([k, label]) => (
+                                    <input key={k} value={(contEdit!.draft as any)[k]} onChange={(e) => setContEdit({ ...contEdit!, draft: { ...contEdit!.draft, [k]: e.target.value } })} placeholder={label} className="w-full px-2 py-1 border border-gray-200 rounded" />
+                                  ))}
+                                  <input value={contEdit!.props} onChange={(e) => setContEdit({ ...contEdit!, props: e.target.value })} placeholder="พร็อพที่ถือ (คั่นด้วย ,)" className="w-full px-2 py-1 border border-gray-200 rounded" />
+                                  <select value={contEdit!.draft.dirt_level} onChange={(e) => setContEdit({ ...contEdit!, draft: { ...contEdit!.draft, dirt_level: e.target.value as any } })} className="w-full px-2 py-1 border border-gray-200 rounded bg-white"><option value="clean">สะอาด</option><option value="light">สกปรกเล็กน้อย</option><option value="heavy">สกปรกมาก</option></select>
+                                  <input value={contEdit!.draft.notes || ''} onChange={(e) => setContEdit({ ...contEdit!, draft: { ...contEdit!.draft, notes: e.target.value } })} placeholder="หมายเหตุ" className="w-full px-2 py-1 border border-gray-200 rounded" />
+                                  <div className="flex gap-1">
+                                    <button type="button" disabled={!!busy} onClick={async () => { const j = await act('/api/film/films', { action: 'set_continuity', scene_id: sc.id, subject_master_id: subj.id, state: { ...contEdit!.draft, props_held: contEdit!.props.split(',').map((s) => s.trim()).filter(Boolean) } }, 'บันทึก continuity...'); if (j) setContEdit(null); }} className="px-2 py-0.5 rounded bg-[#1A1A1A] text-[#D4AF37]">บันทึก</button>
+                                    <button type="button" onClick={() => setContEdit(null)} className="px-2 py-0.5 rounded border border-gray-300 bg-white">ยกเลิก</button>
+                                    {cell.own && <button type="button" disabled={!!busy} onClick={async () => { const j = await act('/api/film/films', { action: 'set_continuity', scene_id: sc.id, subject_master_id: subj.id, clear: true }, 'ล้าง state ของฉากนี้...'); if (j) setContEdit(null); }} className="ml-auto text-red-500 underline">ล้าง (สืบทอดจากฉากก่อน)</button>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  {cell.source === 'none' ? <span className="text-gray-400 italic">ยังไม่กำหนด</span> : <span className={cell.own ? 'text-[#1A1A1A]' : 'text-gray-500 italic'}>{stateSummary(cell.state) || <span className="text-gray-400">ว่าง</span>}</span>}
+                                  <div className="flex flex-wrap gap-x-2 text-[10px] text-gray-400">
+                                    {cell.own ? <span>{cell.source === 'auto' ? '🤖 จาก VLM' : '✍️ ตั้งเอง'}</span> : cell.from ? <span>สืบทอดจากฉาก {cell.from.order}</span> : null}
+                                    <button type="button" onClick={() => setContEdit({ scene_id: sc.id, subject_id: subj.id, draft: { ...cell.state }, props: (cell.state.props_held || []).join(', ') })} className="underline">{cell.own ? 'แก้' : 'ตั้งสำหรับฉากนี้'}</button>
+                                    {cell.rec && cell.rec.history.length > 0 && <button type="button" onClick={() => setContHistory(contHistory === key ? '' : key)} className="underline">ประวัติ {cell.rec.history.length}</button>}
+                                    <button type="button" onClick={toggleIn} className="underline">เอาออกจากฉาก</button>
+                                  </div>
+                                  {contHistory === key && cell.rec && (
+                                    <ul className="text-[10px] text-gray-500 border-l-2 border-gray-200 pl-2 space-y-0.5">
+                                      {cell.rec.history.map((h, i) => <li key={i}>{new Date(h.at).toLocaleString('th-TH')} · {h.source === 'auto' ? 'VLM' : 'ตั้งเอง'} · {stateSummary(h.state) || 'ว่าง'}</li>)}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           {/* ── Scenes ── */}
           <section className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 bg-[#FAF8F5] border border-gray-100 p-4 rounded-2xl text-xs">
@@ -277,7 +394,15 @@ export default function FilmStudio() {
                     </span>
                     <label className="ml-auto flex items-center gap-1 text-gray-500">exposure <input type="number" step={0.25} min={-2} max={2} value={scene.style_override?.exposure_stops || 0} onChange={(e) => act('/api/film/scenes', { action: 'override', scene_id: scene.id, style_override: { exposure_stops: Number(e.target.value) } }, 'บันทึก override...')} className="w-14 px-1 py-0.5 border border-gray-200 rounded" /> stop</label>
                     <button type="button" disabled={!!busy || !scene.anchor_frame_url || !scene.shots.some((s) => s.pre_grade_url)} onClick={() => gradeScene(scene)} className="px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-[#D4AF37] font-semibold disabled:opacity-40 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> grade ทั้งฉาก (LUT + anchor)</button>
+                    {film.masters.some((m) => m.kind === 'character' || m.kind === 'prop') && (
+                      <button type="button" disabled={!!busy || !scene.shots.some((s) => s.pre_grade_url || s.post_grade_url)} onClick={async () => { const j = await act('/api/film/scenes', { action: 'check_continuity', scene_id: scene.id }, `กำลังตรวจ continuity ฉาก ${scene.name} (VLM)...`); if (j) setContReport((p) => ({ ...p, [scene.id]: j })); }} className="px-3 py-1.5 rounded-lg bg-white border border-[#D4AF37] font-semibold disabled:opacity-40 flex items-center gap-1" title="VLM เทียบทุกช็อตกับ continuity state ของฉาก (เสื้อผ้า/ผม/บาดแผล/พร็อพ/ความสกปรก)"><Shirt className="w-3 h-3" /> ตรวจ continuity</button>
+                    )}
                   </div>
+                  {contReport[scene.id] && (
+                    <p className={`rounded-lg px-3 py-1.5 border ${contReport[scene.id].flagged ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-700'}`}>
+                      continuity: ติดธง {contReport[scene.id].flagged}/{contReport[scene.id].results.length} ช็อต · {contReport[scene.id].results.map((r: any) => `ช็อต ${scene.shots.find((s) => s.id === r.shot_id)?.order}: ${r.passed === null ? 'ตรวจไม่ได้' : r.passed ? 'ผ่าน' : r.issues.join(' / ')}`).join(' | ')}
+                    </p>
+                  )}
                   {report && (
                     <p className={`rounded-lg px-3 py-1.5 border ${report.mean != null && report.mean < report.threshold ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
                       ΔE เฉลี่ยของฉาก {report.mean ?? '-'} (เกณฑ์ &lt; {report.threshold}) · ติดธง {report.results.filter((r: any) => r.passed === false).length}/{report.results.length} ช็อต · {report.results.map((r: any) => `ช็อต ${scene.shots.find((s) => s.id === r.shot_id)?.order}: ${r.error ? r.error : `ΔE ${r.delta_e} · hist ${r.histogram ?? '-'} · style ${r.style ?? '-'}${r.retries ? ` · retry×${r.retries}` : ''}`}`).join(' | ')}
@@ -294,7 +419,7 @@ export default function FilmStudio() {
                           </span>
                         </div>
                         {showStyle === sh.id && (
-                          <pre className="text-[9px] leading-tight bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify({ bible_v: sh.effective_style?.bible_version, lut: sh.effective_style?.lut_name || null, exposure: sh.effective_style?.exposure_stops, lighting: sh.effective_style?.lighting_rules, lens: sh.effective_style?.lens, location: sh.effective_style?.location?.name, master_v: sh.master_versions, chained: !!sh.chain_frame_url, graded_with: sh.effective_style?.graded_with }, null, 1)}</pre>
+                          <pre className="text-[9px] leading-tight bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify({ bible_v: sh.effective_style?.bible_version, lut: sh.effective_style?.lut_name || null, exposure: sh.effective_style?.exposure_stops, lighting: sh.effective_style?.lighting_rules, lens: sh.effective_style?.lens, location: sh.effective_style?.location?.name, master_v: sh.master_versions, chained: !!sh.chain_frame_url, continuity: sh.effective_style?.continuity_prompt || null, graded_with: sh.effective_style?.graded_with }, null, 1)}</pre>
                         )}
                         {(sh.post_grade_url || sh.pre_grade_url) ? <video src={sh.post_grade_url || sh.pre_grade_url} controls className="w-full rounded-lg bg-black" /> : <div className="aspect-video rounded-lg bg-gray-100" />}
                         {sh.qa && (
@@ -307,6 +432,15 @@ export default function FilmStudio() {
                               {sh.qa.auto_retry_count > 0 && <span>retry ×{sh.qa.auto_retry_count}</span>}
                             </div>
                             {sh.qa.style_notes && <p className="text-gray-600">{sh.qa.style_notes}</p>}
+                          </div>
+                        )}
+                        {sh.continuity && (
+                          <div className={`rounded-lg px-2 py-1.5 border text-[10px] space-y-0.5 ${sh.continuity.passed ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                            <span className="font-semibold">continuity {sh.continuity.passed ? 'ผ่าน' : 'ติดธง'}</span>
+                            {sh.continuity.per_subject.map((p) => {
+                              const name = film.masters.find((m) => m.id === p.subject_master_id)?.name || p.subject_master_id;
+                              return <p key={p.subject_master_id} className="text-gray-600">{name}: {!p.present ? 'ไม่อยู่ในเฟรม' : p.consistent ? 'ตรงตาม state' : p.issues.join(' / ')}</p>;
+                            })}
                           </div>
                         )}
                         <div className="flex flex-wrap gap-1.5">

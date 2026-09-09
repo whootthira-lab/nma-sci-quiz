@@ -4,6 +4,7 @@ import { serviceClient, newId, saveFilm, loadFilm } from '@/lib/film/store';
 import { loadProject, saveProject, newId as vfxId, putFile } from '@/lib/vfx/store';
 import { analyzeFootage, planProject, startShot, persist, projectCredits, redoMatte } from '@/lib/vfx/pipeline';
 import { runConsistencyCheck } from '@/lib/film/qa';
+import { effectiveContinuity, inspectContinuity, inspectableShots, diffState, isEmptyState } from '@/lib/film/continuity';
 import { resolveEffectiveStyle, requireLockedMaster } from '@/lib/film/resolver';
 import { gradeToAnchor, extractFrame } from '@/lib/film/color';
 import { primeRates } from '@/lib/providers/rates';
@@ -80,7 +81,7 @@ export async function POST(req: NextRequest) {
         let project: VfxProject = {
           id: vfxId('vfx'), user_email: email, user_id: film.user_id || body.user_id || '', name: `${film.title} · ${scene!.name} · ช็อต ${scene!.shots.length + 1}`,
           footage_url: footageUrl, footage: { seconds: 0, width: 0, height: 0, fps: 0 }, reference_urls: chainFrameUrl ? [master.sheet_urls[0], chainFrameUrl] : [master.sheet_urls[0]],
-          instruction: `${master.name} — ${style.neutral_prompt_suffix}`, engine: 'matte', grade: 'none', shots: [], status: 'draft',
+          instruction: `${master.name} — ${style.neutral_prompt_suffix}${style.continuity_prompt ? `; continuity: ${style.continuity_prompt}` : ''}`, engine: 'matte', grade: 'none', shots: [], status: 'draft',
           estimated_credits: 0, charged_credits: 0, created_at: now, updated_at: now
         };
         project = await analyzeFootage(project, supabase);
@@ -135,7 +136,51 @@ export async function POST(req: NextRequest) {
         if (!['ready', 'graded'].includes(sh.status)) return NextResponse.json({ success: false, error: 'อนุมัติได้เฉพาะช็อตที่เสร็จแล้ว' }, { status: 400 });
         sh.status = 'approved';
         sh.updated_at = now;
+        // F4: after approval the VLM observes the subjects' end-of-shot state and PROPOSES the
+        // continuity update — nothing on the board changes until the user confirms.
+        const subjects = effectiveContinuity(film, scene!);
+        if (subjects.length && (sh.post_grade_url || sh.pre_grade_url)) {
+          const check = await inspectContinuity(sh.post_grade_url || sh.pre_grade_url!, subjects, film.masters);
+          if (check) {
+            sh.continuity = check;
+            for (const p of check.per_subject) {
+              if (!p.present || !p.observed) continue;
+              const expected = subjects.find((s) => s.subject_master_id === p.subject_master_id)!;
+              // propose when the board has nothing yet for this subject, or the shot contradicts it
+              if (!isEmptyState(expected.state) && expected.source !== 'none' && !expected.inherited_from_scene_id && p.consistent) continue;
+              const diff = diffState(expected.state, p.observed);
+              if (!diff.length) continue;
+              film.continuity_proposals = film.continuity_proposals.filter((x) => !(x.scene_id === scene!.id && x.subject_master_id === p.subject_master_id));
+              film.continuity_proposals.push({ id: newId('cprop'), scene_id: scene!.id, subject_master_id: p.subject_master_id, from_shot_id: sh.id, observed: p.observed, diff, at: now });
+            }
+          }
+        }
         break;
+      }
+      case 'check_continuity': {
+        // VLM continuity check of every finished shot in the scene (or one shot) against the
+        // scene's continuity_state; advisory flags on the shot cards, no generation.
+        const subjects = effectiveContinuity(film, scene!);
+        if (!subjects.length) return NextResponse.json({ success: false, error: 'ฉากนี้ไม่มี subject (ตัวละคร/พร็อพ) ให้ตรวจ — เพิ่ม master ตัวละครหรือพร็อพก่อน' }, { status: 400 });
+        const targets = inspectableShots(scene!).filter((s) => !body.shot_id || s.id === body.shot_id);
+        const results: any[] = [];
+        for (const sh of targets) {
+          const check = await inspectContinuity(sh.post_grade_url || sh.pre_grade_url!, subjects, film.masters);
+          if (check) { sh.continuity = check; sh.updated_at = now; }
+          results.push({ shot_id: sh.id, passed: check?.passed ?? null, issues: check ? check.per_subject.flatMap((p) => p.issues.map((i) => `${subjects.find((s) => s.subject_master_id === p.subject_master_id)?.name}: ${i}`)) : ['ตรวจไม่ได้'] });
+        }
+        await saveFilm(film, supabase);
+        return NextResponse.json({ success: true, film, results, flagged: results.filter((r) => r.passed === false).length, subjects: subjects.map((s) => ({ id: s.subject_master_id, name: s.name, source: s.source, inherited_from_scene_id: s.inherited_from_scene_id })) });
+      }
+      case 'set_subjects': {
+        // which character/prop masters are in this scene (unset = all)
+        const ids = Array.isArray(body.subject_master_ids) ? body.subject_master_ids.filter((id: any) => film.masters.some((m) => m.id === id && (m.kind === 'character' || m.kind === 'prop'))) : null;
+        scene!.subject_master_ids = ids === null ? undefined : ids;
+        break;
+      }
+      case 'preview_style': {
+        // the resolver's snapshot for this scene as the next shot would receive it (no job)
+        return NextResponse.json({ success: true, style: resolveEffectiveStyle(film, scene!) });
       }
       case 'set_anchor': {
         const sh = scene!.shots.find((x) => x.id === body.shot_id);

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { guard } from '@/lib/auth-server';
 import { serviceClient, newId, saveFilm, loadFilm, listFilms, deleteFilm } from '@/lib/film/store';
 import { signDeep } from '@/lib/vfx/store';
-import { DEFAULT_BIBLE, Film, MasterAsset, StyleBible } from '@/lib/film/types';
+import { DEFAULT_BIBLE, Film, MasterAsset, StyleBible, ContinuityFields } from '@/lib/film/types';
 import { requireConsent, loadConsent } from '@/lib/vfx/consent';
 import { MATTE_ID, BG_IMAGE_ID, CHARACTER_ID } from '@/lib/vfx/pipeline';
 import { getModel } from '@/lib/providers/registry';
@@ -11,6 +11,17 @@ export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 const own = (email: string) => (f: Film) => f.user_email === email;
+
+function normContinuity(x: any): ContinuityFields {
+  return {
+    wardrobe: String(x?.wardrobe || '').trim().slice(0, 200),
+    hair: String(x?.hair || '').trim().slice(0, 120),
+    injuries: String(x?.injuries || '').trim().slice(0, 200),
+    props_held: Array.isArray(x?.props_held) ? x.props_held.map((p: any) => String(p).trim()).filter(Boolean).slice(0, 8) : String(x?.props_held || '').split(',').map((s: string) => s.trim()).filter(Boolean).slice(0, 8),
+    dirt_level: ['clean', 'light', 'heavy'].includes(x?.dirt_level) ? x.dirt_level : 'clean',
+    notes: x?.notes ? String(x.notes).trim().slice(0, 200) : undefined
+  };
+}
 
 /** GET ?email=…[&id=…] */
 export async function GET(req: NextRequest) {
@@ -37,6 +48,8 @@ export async function GET(req: NextRequest) {
  *   lock_bible        {}                     — freezes the current version
  *   bump_bible        { bible }              — new version (old one kept in history); scenes re-grade on request
  *   add_master        { kind, name, sheet_urls[], consent_id? }
+ *   set_continuity    { scene_id, subject_master_id, state | clear } — Continuity Board cell (F4)
+ *   confirm_proposal  { proposal_id } / reject_proposal { proposal_id } — VLM-proposed state after approval
  *   update_master     { master_id, name?, sheet_urls? } — refused once locked
  *   lock_master       { master_id }
  *   bump_master       { master_id, sheet_urls } — new version; used versions stay intact
@@ -55,7 +68,7 @@ export async function POST(req: NextRequest) {
       const pin = (task: string, id: string) => { const m = getModel(id); return m ? { [task]: { model_id: m.id, endpoint: m.endpoint, pinned_at: now } } : {}; };
       const film: Film = {
         id: newId('film'), user_email: email, user_id: body.user_id || '', title: String(body.title || 'หนังใหม่').trim() || 'หนังใหม่',
-        bible, bible_history: [], masters: [], acts: [{ id: newId('act'), order: 1, name: 'องก์ 1', style_override: {} }], scenes: [],
+        bible, bible_history: [], masters: [], acts: [{ id: newId('act'), order: 1, name: 'องก์ 1', style_override: {} }], scenes: [], continuity: [], continuity_proposals: [],
         pinned_models: { ...pin('vfx.matte', MATTE_ID), ...pin('image.plate', BG_IMAGE_ID), ...pin('vfx.character', CHARACTER_ID) },
         status: 'draft', created_at: now, updated_at: now
       };
@@ -167,6 +180,32 @@ export async function POST(req: NextRequest) {
         if (!sc || !a) return NextResponse.json({ success: false, error: 'ไม่พบฉากหรือองก์' }, { status: 404 });
         sc.act_id = a.id;
         sc.order = film.scenes.filter((x) => x.act_id === a.id).length;
+        break;
+      }
+      case 'set_continuity': {
+        // Continuity Board (F4): the user sets/edits a subject's state in a scene by hand.
+        // Later scenes inherit it until one of them sets its own. History is kept per cell.
+        const sc = film.scenes.find((x) => x.id === body.scene_id);
+        const subject = film.masters.find((m) => m.id === body.subject_master_id && (m.kind === 'character' || m.kind === 'prop'));
+        if (!sc || !subject) return NextResponse.json({ success: false, error: 'ไม่พบฉากหรือ subject (ต้องเป็น master ตัวละคร/พร็อพ)' }, { status: 404 });
+        const state = normContinuity(body.state);
+        const cur = film.continuity.find((c) => c.scene_id === sc.id && c.subject_master_id === subject.id);
+        if (body.clear === true) { film.continuity = film.continuity.filter((c) => c !== cur); break; }
+        if (cur) { cur.history.unshift({ at: cur.updated_at, source: cur.source, state: cur.state, shot_id: cur.updated_after_shot_id }); cur.state = state; cur.source = 'user'; cur.updated_after_shot_id = undefined; cur.updated_at = now; }
+        else film.continuity.push({ id: newId('cont'), scene_id: sc.id, subject_master_id: subject.id, state, source: 'user', history: [], updated_at: now });
+        break;
+      }
+      case 'confirm_proposal': {
+        const p = film.continuity_proposals.find((x) => x.id === body.proposal_id);
+        if (!p) return NextResponse.json({ success: false, error: 'ไม่พบข้อเสนอ' }, { status: 404 });
+        const cur = film.continuity.find((c) => c.scene_id === p.scene_id && c.subject_master_id === p.subject_master_id);
+        if (cur) { cur.history.unshift({ at: cur.updated_at, source: cur.source, state: cur.state, shot_id: cur.updated_after_shot_id }); cur.state = p.observed; cur.source = 'auto'; cur.updated_after_shot_id = p.from_shot_id; cur.updated_at = now; }
+        else film.continuity.push({ id: newId('cont'), scene_id: p.scene_id, subject_master_id: p.subject_master_id, state: p.observed, source: 'auto', updated_after_shot_id: p.from_shot_id, history: [], updated_at: now });
+        film.continuity_proposals = film.continuity_proposals.filter((x) => x.id !== p.id);
+        break;
+      }
+      case 'reject_proposal': {
+        film.continuity_proposals = film.continuity_proposals.filter((x) => x.id !== body.proposal_id);
         break;
       }
       default:

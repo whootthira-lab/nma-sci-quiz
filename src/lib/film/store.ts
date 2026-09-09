@@ -21,6 +21,9 @@ export function ensureActs(film: Film): Film {
     film.acts = [{ id: newId('act'), order: 1, name: 'องก์ 1', style_override: {} }];
   }
   for (const s of film.scenes) if (!s.act_id || !film.acts.some((a) => a.id === s.act_id)) s.act_id = film.acts[0].id;
+  // F4 continuity DB on films written before it
+  if (!Array.isArray(film.continuity)) film.continuity = [];
+  if (!Array.isArray(film.continuity_proposals)) film.continuity_proposals = [];
   return film;
 }
 

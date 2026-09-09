@@ -1,4 +1,5 @@
 import type { Film, FilmScene, StyleBible, MasterAsset } from './types';
+import { effectiveContinuity, continuityPrompt, type EffectiveContinuity } from './continuity';
 
 /**
  * Style Resolver (F1): bible → scene override → shot override, lower layers winning only
@@ -22,6 +23,9 @@ export interface EffectiveStyle {
   pinned_models: Film['pinned_models'];
   /** the neutral-grade instruction every generative layer receives — no colour words */
   neutral_prompt_suffix: string;
+  /** F4: continuity states of the scene's subjects (own or inherited) + the clause built from them */
+  continuity: EffectiveContinuity[];
+  continuity_prompt: string;
   resolved_at: string;
 }
 
@@ -33,6 +37,8 @@ export function resolveEffectiveStyle(film: Film, scene: FilmScene, shotOverride
   const master = film.masters.find((m) => m.id === scene.location_master_id) || null;
   const lighting = { ...b.lighting_rules, ...(ao.lighting_rules || {}), ...(so.lighting_rules || {}), ...(shotOverride.lighting_rules || {}) };
   const lens = { ...b.lens, ...(ao.lens || {}), ...(so.lens || {}), ...(shotOverride.lens || {}) };
+  // step 3 of the spec: masters the scene references + current continuity state of its subjects
+  const continuity = effectiveContinuity(film, scene);
   return {
     bible_version: b.version,
     palette: b.palette,
@@ -49,6 +55,8 @@ export function resolveEffectiveStyle(film: Film, scene: FilmScene, shotOverride
     anchor_frame_url: scene.anchor_frame_url,
     pinned_models: film.pinned_models,
     neutral_prompt_suffix: `neutral colour grade, ${lighting.key}, fill ${lighting.fill}, contrast ratio ${lighting.ratio}, ${lens.focal} lens look, no colour cast, no stylised tint`,
+    continuity,
+    continuity_prompt: continuityPrompt(continuity),
     resolved_at: new Date().toISOString()
   };
 }

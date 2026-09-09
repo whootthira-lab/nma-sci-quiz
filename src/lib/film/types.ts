@@ -53,6 +53,48 @@ export interface FilmAct {
   style_override: Partial<Pick<StyleBible, 'lut_url' | 'lut_name' | 'lighting_rules' | 'lens'>> & { exposure_stops?: number };
 }
 
+/** Continuity (F4): what a subject looks like / carries inside a scene. Data, not prose. */
+export interface ContinuityFields {
+  wardrobe: string;
+  hair: string;
+  injuries: string;
+  props_held: string[];
+  dirt_level: 'clean' | 'light' | 'heavy';
+  notes?: string;
+}
+
+export interface ContinuityState {
+  id: string;
+  scene_id: string;
+  /** a character or prop master */
+  subject_master_id: string;
+  state: ContinuityFields;
+  source: 'user' | 'auto';
+  /** the approved shot whose observed state this came from (auto) */
+  updated_after_shot_id?: string;
+  history: { at: string; source: 'user' | 'auto'; state: ContinuityFields; shot_id?: string }[];
+  updated_at: string;
+}
+
+/** Proposed by the VLM after a shot is approved — the user confirms before it is saved. */
+export interface ContinuityProposal {
+  id: string;
+  scene_id: string;
+  subject_master_id: string;
+  from_shot_id: string;
+  observed: ContinuityFields;
+  diff: string[];
+  at: string;
+}
+
+export interface ContinuityCheck {
+  passed: boolean;
+  per_subject: { subject_master_id: string; present: boolean; consistent: boolean; issues: string[]; observed?: ContinuityFields }[];
+  checked_at: string;
+}
+
+export const EMPTY_CONTINUITY: ContinuityFields = { wardrobe: '', hair: '', injuries: '', props_held: [], dirt_level: 'clean' };
+
 export interface FilmShot {
   id: string;
   order: number;
@@ -74,6 +116,8 @@ export interface FilmShot {
   passed?: boolean;
   /** consistency QA (F3): colour ΔE, histogram correlation, VLM style distance, retries */
   qa?: { color_delta_e: number | null; histogram_score: number | null; style_distance: number | null; style_notes?: string; passed: boolean; threshold_used: { delta_e: number; histogram: number; style: number }; auto_retry_count: number; checked_at: string };
+  /** VLM continuity check against the scene's continuity_state (F4) */
+  continuity?: ContinuityCheck;
   error?: string;
   updated_at: string;
 }
@@ -90,6 +134,8 @@ export interface FilmScene {
   /** the approved frame every other shot in the scene is matched to */
   anchor_frame_url?: string;
   anchor_from_shot_id?: string;
+  /** subjects (character/prop masters) in this scene; unset = every character/prop master of the film */
+  subject_master_ids?: string[];
   style_override: Partial<Pick<StyleBible, 'lut_url' | 'lut_name' | 'lighting_rules' | 'lens'>> & { exposure_stops?: number };
   shots: FilmShot[];
 }
@@ -104,6 +150,9 @@ export interface Film {
   masters: MasterAsset[];
   acts: FilmAct[];
   scenes: FilmScene[];
+  /** continuity DB (F4): one state per (scene, subject); later scenes inherit the latest earlier one */
+  continuity: ContinuityState[];
+  continuity_proposals: ContinuityProposal[];
   /** provider + model pinned per task at film creation (F1 records; F5 migrates) */
   pinned_models: Record<string, { model_id: string; endpoint: string; pinned_at: string }>;
   status: 'draft' | 'active' | 'archived';
