@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
         // spent only while there is budget left, so a 5-shot scene with 2 retries each cannot
         // time out — shots past the budget are flagged with the retries they got.
         const started = Date.now();
-        const budgetLeft = () => Date.now() - started < 170_000;
+        const budgetLeft = () => Date.now() - started < 120_000;
         for (const sh of scene!.shots) {
           if (!sh.pre_grade_url || sh.status === 'processing' || sh.status === 'failed') continue;
           try {
@@ -163,9 +163,13 @@ export async function POST(req: NextRequest) {
             // Bible's ΔE after the match is re-graded harder — up to twice — before it is flagged.
             let retries = 0;
             let g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
+            let strengthUsed = 1;
             while (g.deltaE >= style.delta_e_threshold && retries < 2 && budgetLeft()) {
               retries++;
-              g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 + 0.15 * retries });
+              const strength = 1 + 0.15 * retries;
+              const again = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength });
+              // a harder match can overshoot (measured: 0.97 → 1.31) — keep the best attempt
+              if (again.deltaE < g.deltaE) { g = again; strengthUsed = strength; }
             }
             sh.post_grade_url = await putFile(`films/${email}/${film.id}/${scene!.id}_${sh.id}_b${film.bible.version}_${Date.now()}.mp4`, g.video, 'video/mp4', supabase);
             sh.delta_e = g.deltaE;
@@ -173,7 +177,7 @@ export async function POST(req: NextRequest) {
             sh.qa = qa;
             sh.passed = qa.passed;
             if (sh.status !== 'approved') sh.status = 'graded'; // a re-grade does not reopen an approved shot
-            sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, strength: 1 + 0.15 * retries, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
+            sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, strength: strengthUsed, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
             sh.updated_at = now;
             results.push({ shot_id: sh.id, delta_e: g.deltaE, histogram: qa.histogram_score, style: qa.style_distance, passed: qa.passed, retries, lut: g.lutApplied, notes: qa.style_notes });
           } catch (e: any) {
