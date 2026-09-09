@@ -78,13 +78,16 @@ export function continuityPrompt(states: EffectiveContinuity[]): string {
   return parts.join('; ');
 }
 
+/** the VLM writes "none" / "n/a" for absent things — that is an empty field on the board */
+const clean = (v: any) => { const s = String(v || '').trim(); return /^(none|n\/a|na|-|null|no .*|nothing)$/i.test(s) ? '' : s; };
+
 function normFields(x: any): ContinuityFields {
   const dirt = ['clean', 'light', 'heavy'].includes(x?.dirt_level) ? x.dirt_level : 'clean';
   return {
-    wardrobe: String(x?.wardrobe || '').trim(),
-    hair: String(x?.hair || '').trim(),
-    injuries: String(x?.injuries || '').trim(),
-    props_held: Array.isArray(x?.props_held) ? x.props_held.map((p: any) => String(p).trim()).filter(Boolean).slice(0, 8) : [],
+    wardrobe: clean(x?.wardrobe),
+    hair: clean(x?.hair),
+    injuries: clean(x?.injuries),
+    props_held: Array.isArray(x?.props_held) ? x.props_held.map((p: any) => clean(p)).filter(Boolean).slice(0, 8) : [],
     dirt_level: dirt,
     notes: x?.notes ? String(x.notes).trim().slice(0, 200) : undefined
   };
