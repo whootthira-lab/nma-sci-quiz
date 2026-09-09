@@ -280,7 +280,7 @@ export default function FilmStudio() {
                   </div>
                   {report && (
                     <p className={`rounded-lg px-3 py-1.5 border ${report.mean != null && report.mean < report.threshold ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-                      ΔE เฉลี่ยของฉาก {report.mean ?? '-'} (เกณฑ์ &lt; {report.threshold}) · {report.results.map((r: any) => `ช็อต ${scene.shots.find((s) => s.id === r.shot_id)?.order}: ${r.delta_e ?? r.error}`).join(' · ')}
+                      ΔE เฉลี่ยของฉาก {report.mean ?? '-'} (เกณฑ์ &lt; {report.threshold}) · ติดธง {report.results.filter((r: any) => r.passed === false).length}/{report.results.length} ช็อต · {report.results.map((r: any) => `ช็อต ${scene.shots.find((s) => s.id === r.shot_id)?.order}: ${r.error ? r.error : `ΔE ${r.delta_e} · hist ${r.histogram ?? '-'} · style ${r.style ?? '-'}${r.retries ? ` · retry×${r.retries}` : ''}`}`).join(' | ')}
                     </p>
                   )}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -297,9 +297,24 @@ export default function FilmStudio() {
                           <pre className="text-[9px] leading-tight bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify({ bible_v: sh.effective_style?.bible_version, lut: sh.effective_style?.lut_name || null, exposure: sh.effective_style?.exposure_stops, lighting: sh.effective_style?.lighting_rules, lens: sh.effective_style?.lens, location: sh.effective_style?.location?.name, master_v: sh.master_versions, chained: !!sh.chain_frame_url, graded_with: sh.effective_style?.graded_with }, null, 1)}</pre>
                         )}
                         {(sh.post_grade_url || sh.pre_grade_url) ? <video src={sh.post_grade_url || sh.pre_grade_url} controls className="w-full rounded-lg bg-black" /> : <div className="aspect-video rounded-lg bg-gray-100" />}
+                        {sh.qa && (
+                          <div className={`rounded-lg px-2 py-1.5 border text-[10px] space-y-0.5 ${sh.qa.passed ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                            <div className="flex flex-wrap gap-x-2">
+                              <span className="font-semibold">QA {sh.qa.passed ? 'ผ่าน' : 'ติดธง'}</span>
+                              <span title="ΔE สีเฉลี่ยเทียบ anchor" className={sh.qa.color_delta_e != null && sh.qa.color_delta_e >= sh.qa.threshold_used.delta_e ? 'font-bold' : ''}>ΔE {sh.qa.color_delta_e ?? '-'} /{sh.qa.threshold_used.delta_e}</span>
+                              <span title="histogram correlation เทียบ anchor" className={sh.qa.histogram_score != null && sh.qa.histogram_score < sh.qa.threshold_used.histogram ? 'font-bold' : ''}>hist {sh.qa.histogram_score ?? '-'} /≥{sh.qa.threshold_used.histogram}</span>
+                              <span title="style distance (VLM) เทียบ anchor+master" className={sh.qa.style_distance != null && sh.qa.style_distance >= sh.qa.threshold_used.style ? 'font-bold' : ''}>style {sh.qa.style_distance ?? '-'} /{sh.qa.threshold_used.style}</span>
+                              {sh.qa.auto_retry_count > 0 && <span>retry ×{sh.qa.auto_retry_count}</span>}
+                            </div>
+                            {sh.qa.style_notes && <p className="text-gray-600">{sh.qa.style_notes}</p>}
+                          </div>
+                        )}
                         <div className="flex flex-wrap gap-1.5">
                           {sh.pre_grade_url && <button type="button" disabled={!!busy} onClick={() => act('/api/film/scenes', { action: 'set_anchor', scene_id: scene.id, shot_id: sh.id, at_seconds: 0.5 }, 'กำลังบันทึก anchor frame...')} className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${scene.anchor_from_shot_id === sh.id ? 'bg-[#D4AF37]/20 border-[#D4AF37]' : 'bg-white border-gray-300'}`}><Anchor className="w-3 h-3" /> {scene.anchor_from_shot_id === sh.id ? 'anchor ของฉาก' : 'ใช้เป็น anchor'}</button>}
                           {sh.post_grade_url && sh.pre_grade_url && <a href={sh.pre_grade_url} target="_blank" rel="noreferrer" className="px-2 py-0.5 rounded-md border border-gray-300 bg-white">ดู pre-grade</a>}
+                          {sh.status !== 'processing' && sh.vfx_project_id && (
+                            <button type="button" disabled={!!busy} onClick={() => { if (confirm('gen เลเยอร์ตัดคนของช็อตนี้ใหม่ (หักตามราคา matte) แล้ว grade ใหม่ ดำเนินการ?')) act('/api/film/scenes', { action: 'regen_layer', scene_id: scene.id, shot_id: sh.id, layer: 'matte' }, 'กำลังส่ง gen เลเยอร์ใหม่...'); }} className="px-2 py-0.5 rounded-md border border-gray-300 bg-white flex items-center gap-1" title="re-gen เฉพาะเลเยอร์ตัดคน (matte) — ฉากหลังและ grade ไม่เปลี่ยน"><RefreshCw className="w-3 h-3" /> gen ตัดคนใหม่</button>
+                          )}
                           {(sh.status === 'ready' || sh.status === 'graded' || sh.status === 'approved') && (
                             <button type="button" disabled={!!busy} onClick={() => act('/api/film/scenes', { action: 'approve_shot', scene_id: scene.id, shot_id: sh.id, value: sh.status !== 'approved' }, sh.status === 'approved' ? 'เปิดช็อตใหม่...' : 'กำลังอนุมัติ...')} className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${sh.status === 'approved' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-[#1A1A1A] text-[#D4AF37] border-[#1A1A1A]'}`}><CheckCircle2 className="w-3 h-3" /> {sh.status === 'approved' ? 'อนุมัติแล้ว (กดเพื่อเปิดใหม่)' : 'อนุมัติ → ปลดล็อกช็อตถัดไป'}</button>
                           )}

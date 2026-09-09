@@ -72,6 +72,8 @@ export interface FilmShot {
   /** measured after grade against the scene anchor */
   delta_e?: number;
   passed?: boolean;
+  /** consistency QA (F3): colour ΔE, histogram correlation, VLM style distance, retries */
+  qa?: { color_delta_e: number | null; histogram_score: number | null; style_distance: number | null; style_notes?: string; passed: boolean; threshold_used: { delta_e: number; histogram: number; style: number }; auto_retry_count: number; checked_at: string };
   error?: string;
   updated_at: string;
 }

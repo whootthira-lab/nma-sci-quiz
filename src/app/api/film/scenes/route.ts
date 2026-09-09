@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { guard } from '@/lib/auth-server';
 import { serviceClient, newId, saveFilm, loadFilm } from '@/lib/film/store';
 import { loadProject, saveProject, newId as vfxId, putFile } from '@/lib/vfx/store';
-import { analyzeFootage, planProject, startShot, persist, projectCredits } from '@/lib/vfx/pipeline';
+import { analyzeFootage, planProject, startShot, persist, projectCredits, redoMatte } from '@/lib/vfx/pipeline';
+import { runConsistencyCheck } from '@/lib/film/qa';
 import { resolveEffectiveStyle, requireLockedMaster } from '@/lib/film/resolver';
 import { gradeToAnchor, extractFrame } from '@/lib/film/color';
 import { primeRates } from '@/lib/providers/rates';
@@ -149,17 +150,27 @@ export async function POST(req: NextRequest) {
         if (!scene!.anchor_frame_url) return NextResponse.json({ success: false, error: 'ตั้ง anchor frame ของฉากก่อน (อนุมัติเฟรมจากช็อตแรก)' }, { status: 400 });
         const style = resolveEffectiveStyle(film, scene!);
         const results: any[] = [];
+        const masterPlate = film.masters.find((m) => m.id === scene!.location_master_id)?.sheet_urls[0];
         for (const sh of scene!.shots) {
           if (!sh.pre_grade_url || sh.status === 'processing' || sh.status === 'failed') continue;
           try {
-            const g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
+            // Grade, then the consistency worker (F3). A shot whose colour still sits past the
+            // Bible's ΔE after the match is re-graded harder — up to twice — before it is flagged.
+            let retries = 0;
+            let g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 });
+            while (g.deltaE >= style.delta_e_threshold && retries < 2) {
+              retries++;
+              g = await gradeToAnchor(sh.pre_grade_url, scene!.anchor_frame_url, { lutUrl: style.lut_url, exposureStops: style.exposure_stops, strength: 1 + 0.15 * retries });
+            }
             sh.post_grade_url = await putFile(`films/${email}/${film.id}/${scene!.id}_${sh.id}_b${film.bible.version}_${Date.now()}.mp4`, g.video, 'video/mp4', supabase);
             sh.delta_e = g.deltaE;
-            sh.passed = g.deltaE < style.delta_e_threshold;
+            const qa = await runConsistencyCheck({ videoUrl: sh.post_grade_url, anchorImageUrl: scene!.anchor_frame_url, masterPlateUrl: masterPlate, deltaE: g.deltaE, deltaEThreshold: style.delta_e_threshold, retries });
+            sh.qa = qa;
+            sh.passed = qa.passed;
             if (sh.status !== 'approved') sh.status = 'graded'; // a re-grade does not reopen an approved shot
-            sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
+            sh.effective_style = { ...sh.effective_style, graded_with: { bible_version: film.bible.version, lut: style.lut_name || null, exposure_stops: style.exposure_stops, strength: 1 + 0.15 * retries, gains: g.gains, anchor: g.anchor, before: g.before, after: g.after } };
             sh.updated_at = now;
-            results.push({ shot_id: sh.id, delta_e: g.deltaE, passed: sh.passed, lut: g.lutApplied });
+            results.push({ shot_id: sh.id, delta_e: g.deltaE, histogram: qa.histogram_score, style: qa.style_distance, passed: qa.passed, retries, lut: g.lutApplied, notes: qa.style_notes });
           } catch (e: any) {
             sh.error = `grade: ${e?.message || e}`;
             results.push({ shot_id: sh.id, error: sh.error });
@@ -168,7 +179,30 @@ export async function POST(req: NextRequest) {
         await saveFilm(film, supabase);
         const measured = results.filter((r) => typeof r.delta_e === 'number');
         const mean = measured.length ? +(measured.reduce((s, r) => s + r.delta_e, 0) / measured.length).toFixed(2) : null;
-        return NextResponse.json({ success: true, film, results, mean_delta_e: mean, threshold: style.delta_e_threshold });
+        return NextResponse.json({ success: true, film, results, mean_delta_e: mean, threshold: style.delta_e_threshold, flagged: results.filter((r) => r.passed === false).length });
+      }
+      case 'regen_layer': {
+        // "gen ใหม่เฉพาะเลเยอร์" from Scene Review: today the matte (person cut-out) is the only
+        // generative layer of a film shot; charged at the matte rate through the VFX project.
+        const sh = scene!.shots.find((x) => x.id === body.shot_id);
+        if (!sh) return NextResponse.json({ success: false, error: 'ไม่พบช็อต' }, { status: 404 });
+        const project = await loadProject(email, sh.vfx_project_id, supabase);
+        const vs = project?.shots.find((x) => x.id === sh.vfx_shot_id) || project?.shots[0];
+        if (!project || !vs) return NextResponse.json({ success: false, error: 'ไม่พบโปรเจกต์ VFX ของช็อตนี้' }, { status: 404 });
+        const matteCost = vs.layers.find((l) => l.type === 'matte')?.cost_credits || 0;
+        if (email !== 'whootthira@gmail.com' && matteCost > 0) {
+          const { data: wl } = await supabase.from('whitelist').select('generation_limit').eq('email', email).maybeSingle();
+          const cost = Math.round(matteCost * 10);
+          if (!wl || (wl.generation_limit || 0) < cost) return NextResponse.json({ success: false, error: `เครดิตไม่พอ (ต้องการ ${matteCost})` }, { status: 403 });
+          await supabase.from('whitelist').update({ generation_limit: (wl.generation_limit || 0) - cost }).eq('email', email);
+          project.charged_credits += matteCost;
+        }
+        await redoMatte(project, vs, supabase);
+        await persist(project, supabase);
+        sh.status = 'processing';
+        sh.pre_grade_url = undefined; sh.post_grade_url = undefined; sh.delta_e = undefined; sh.passed = undefined; sh.qa = undefined; sh.error = undefined;
+        sh.updated_at = now;
+        break;
       }
       default:
         return NextResponse.json({ success: false, error: 'ไม่รู้จักคำสั่ง' }, { status: 400 });
