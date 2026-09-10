@@ -185,7 +185,7 @@ export interface Film {
   /** provider + model pinned per task at film creation (F1 records; F5 migrates) */
   pinned_models: Record<string, { model_id: string; endpoint: string; pinned_at: string; migrated_from?: { model_id: string; endpoint: string; at: string; migration_id: string }[] }>;
   /** F5: last liveness/registry check of the pinned models */
-  model_health?: { checked_at: string; tasks: { task: string; model_id: string; endpoint: string; alive: boolean | null; detail: string; verified: boolean; in_registry: boolean; candidates: { model_id: string; label: string; endpoint: string; credits_per_unit: number }[] }[] };
+  model_health?: { checked_at: string; tasks: { task: string; model_id: string; endpoint: string; alive: boolean | null; detail: string; verified: boolean; in_registry: boolean; candidates: { model_id: string; label: string; endpoint: string; credits_per_unit: number }[]; blocked?: { model_id: string; label: string; reason: string }[] }[] };
   /** F5: migration flow — propose → test 3 sample shots → QA → apply to the whole film */
   migrations: FilmMigration[];
   /** F5: exports (EDL / XML / manifest / QA report / optional MP4) */

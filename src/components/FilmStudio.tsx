@@ -280,6 +280,7 @@ export default function FilmStudio() {
                         {h.alive === true ? '● endpoint มีชีวิต' : h.alive === false ? '● endpoint หายไป' : '● ตรวจไม่ได้'} · {h.in_registry ? 'ตรงกับ registry' : 'ไม่ตรง registry!'} · {new Date(film.model_health!.checked_at).toLocaleString('th-TH')}
                       </p>
                     )}
+                    {h?.blocked?.length ? <p className="text-[10px] text-gray-400" title={h.blocked.map((b) => `${b.label}: ${b.reason}`).join('\n')}>ใช้แทนไม่ได้: {h.blocked.map((b) => b.label).join(', ')} (ผลลัพธ์คนละรูปแบบ)</p> : null}
                     {h && h.candidates.length > 0 && !open && (task === 'vfx.matte' || task === 'vfx.character') && (
                       <div className="flex gap-1 items-center pt-1">
                         <select value={migPick[task] || ''} onChange={(e) => setMigPick({ ...migPick, [task]: e.target.value })} className="flex-1 px-1.5 py-1 border border-gray-200 rounded bg-white text-[10px]">

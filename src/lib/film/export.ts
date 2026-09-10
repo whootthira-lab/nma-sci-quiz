@@ -31,7 +31,8 @@ export function pickShots(film: Film, scope: 'film' | 'act' | 'scene', scopeId: 
   return out;
 }
 
-export const clipName = (scene: FilmScene, shot: FilmShot) => `S${String(scene.order).padStart(2, '0')}_SH${String(shot.order).padStart(2, '0')}.mp4`;
+/** act + scene + shot: scene numbers restart per act, so the act keeps names unique */
+export const clipName = (film: Film, scene: FilmScene, shot: FilmShot) => `A${String(film.acts.find((a) => a.id === scene.act_id)?.order || 1).padStart(2, '0')}_S${String(scene.order).padStart(2, '0')}_SH${String(shot.order).padStart(2, '0')}.mp4`;
 
 /** download each clip once to read its real length/size (ffmpeg banner; no ffprobe here) */
 export async function measureItems(film: Film, picked: { scene: FilmScene; shot: FilmShot }[], resolve: (ref: string) => Promise<string>): Promise<ExportItem[]> {
@@ -43,7 +44,7 @@ export async function measureItems(film: Film, picked: { scene: FilmScene; shot:
       const f = path.join(dir, `${shot.id}.mp4`);
       await fetchToFile(ref, f);
       const p = await probeVideo(f);
-      items.push({ scene, shot, name: clipName(scene, shot), url: await resolve(ref), seconds: p.seconds, width: p.width, height: p.height, fps: p.fps || film.bible.fps });
+      items.push({ scene, shot, name: clipName(film, scene, shot), url: await resolve(ref), seconds: p.seconds, width: p.width, height: p.height, fps: p.fps || film.bible.fps });
       fs.rmSync(f, { force: true });
     }
     return items;
@@ -61,7 +62,7 @@ export function buildEdl(title: string, items: ExportItem[], fps: number): strin
   let rec = 3600 * fps; // records start at 01:00:00:00, the usual convention
   items.forEach((it, i) => {
     const len = Math.max(1, Math.round(it.seconds * fps));
-    const reel = `S${String(it.scene.order).padStart(2, '0')}SH${String(it.shot.order).padStart(2, '0')}`.slice(0, 8).padEnd(8, ' ');
+    const reel = it.name.replace(/\.mp4$/, '').replace(/_/g, '').slice(0, 8).padEnd(8, ' ');
     lines.push(`${String(i + 1).padStart(3, '0')}  ${reel} V     C        ${timecode(0, fps)} ${timecode(len, fps)} ${timecode(rec, fps)} ${timecode(rec + len, fps)}`);
     lines.push(`* FROM CLIP NAME: ${it.name}`);
     lines.push(`* COMMENT: scene ${it.scene.order} "${it.scene.name}" shot ${it.shot.order} · status ${it.shot.status}${typeof it.shot.delta_e === 'number' ? ` · ΔE ${it.shot.delta_e}` : ''}`);

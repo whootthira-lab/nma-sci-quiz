@@ -66,7 +66,9 @@ export async function POST(req: NextRequest) {
         for (const sc of film.scenes) for (const sh of sc.shots) if (sc.anchor_frame_url && sh.vfx_project_id && ['approved', 'graded', 'ready'].includes(sh.status)) pool.push({ scene: { ...sh, scene_id: sc.id } });
         pool.sort((a, b) => (a.scene.status === 'approved' ? 0 : 1) - (b.scene.status === 'approved' ? 0 : 1));
         const picked: (FilmShot & { scene_id: string })[] = [];
-        for (const p of pool) { if (picked.length >= 3) break; if (picked.filter((x) => x.scene_id === p.scene.scene_id).length >= 2 && pool.length > 3) continue; picked.push(p.scene); }
+        // spread across scenes first (≤2 per scene), then fill up to 3 from whatever is left
+        for (const p of pool) { if (picked.length >= 3) break; if (picked.filter((x) => x.scene_id === p.scene.scene_id).length >= 2) continue; picked.push(p.scene); }
+        for (const p of pool) { if (picked.length >= 3) break; if (!picked.some((x) => x.id === p.scene.id)) picked.push(p.scene); }
         if (!picked.length) return NextResponse.json({ success: false, error: 'ไม่มีช็อตตัวอย่าง (ต้องมีช็อตที่เสร็จแล้วในฉากที่มี anchor)' }, { status: 409 });
         // credits
         let credits = 0;

@@ -27,6 +27,8 @@ export interface ModelEntry {
   verified: boolean;     // submit → result seen with our own eyes
   priceSource: 'bill' | 'list' | 'measured';
   note?: string;
+  /** endpoint works but our pipeline cannot consume its output shape — never offered as a drop-in (Film F5 migration) */
+  incompatible?: string;
 }
 
 export const MODELS: ModelEntry[] = [
@@ -83,7 +85,7 @@ export const MODELS: ModelEntry[] = [
 
   // ── VFX building blocks (spec) — listed today, NOT yet proven end to end ─
   { id: 'matte-veed-fast', task: 'vfx.matte', endpoint: 'veed/video-background-removal/fast', label: 'ตัดคน (veed fast)', tier: 'economy', unit: 'second', usdPerUnit: 0.0122, creditsPerUnit: 2, verified: true, priceSource: 'bill', note: 'พิสูจน์ 4 ก.ย.: webm vp9 ALPHA_MODE=1 + RGB ดำนอกตัวคน → luma-key ได้ · 5 ก.ย.: output_codec h264 คืน color.mp4 + alpha.mp4 แยกกัน (alphamerge ตรงๆ) แต่ color สั้นกว่า alpha — ใช้ฟุตเทจเดิมเป็นแหล่งสี · ขอบผมสะอาด · ใช้จริงใน /api/vfx/background' },
-  { id: 'matte-bria', task: 'vfx.matte', endpoint: 'bria/video/background-removal/v3', label: 'ตัดคน (Bria v3)', tier: 'pro', unit: 'second', usdPerUnit: 0.05, creditsPerUnit: 6, verified: true, priceSource: 'bill', note: 'พิสูจน์ 4 ก.ย.: alpha ล้วน RGB คงฉากเดิม — ffmpeg 2018 อ่าน alpha ไม่ได้ ต้องสั่ง mov_proresks' },
+  { id: 'matte-bria', task: 'vfx.matte', endpoint: 'bria/video/background-removal/v3', label: 'ตัดคน (Bria v3)', tier: 'pro', unit: 'second', usdPerUnit: 0.05, creditsPerUnit: 6, verified: true, priceSource: 'bill', incompatible: 'คืนวิดีโอ alpha ช่องเดียว — ไปป์ไลน์ matte ต้องการ color+alpha แยก (veed h264); ทดสอบย้ายจริง 10 ก.ย. ล้มเหลว 2/2', note: 'พิสูจน์ 4 ก.ย.: alpha ล้วน RGB คงฉากเดิม — ffmpeg 2018 อ่าน alpha ไม่ได้ ต้องสั่ง mov_proresks' },
   { id: 'vedit-o3', task: 'vfx.background', endpoint: 'fal-ai/kling-video/o3/pro/video-to-video/edit', label: 'Kling O3 Video Edit', tier: 'ultra', unit: 'second', usdPerUnit: 0.163, creditsPerUnit: 19, verified: true, priceSource: 'bill', note: 'พิสูจน์ 4 ก.ย.: เปลี่ยนฉากหลังเนียน คนคงเดิม · 7.2s $1.18' },
   { id: 'vedit-wan27', task: 'vfx.background', endpoint: 'fal-ai/wan/v2.7/edit-video', label: 'Wan 2.7 Video Edit', tier: 'pro', unit: 'second', usdPerUnit: 0.2, creditsPerUnit: 23, verified: true, priceSource: 'bill', note: 'พิสูจน์ 4 ก.ย.: บิลจริง $0.20/s สูงกว่าป้าย 720p 2 เท่า · ภาพออกแนววาด' },
   { id: 'relight-lightx', task: 'vfx.relight', endpoint: 'fal-ai/lightx/relight', label: 'LightX Relight', tier: 'pro', unit: 'second', usdPerUnit: 0.068, creditsPerUnit: 8, verified: false, priceSource: 'bill', note: 'รันได้แต่คุณภาพไม่ผ่าน: ออก 672x384 4.9s แสงฟุ้งทั้งเฟรม — ไม่เปิดใช้' },

@@ -219,8 +219,9 @@ export async function POST(req: NextRequest) {
         for (const [task, pin] of Object.entries(film.pinned_models)) {
           const entry = getModel(pin.model_id);
           const live = await probeEndpoint(pin.endpoint);
-          const candidates = entry ? MODELS.filter((m) => m.task === entry.task && m.verified && m.id !== entry.id).map((m) => ({ model_id: m.id, label: m.label, endpoint: m.endpoint, credits_per_unit: m.creditsPerUnit })) : [];
-          tasks.push({ task, model_id: pin.model_id, endpoint: pin.endpoint, alive: live.alive, detail: live.detail, verified: !!entry?.verified, in_registry: !!entry && entry.endpoint === pin.endpoint, candidates });
+          const candidates = entry ? MODELS.filter((m) => m.task === entry.task && m.verified && !m.incompatible && m.id !== entry.id).map((m) => ({ model_id: m.id, label: m.label, endpoint: m.endpoint, credits_per_unit: m.creditsPerUnit })) : [];
+          const blocked = entry ? MODELS.filter((m) => m.task === entry.task && m.verified && !!m.incompatible && m.id !== entry.id).map((m) => ({ model_id: m.id, label: m.label, reason: m.incompatible! })) : [];
+          tasks.push({ task, model_id: pin.model_id, endpoint: pin.endpoint, alive: live.alive, detail: live.detail, verified: !!entry?.verified, in_registry: !!entry && entry.endpoint === pin.endpoint, candidates, blocked });
         }
         film.model_health = { checked_at: now, tasks };
         break;

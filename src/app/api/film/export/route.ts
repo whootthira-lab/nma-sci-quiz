@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     if (!picked.length) return NextResponse.json({ success: false, error: body.include_unapproved ? 'ไม่มีช็อตที่เสร็จแล้วในช่วงนี้' : 'ไม่มีช็อตที่อนุมัติแล้วในช่วงนี้ — อนุมัติก่อน หรือเลือก "รวมช็อตที่ยังไม่อนุมัติ"' }, { status: 409 });
     const items = await measureItems(film, picked, (ref) => resolveUrl(ref, supabase));
     const fps = film.bible.fps;
-    const title = `${film.title} — ${scopeName}`;
+    const title = scope === 'film' ? film.title : `${film.title} — ${scopeName}`;
     const edl = buildEdl(title, items, fps);
     const xml = buildFcpXml(title, items, fps);
     const qa = buildQaReport(film, items);
