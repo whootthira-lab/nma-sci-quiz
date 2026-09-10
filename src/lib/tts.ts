@@ -118,21 +118,28 @@ export async function generateTTS(text: string, voiceId: string, speedFactor: nu
  * pipeline expects. Speed has no parameter either, so a large deviation is asked for in
  * words; small ones are left alone rather than fought over.
  */
-export async function generateGeminiTTS(text: string, voiceId: string, speedFactor: number = 1.0, emotionInstruction: string = ''): Promise<Buffer> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
-  if (!apiKey) throw new Error('ไม่พบ GEMINI_API_KEY ในระบบ สำหรับการใช้งานเสียง Gemini');
+/** Gemini TTS answers with NO audio part (finishReason OTHER) for some scripts — measured
+ *  10 ก.ย.: a repetitive script → OTHER; long scripts also truncate around 2 min of audio.
+ *  So: split the script at phrase boundaries into ≤350-char chunks, synthesise each
+ *  (flash first, pro as fallback), and join the PCM with a short pause. */
+function splitForTts(text: string, max = 350): string[] {
+  const pieces = text.split(/(?<=[.!?。])\s+|\n+|\s{2,}|(?<=\S{12,})\s(?=\S)/).map((p) => p.trim()).filter(Boolean);
+  const out: string[] = []; let cur = '';
+  for (const p of pieces) {
+    if (!cur) { cur = p; continue; }
+    if ((cur + ' ' + p).length <= max) cur += ' ' + p; else { out.push(cur); cur = p; }
+  }
+  if (cur) out.push(cur);
+  // a single oversized piece (no spaces at all) is cut hard
+  return out.flatMap((c) => c.length <= max * 1.5 ? [c] : c.match(new RegExp(`.{1,${max}}`, 'g')) || [c]);
+}
 
-  let prefix = emotionInstruction || '';
-  if (speedFactor <= 0.85) prefix = `พูดช้าลงกว่าปกติ ${prefix}`;
-  else if (speedFactor >= 1.15) prefix = `พูดเร็วขึ้นกว่าปกติเล็กน้อย ${prefix}`;
-  const fullText = prefix ? `${prefix}${prefix.endsWith(': ') ? '' : ': '}${text}` : text;
-
-  console.log(`[Gemini TTS] voice=${voiceId} emotion="${emotionInstruction.slice(0, 40)}"`);
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+async function geminiTtsOnce(model: string, text: string, voiceId: string, apiKey: string): Promise<{ pcm?: Buffer; reason: string }> {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: fullText }] }],
+      contents: [{ parts: [{ text }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId } } }
@@ -144,16 +151,36 @@ export async function generateGeminiTTS(text: string, voiceId: string, speedFact
     throw new Error(`Gemini TTS ล้มเหลว (${res.status}): ${errText.slice(0, 150)}`);
   }
   const data = await res.json();
-  // the audio is not always parts[0] — a text part (or nothing, when the request is
-  // blocked) can come first — so look through every part and say WHY when there is none
+  // the audio is not always parts[0] — look through every part and keep WHY when there is none
   const parts: any[] = data?.candidates?.[0]?.content?.parts || [];
   const b64 = parts.find((p) => p?.inlineData?.data)?.inlineData?.data;
-  if (!b64) {
-    const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || '';
-    const said = parts.map((p) => p?.text).filter(Boolean).join(' ').slice(0, 120);
-    throw new Error(`Gemini TTS ไม่ได้ส่งเสียงกลับมา${reason ? ` (${reason})` : ''}${said ? `: "${said}"` : ''}`);
+  if (b64) return { pcm: Buffer.from(b64, 'base64'), reason: '' };
+  const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || 'ไม่มีข้อมูลเสียง';
+  const said = parts.map((p) => p?.text).filter(Boolean).join(' ').slice(0, 120);
+  return { reason: `${model}: ${reason}${said ? ` "${said}"` : ''}` };
+}
+
+export async function generateGeminiTTS(text: string, voiceId: string, speedFactor: number = 1.0, emotionInstruction: string = ''): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('ไม่พบ GEMINI_API_KEY ในระบบ สำหรับการใช้งานเสียง Gemini');
+
+  let prefix = emotionInstruction || '';
+  if (speedFactor <= 0.85) prefix = `พูดช้าลงกว่าปกติ ${prefix}`;
+  else if (speedFactor >= 1.15) prefix = `พูดเร็วขึ้นกว่าปกติเล็กน้อย ${prefix}`;
+  const withPrefix = (t: string) => (prefix ? `${prefix}${prefix.endsWith(': ') ? '' : ': '}${t}` : t);
+
+  const chunks = splitForTts(text);
+  console.log(`[Gemini TTS] voice=${voiceId} emotion="${emotionInstruction.slice(0, 40)}" chunks=${chunks.length}`);
+  const pcms: Buffer[] = [];
+  const pause = Buffer.alloc(Math.round(24000 * 0.18) * 2); // 180 ms of silence between chunks
+  for (const chunk of chunks) {
+    let r = await geminiTtsOnce('gemini-2.5-flash-preview-tts', withPrefix(chunk), voiceId, apiKey);
+    if (!r.pcm) r = await geminiTtsOnce('gemini-2.5-pro-preview-tts', withPrefix(chunk), voiceId, apiKey);
+    if (!r.pcm) throw new Error(`Gemini TTS ไม่ได้ส่งเสียงกลับมา (${r.reason}) — ลองแก้ข้อความช่วง "${chunk.slice(0, 40)}…"`);
+    if (pcms.length) pcms.push(pause);
+    pcms.push(r.pcm);
   }
-  const pcm = Buffer.from(b64, 'base64');
+  const pcm = Buffer.concat(pcms);
 
   const dir = os.tmpdir();
   const inPath = path.join(dir, `gtts_${Date.now()}.pcm`);
