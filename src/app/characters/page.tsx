@@ -495,21 +495,29 @@ export default function CharactersPage() {
     formData.append('trigger_word', triggerWord.trim());
     formData.append('steps', String(steps));
     
-    files.forEach(item => {
-      formData.append('images', item.file);
-      formData.append('angles', item.angle);
-      // Expression of this same photo, so the caption describes what is actually in it
-      formData.append('image_emotions', item.emotion || '');
-      formData.append('image_emotion_customs', item.emotionCustom || '');
-    });
-
-    expressionFiles.forEach(item => {
-      formData.append('expression_images', item.file);
-      formData.append('expression_categories', item.category);
-      formData.append('expression_custom_tags', item.customTag || '');
-    });
-
     try {
+      // Photos go straight to storage with a signed permit (a whole dataset is far past the
+      // ~4.5 MB a Vercel function accepts — "Request Entity Too Large" otherwise); the
+      // training route then receives URLs only.
+      const stamp = Date.now();
+      const safe = (n: string) => n.replace(/[^\w.\-]+/g, '_').slice(-60);
+      const uploaded = await Promise.all(files.map((item, i) => uploadToStorage(item.file, `datasets/${user?.email}/${stamp}/img${i}_${safe(item.file.name)}`)));
+      const uploadedExpr = await Promise.all(expressionFiles.map((item, i) => uploadToStorage(item.file, `datasets/${user?.email}/${stamp}/expr${i}_${safe(item.file.name)}`)));
+
+      files.forEach((item, i) => {
+        formData.append('image_urls', uploaded[i]);
+        formData.append('angles', item.angle);
+        // Expression of this same photo, so the caption describes what is actually in it
+        formData.append('image_emotions', item.emotion || '');
+        formData.append('image_emotion_customs', item.emotionCustom || '');
+      });
+
+      expressionFiles.forEach((item, i) => {
+        formData.append('expression_image_urls', uploadedExpr[i]);
+        formData.append('expression_categories', item.category);
+        formData.append('expression_custom_tags', item.customTag || '');
+      });
+
       const res = await fetch('/api/characters/train-lora', {
         method: 'POST',
         body: formData,

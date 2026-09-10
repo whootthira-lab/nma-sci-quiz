@@ -111,11 +111,28 @@ export async function POST(req: NextRequest) {
     { const g = await guard(req, userEmail); if (g instanceof NextResponse) return g; }
     const triggerWordRaw = formData.get('trigger_word') as string || '';
     const steps = parseInt(formData.get('steps') as string || '1000', 10);
-    const imageFiles = formData.getAll('images') as File[];
+    // Training photos arrive as storage URLs (uploaded straight from the browser with a
+    // signed permit — iron rule 4: never route user files through a Vercel function, which
+    // caps a request at ~4.5 MB and answered "Request Entity Too Large" for a real dataset).
+    // Files in the multipart body are still accepted for older clients.
+    const fromUrls = async (urls: string[]): Promise<File[]> => Promise.all(urls.filter(Boolean).map(async (u) => {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error(`ดึงรูปจากคลังไม่สำเร็จ (${r.status})`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      const name = decodeURIComponent((u.split('?')[0].split('/').pop() || 'image.png'));
+      return new File([buf], name, { type: r.headers.get('content-type') || 'image/png' });
+    }));
+    const imageFiles = [
+      ...(formData.getAll('images') as File[]).filter((f) => f && typeof f !== 'string' && f.size > 0),
+      ...(await fromUrls(formData.getAll('image_urls') as string[]))
+    ];
     const angles = formData.getAll('angles') as string[];
     const imageEmotions = formData.getAll('image_emotions') as string[];
     const imageEmotionCustoms = formData.getAll('image_emotion_customs') as string[];
-    const expressionImages = formData.getAll('expression_images') as File[];
+    const expressionImages = [
+      ...(formData.getAll('expression_images') as File[]).filter((f) => f && typeof f !== 'string' && f.size > 0),
+      ...(await fromUrls(formData.getAll('expression_image_urls') as string[]))
+    ];
     const expressionCategories = formData.getAll('expression_categories') as string[];
     const expressionCustomTags = formData.getAll('expression_custom_tags') as string[];
 
