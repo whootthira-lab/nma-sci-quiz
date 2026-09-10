@@ -144,8 +144,15 @@ export async function generateGeminiTTS(text: string, voiceId: string, speedFact
     throw new Error(`Gemini TTS ล้มเหลว (${res.status}): ${errText.slice(0, 150)}`);
   }
   const data = await res.json();
-  const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!b64) throw new Error('Gemini TTS ไม่ได้ส่งเสียงกลับมา');
+  // the audio is not always parts[0] — a text part (or nothing, when the request is
+  // blocked) can come first — so look through every part and say WHY when there is none
+  const parts: any[] = data?.candidates?.[0]?.content?.parts || [];
+  const b64 = parts.find((p) => p?.inlineData?.data)?.inlineData?.data;
+  if (!b64) {
+    const reason = data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason || '';
+    const said = parts.map((p) => p?.text).filter(Boolean).join(' ').slice(0, 120);
+    throw new Error(`Gemini TTS ไม่ได้ส่งเสียงกลับมา${reason ? ` (${reason})` : ''}${said ? `: "${said}"` : ''}`);
+  }
   const pcm = Buffer.from(b64, 'base64');
 
   const dir = os.tmpdir();
