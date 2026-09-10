@@ -189,6 +189,7 @@ Please structure the enhanced prompt to describe a continuous, smooth visual tra
   if (visualStyle && visualStyle !== 'none') {
     const styleDescriptions: Record<string, string> = {
       cinematic: 'Cinematic visual style with dramatic cinematic lighting, deep shadows, rich color grading, and high contrast.',
+      amateur: 'Amateur handheld phone footage, UGC / vlog look: slight hand shake, autofocus hunting, natural available light, no colour grade, mild sensor noise, casual framing.',
       studio: 'Studio portrait style with clean professional studio lighting, soft key light, and shallow depth of field (blurred background).',
       pixar: '3D Pixar animation style, stylized character features, vibrant colors, clean and smooth rendering, and cartoon aesthetic.',
       retro: 'Retro 90s visual style, warm film grain, retro color palettes, VHS style aesthetic, and nostalgia feel.',
@@ -448,6 +449,8 @@ export async function POST(req: NextRequest) {
     let wanResolution = '720p';
     let klingResolution = '720p';
     let grokResolution = '720p';
+    const h3ResRaw = String(formData.get('h3_resolution') || '768P').toUpperCase();
+    const h3Resolution = ['480P', '768P', '2K', '4K'].includes(h3ResRaw) ? h3ResRaw : '768P';
     let seedanceResolution = '720p';
     let klingAudioEnabled = false;
     // One switch for "give silent clips a soundtrack": models that can score themselves do so,
@@ -501,6 +504,8 @@ export async function POST(req: NextRequest) {
       ratePerSecond = 40;                                        // $0.40 per second billed
     } else if (modelType === 'sora2') {
       ratePerSecond = 12;                                        // $0.10 per second billed
+    } else if (modelType === 'minimax-h3') {
+      ratePerSecond = h3Resolution === '480P' ? 6 : h3Resolution === '2K' ? 15 : h3Resolution === '4K' ? 19 : 7; // list $0.05/$0.06/$0.13/$0.16 per second
     } else if (isMotionControl) {
       ratePerSecond = 8;
     }
@@ -509,7 +514,7 @@ export async function POST(req: NextRequest) {
     // Veo 3 and Kling 2.6 Pro can score themselves; every other engine returns a silent clip,
     // so a soundtrack has to be added after the video exists.
     const modelScoresItself =
-      modelType === 'veo3' || (modelType === 'fast' && klingResolution === '1080p');
+      modelType === 'veo3' || modelType === 'minimax-h3' || (modelType === 'fast' && klingResolution === '1080p');
     // Ambient now serves speech clips too: for those the score is MIXED UNDER the voice
     // in a later pass, instead of replacing the track.
     const needsAmbientPass = ambientAudioEnabled && !modelScoresItself;
@@ -840,6 +845,8 @@ export async function POST(req: NextRequest) {
         fitted = Math.max(1, Math.min(15, Math.ceil(target)));
       } else if (isAvatarMode) {
         fitted = Math.ceil(target); // the avatar renders exactly as long as the audio
+      } else if (modelType === 'minimax-h3') {
+        fitted = Math.max(5, Math.min(15, Math.ceil(target)));
       } else if (modelType !== 'veo3' && modelType !== 'sora2') {
         fitted = target <= 5 ? 5 : 10;
       }
@@ -858,6 +865,7 @@ export async function POST(req: NextRequest) {
     const isElements = modelType === 'elements';
     const isVeo = modelType === 'veo3';
     const isSora = modelType === 'sora2';
+    const isH3 = modelType === 'minimax-h3';
     const isSiliconFlow =
       modelType === 'hunyuan' || 
       modelType === 'ltx-video' || 
@@ -941,6 +949,8 @@ export async function POST(req: NextRequest) {
           ? (videoMode === 'text_to_video' ? 'fal-ai/veo3/fast' : 'fal-ai/veo3/image-to-video')
           : isSora
           ? (videoMode === 'text_to_video' ? 'fal-ai/sora-2/text-to-video' : 'fal-ai/sora-2/image-to-video')
+          : isH3
+          ? (videoMode === 'text_to_video' ? 'minimax/h3/text-to-video' : 'minimax/h3/image-to-video')
           : isElements
           ? 'fal-ai/kling-video/v1.6/pro/elements'
           : isSeedance
@@ -1002,6 +1012,17 @@ export async function POST(req: NextRequest) {
         if (situationPrompt) {
           requestBody.prompt = situationPrompt;
         }
+      } else if (isH3) {
+        // MiniMax H3: integer seconds 5–15, native audio, safety checker always on (Standard mode)
+        requestBody = {
+          prompt: videoPrompt,
+          duration: Math.max(5, Math.min(15, Math.round(duration))),
+          resolution: h3Resolution,
+          prompt_expansion_mode: 'balanced',
+          enable_safety_checker: true,
+        };
+        if (videoMode === 'image_to_video') requestBody.image_url = imageUrl;
+        else requestBody.aspect_ratio = aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : '1:1';
       } else if (isGrok) {
         requestBody = {
           prompt: videoPrompt,
@@ -1183,7 +1204,9 @@ export async function POST(req: NextRequest) {
             ambient_pending: needsAmbientPass,
             ambient_prompt: ambientPrompt,
             visual_style: visualStyle,
-            model_name: modelType === 'veo3'
+            model_name: modelType === 'minimax-h3'
+              ? 'minimax-h3'
+              : modelType === 'veo3'
               ? 'veo-3-fast'
               : modelType === 'sora2'
               ? 'sora-2'

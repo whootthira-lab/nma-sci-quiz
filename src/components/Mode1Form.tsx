@@ -77,6 +77,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   const [activeTab, setActiveTab] = useState<'text_to_video' | 'voice_image_to_video' | 'narration' | 'avatar' | 'image_to_video' | 'motion_control'>('voice_image_to_video');
 
   const [modelType, setModelType] = useState('fast'); 
+  const [h3Resolution, setH3Resolution] = useState('768P');
   const isMotionControl = modelType === 'motion-control';
   const isGrok = modelType === 'grok-video';
 
@@ -167,7 +168,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
   useEffect(() => {
     const validOptions = modelType === 'cinema'
       ? [5, 10, 15, 25]
-      : (modelType === 'grok-video' ? [5, 10, 15] : [5, 10]);
+      : (modelType === 'grok-video' || modelType === 'minimax-h3' ? [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] : [5, 10]);
     if (!validOptions.includes(selectedDuration)) {
       setSelectedDuration(5);
     }
@@ -207,7 +208,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       'veo-3-fast': 'veo3', 'sora-2': 'sora2', 'kling-1.6-elements': 'elements',
       'seedance-1.0-pro': 'seedance', 'hunyuan-video': 'hunyuan', 'ltx-video': 'ltx-video',
       'kling-2.6-motion-control': 'motion-control', 'wan-2.5-cinema': 'cinema',
-      'wan-2.5-cinema-sf': 'cinema', 'grok-1.5-imagine-video': 'grok-video', 'kling-2.5-turbo': 'fast'
+      'wan-2.5-cinema-sf': 'cinema', 'grok-1.5-imagine-video': 'grok-video', 'kling-2.5-turbo': 'fast', 'minimax-h3': 'minimax-h3'
     };
     const restoredType = md.model_type || NAME_TO_TYPE[regen.model_name];
     if (restoredType && regen.mode !== 'motion-control') setModelType(restoredType);
@@ -341,6 +342,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       else finalDuration = 25;
     } else if (modelType === 'grok-video') {
       finalDuration = Math.max(1, Math.min(15, targetSecs));
+    } else if (modelType === 'minimax-h3') {
+      finalDuration = Math.max(5, Math.min(15, targetSecs));
     } else {
       if (targetSecs <= 5) finalDuration = 5;
       else finalDuration = 10;
@@ -353,6 +356,8 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
     ? [5, 10, 15, 25]
     : (modelType === 'grok-video'
         ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        : modelType === 'minimax-h3'
+        ? [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         : [5, 10]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -725,6 +730,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
       formData.append('user_email', user?.email || 'user@kruth.com');
       formData.append('user_id', user?.id || '');
       formData.append('model_type', activeTab === 'avatar' ? 'avatar' : modelType);
+      formData.append('h3_resolution', h3Resolution);
       formData.append('video_mode', videoMode);
       formData.append('storage_provider', storageProvider);
       formData.append('duration', String(selectedDuration));
@@ -962,7 +968,16 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
                 <option value="veo3">🎥 KRUTH Prism (Google Veo 3 Fast)</option>
                 <option value="sora2">🌀 KRUTH Orbit (OpenAI Sora 2)</option>
                 <option value="grok-video">🌌 KRUTH Aurora (Grok Imagine Video v1.5)</option>
+                <option value="minimax-h3">📱 KRUTH Candid (MiniMax H3 — ลุคมือถือ/UGC, มีเสียงในตัว)</option>
               </select>
+              {modelType === 'minimax-h3' && (
+                <select value={h3Resolution} onChange={(e) => setH3Resolution(e.target.value)} className="bg-white border border-[#D4AF37] text-gray-800 text-sm rounded-lg px-2 py-1 outline-none font-thai cursor-pointer" title="ความละเอียด H3 (2K/4K = upscale จาก 768P)">
+                  <option value="480P">480P · 6 cr/วิ</option>
+                  <option value="768P">768P · 7 cr/วิ</option>
+                  <option value="2K">2K · 15 cr/วิ</option>
+                  <option value="4K">4K · 19 cr/วิ</option>
+                </select>
+              )}
             </div>
           </div>
         )}
@@ -1035,6 +1050,7 @@ export default function Mode1Form({ onVideoGenerated }: Mode1FormProps) {
               className="w-full bg-white border border-gray-200 p-3 rounded-xl text-sm text-gray-800 outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] font-thai cursor-pointer transition-all"
             >
               <option value="cinematic">🎬 Cinematic (สไตล์ภาพยนตร์ แสงเงาสวยงาม)</option>
+              <option value="amateur">📱 Amateur / UGC (มือถือถ่ายเอง สั่นนิด ๆ ไม่เกรดสี สมจริง)</option>
               <option value="studio">📸 Studio Portrait (ถ่ายในสตูดิโอ หน้าชัดหลังเบลอพรีเมียม)</option>
               <option value="pixar">🧸 3D Pixar Animation (อนิมิชัน 3 มิติสีสันสดใส)</option>
               <option value="retro">📼 Retro 90s (ภาพกล้องฟิล์มสีย้อนยุค 90)</option>
