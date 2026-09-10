@@ -460,7 +460,8 @@ export async function POST(req: NextRequest) {
         lora_job_id: requestId,
         lora_trigger_word: triggerWord,
         lora_dataset_url: zipUrl,
-        lora_dataset_path: zipPath,
+        // no `lora_dataset_path` column on the live table (same bug as create/route.ts) — the
+        // storage path is derivable from lora_dataset_url when the dataset has to be deleted
         lora_steps: steps,
         updated_at: new Date().toISOString(),
       })

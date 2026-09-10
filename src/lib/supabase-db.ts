@@ -348,6 +348,10 @@ export async function deleteCharacter(id: string) {
   pathsToDelete.push(...parsePaths(character.avatar_45_path));
   pathsToDelete.push(...parsePaths(character.avatar_side_path));
   if (character.lora_dataset_path) pathsToDelete.push(character.lora_dataset_path);
+  // the live table has no lora_dataset_path column — derive the zip's path from its public URL
+  const dsUrl: string | undefined = (character as any).lora_dataset_url;
+  const m = dsUrl && dsUrl.match(/\/object\/public\/kruth-ai-assets\/(.+)$/);
+  if (m) pathsToDelete.push(decodeURIComponent(m[1]));
 
   if (pathsToDelete.length > 0) {
     try {
