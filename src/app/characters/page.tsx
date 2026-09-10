@@ -523,7 +523,10 @@ export default function CharactersPage() {
         body: formData,
       });
 
-      const data = await res.json();
+      // a non-JSON reply is the platform speaking (413, 504…) — say so instead of a parse error
+      const raw = await res.text();
+      let data: any;
+      try { data = JSON.parse(raw); } catch { throw new Error(`เซิร์ฟเวอร์ตอบ ${res.status}${res.status === 413 ? ' (คำขอใหญ่เกินไป — รีเฟรชหน้าให้ได้เวอร์ชันล่าสุดแล้วลองใหม่)' : `: ${raw.slice(0, 80)}`}`); }
       if (!data.success) {
         throw new Error(data.error || 'ส่งคำขอเริ่มการฝึกสอนไม่สำเร็จ');
       }
