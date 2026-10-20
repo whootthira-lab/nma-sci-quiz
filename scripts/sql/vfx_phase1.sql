@@ -35,6 +35,10 @@ create index if not exists vfx_projects_status_idx on vfx_projects(status);
 
 -- Service-role access only (the app's server routes); no browser access.
 alter table vfx_projects enable row level security;
+-- Since 30 Oct 2026 Supabase no longer grants the Data API roles access to NEW public
+-- tables automatically — without this the server's service-role client gets "permission
+-- denied". anon / authenticated get nothing on purpose (browser never touches this table).
+grant select, insert, update, delete on public.vfx_projects to service_role;
 
 -- Optional, for reporting: shots and layers flattened out of the document.
 create or replace view vfx_shots_v as
@@ -48,6 +52,8 @@ select p.id as project_id, s->>'id' as shot_id, l->>'id' as layer_id, l->>'type'
        (l->>'enabled')::boolean as enabled, (l->>'version')::int as version, l->>'status' as status,
        (l->>'cost_credits')::numeric as cost_credits, l->>'model_id' as model_id, l->'params' as params, l->'output' as output
 from vfx_projects p, jsonb_array_elements(p.doc->'shots') s, jsonb_array_elements(s->'layers') l;
+
+grant select on public.vfx_shots_v, public.vfx_layers_v to service_role;
 
 -- Layer jobs themselves ride on the existing `generations` table (metadata.mode = 'vfx-layer',
 -- metadata.vfx_project_id / vfx_shot_id / vfx_layer_id), so the server-side driver
